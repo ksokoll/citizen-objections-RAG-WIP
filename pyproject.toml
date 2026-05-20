@@ -14,7 +14,7 @@ dependencies = [
     "anthropic>=0.25",
     "openai>=1.30",
     "python-dotenv>=1.0",
-    sentence-transformers
+    "sentence-transformers>=2.0"
 ]
 
 [project.optional-dependencies]

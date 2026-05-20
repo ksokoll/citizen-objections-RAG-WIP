@@ -1,24 +1,25 @@
-from datetime import datetime, timezone
-from enum import Enum
+from datetime import UTC, datetime
+from enum import StrEnum
 from typing import Literal
+
 from pydantic import BaseModel, Field, field_validator
 
 
 # Enums
-class WuerdigungsStatus(str, Enum):
+class WuerdigungsStatus(StrEnum):
     """Status of legal basis assessment (Würdigung)."""
     GENERIERT = "generiert"
     UNTERDRUECKT_UNVERIFIED = "unterdrueckt_unverified"
     NO_MATCH = "no_match"
 
 
-class AbwaegungsStatus(str, Enum):
+class AbwaegungsStatus(StrEnum):
     """Status of objection statement in approval workflow."""
     DRAFT = "draft"
     APPROVED = "approved"
 
 
-class EinwendungsTyp(str, Enum):
+class EinwendungsTyp(StrEnum):
     """Classification of objection type."""
     TYP_1 = "typ_1"
     TYP_2 = "typ_2"
@@ -35,7 +36,9 @@ class Rechtsgrundlage(BaseModel):
     """
     paragraph: str = Field(..., description="Paragraph reference")
     gesetz: str = Field(..., description="Law name or number")
-    chunk_id: str = Field(..., description="Back-reference to source chunk in retrieval corpus")
+    chunk_id: str = Field(
+        ..., description="Back-reference to source chunk in retrieval corpus"
+    )
     verified: bool = Field(default=False, description="Verified by verification logic")
 
     @field_validator("paragraph", "gesetz", "chunk_id", mode="before")
@@ -66,7 +69,9 @@ class CatalogMatch(BaseModel):
     """
     catalog_id: str = Field(..., description="ID of matched catalog entry")
     beschreibung: str = Field(..., description="Description of the match")
-    konfidenz_score: float = Field(..., ge=0.0, le=1.0, description="Confidence score 0-1")
+    konfidenz_score: float = Field(
+        ..., ge=0.0, le=1.0, description="Confidence score 0-1"
+    )
     match_stage: Literal["embedding", "llm_fallback"] = Field(
         ..., description="Matching method: embedding or LLM fallback"
     )
@@ -82,8 +87,12 @@ class RetrievalMetadata(BaseModel):
 
     This enables auditing retrieval decisions and debugging ranking failures.
     """
-    chunk_ids: list[str] = Field(default_factory=list, description="List of retrieved chunk IDs")
-    scores: list[float] = Field(default_factory=list, description="Relevance scores per chunk")
+    chunk_ids: list[str] = Field(
+        default_factory=list, description="List of retrieved chunk IDs"
+    )
+    scores: list[float] = Field(
+        default_factory=list, description="Relevance scores per chunk"
+    )
     routed_domain: str = Field(..., description="Domain the request was routed to")
     domain_classifier_confidence: float = Field(
         ..., ge=0.0, le=1.0, description="Confidence of domain classifier"
@@ -96,7 +105,9 @@ class RetrievalMetadata(BaseModel):
 class Freigabe(BaseModel):
     """Case worker approval for objection statement."""
     sachbearbeiter_id: str = Field(..., description="ID of approving case worker")
-    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), description="Timestamp of approval")
+    timestamp: datetime = Field(
+        default_factory=lambda: datetime.now(UTC), description="Timestamp of approval"
+    )
     kommentar: str | None = Field(default=None, description="Optional comment")
 
 
@@ -114,12 +125,16 @@ class Abwaegungsstellungnahme(BaseModel):
     Mutable: status and freigabe only change via apply_freigabe().
     """
     # Identification
-    einwendungs_id: str = Field(..., description="Unique ID of objection statement")
-    einwendungs_typ: EinwendungsTyp = Field(..., description="Objection type classification")
+    einwendungs_id: str = Field(
+        ..., description="Unique ID of objection statement"
+    )
+    einwendungs_typ: EinwendungsTyp = Field(
+        ..., description="Objection type classification"
+    )
 
     # Assessment
-    wuerdigungs_status: WuerdigungsStatus = Field(
-        default=None, description="Status of legal basis assessment (set during verification)"
+    wuerdigungs_status: WuerdigungsStatus | None = Field(
+        default=None, description="Status of assessment (set during verification)"
     )
     rechtsgrundlagen: list[Rechtsgrundlage] = Field(
         default_factory=list, description="Collection of atomic legal bases"
@@ -147,12 +162,17 @@ class Abwaegungsstellungnahme(BaseModel):
         default_factory=list, description="Processing steps for reproducibility"
     )
     model_version: str = Field(..., description="Version of LLM model used")
-    prompt_version: str = Field(..., description="Version of system prompt and instructions used")
-    retrieval_config_hash: str = Field(..., description="Hash of retrieval config (domain routing, top_k, filters)")
+    prompt_version: str = Field(
+        ..., description="Version of system prompt used"
+    )
+    retrieval_config_hash: str = Field(
+        ..., description="Hash of retrieval config (domain routing, top_k, filters)"
+    )
 
     # Legal Content (output of the system; the actual Abwaegungsstellungnahme text)
     sachverhalt: str | None = Field(
-        default=None, description="Factual representation of the case (extracted from raw_user_input)"
+        default=None,
+        description="Factual representation (extracted from raw_user_input)",
     )
     vorgebrachte_einwendung: str | None = Field(
         default=None, description="The objection as raised by the user"
@@ -161,7 +181,7 @@ class Abwaegungsstellungnahme(BaseModel):
         default=None, description="Legal assessment against applicable law"
     )
     abwaegungsergebnis: str | None = Field(
-        default=None, description="Final decision and reasoning (filled by approval workflow)"
+        default=None, description="Final decision and reasoning (approval workflow)"
     )
 
     # State Machine & Approval
@@ -169,10 +189,16 @@ class Abwaegungsstellungnahme(BaseModel):
     freigabe: Freigabe | None = Field(default=None, description="Case worker approval")
 
     # Timestamps
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
-    @field_validator("raw_user_input", "model_version", "prompt_version", "retrieval_config_hash", mode="before")
+    @field_validator(
+        "raw_user_input",
+        "model_version",
+        "prompt_version",
+        "retrieval_config_hash",
+        mode="before",
+    )
     @classmethod
     def validate_required_strings(cls, v: str) -> str:
         """Enforce non-empty strings for reproducibility fields.
@@ -190,7 +216,9 @@ class Abwaegungsstellungnahme(BaseModel):
             raise ValueError("must not be empty")
         return v.strip()
 
-    def apply_freigabe(self, sachbearbeiter_id: str, kommentar: str | None = None) -> None:
+    def apply_freigabe(
+        self, sachbearbeiter_id: str, kommentar: str | None = None
+    ) -> None:
         """Transition to APPROVED status via case worker approval.
 
         This is the only public method that moves the state from DRAFT to APPROVED.
@@ -218,7 +246,7 @@ class Abwaegungsstellungnahme(BaseModel):
             kommentar=kommentar
         )
         self.status = AbwaegungsStatus.APPROVED
-        self.updated_at = datetime.now(timezone.utc)
+        self.updated_at = datetime.now(UTC)
 
 
 # Output Models for BC Boundaries
@@ -237,15 +265,55 @@ class IngestionResult(BaseModel):
 class TriageResult(BaseModel):
     """Output of Triage bounded context.
 
-    DTO for cross-context communication. Represents the triage pipeline output.
-    Lives in core/models.py for Coordinator visibility per Bounded Context Isolation rule.
-    No match is a valid result per ADR-002; catalog_match can be None.
+    DTO for cross-context communication. Triage pipeline output for
+    Coordinator visibility per Bounded Context Isolation rule. No match
+    is a valid result per ADR-002; catalog_match can be None.
     """
     catalog_match: CatalogMatch | None = Field(
-        default=None, description="Result of catalog matching, or None if no match found"
+        default=None, description="Catalog match result, or None if no match"
     )
-    einwendungs_typ: EinwendungsTyp = Field(..., description="Classified objection type")
+    einwendungs_typ: EinwendungsTyp = Field(
+        ..., description="Classified objection type"
+    )
     extracted_arguments: list[str] = Field(..., description="Extracted arguments")
     triage_confidence: float = Field(
         ..., ge=0.0, le=1.0, description="Confidence of triage classification"
     )
+
+
+# Retrieval Value Object
+class RetrievedChunk(BaseModel):
+    """Retrieved document chunk from the RAG retriever.
+
+    Represents a single chunk returned by the retriever ranked by relevance
+    to a query embedding. The paragraph_id is the canonical form used for
+    auditing and legal reference (e.g., baugb_§3_abs1). Score is the
+    relevance score from the retriever (0-1, higher = more relevant).
+    """
+    chunk_id: str = Field(..., description="Unique ID of this chunk in the corpus")
+    paragraph_id: str = Field(
+        ..., description="Canonical paragraph identifier (e.g., baugb_§3_abs1)"
+    )
+    gesetz: str = Field(..., description="Law name or number")
+    text: str = Field(..., description="Full text content of the chunk")
+    score: float = Field(
+        ..., ge=0.0, le=1.0, description="Relevance score from retriever"
+    )
+
+    @field_validator("chunk_id", "paragraph_id", "gesetz", "text", mode="before")
+    @classmethod
+    def validate_non_empty_strings(cls, v: str) -> str:
+        """Enforce non-empty strings for all content fields.
+
+        Args:
+            v: String value to validate.
+
+        Returns:
+            Validated string.
+
+        Raises:
+            ValueError: If string is empty.
+        """
+        if not v or not v.strip():
+            raise ValueError("must not be empty")
+        return v.strip()

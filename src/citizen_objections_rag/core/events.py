@@ -1,10 +1,11 @@
-from datetime import datetime, timezone
-from enum import Enum
+from datetime import UTC, datetime
+from enum import StrEnum
 from typing import Any
+
 from pydantic import BaseModel, Field, field_validator
 
 
-class AuditEventType(str, Enum):
+class AuditEventType(StrEnum):
     """Classification of audit event by pipeline stage."""
     INGESTION = "ingestion"
     TRIAGE = "triage"
@@ -30,12 +31,14 @@ class AuditEvent(BaseModel):
     event_type: AuditEventType = Field(..., description="Type of audit event")
     einwendungs_id: str = Field(..., description="Reference to objection statement")
     timestamp: datetime = Field(
-        default_factory=lambda: datetime.now(timezone.utc),
+        default_factory=lambda: datetime.now(UTC),
         description="Timestamp of event (UTC)"
     )
     payload: dict[str, Any] = Field(
         default_factory=dict,
-        description="Context-specific metadata (confidence scores, intermediate results, etc.)"
+        description=(
+            "Context-specific metadata (confidence scores, intermediate results, etc.)"
+        ),
     )
 
     @field_validator("event_id", "einwendungs_id", mode="before")
