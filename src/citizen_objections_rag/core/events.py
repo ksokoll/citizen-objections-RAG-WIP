@@ -37,7 +37,7 @@ class AuditEvent(BaseModel):
     einwendungs_id: str = Field(..., description="Reference to objection statement")
     timestamp: datetime = Field(
         default_factory=lambda: datetime.now(UTC),
-        description="Timestamp of event (UTC)"
+        description="Timestamp of event (UTC)",
     )
     payload: dict[str, Any] = Field(
         default_factory=dict,
