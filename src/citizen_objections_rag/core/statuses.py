@@ -1,5 +1,6 @@
 """Enumeration types for domain statuses and classifications."""
 
+# Naming convention: German for domain events, English for code identifiers
 from enum import StrEnum
 
 
@@ -8,7 +9,7 @@ class WuerdigungsStatus(StrEnum):
 
     GENERIERT = "generiert"
     UNTERDRUECKT_UNVERIFIED = "unterdrueckt_unverified"
-    NO_MATCH = "no_match"
+    KEIN_TREFFER = "kein_treffer"
 
 
 class AbwaegungsStatus(StrEnum):

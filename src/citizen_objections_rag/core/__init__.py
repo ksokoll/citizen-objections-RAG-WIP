@@ -3,6 +3,7 @@
 from .entities import (
     Abwaegungsstellungnahme,
     CatalogMatch,
+    Einwendung,
     Freigabe,
     Rechtsgrundlage,
     RetrievalMetadata,
@@ -34,6 +35,7 @@ __all__ = [
     # Entities
     "Abwaegungsstellungnahme",
     "CatalogMatch",
+    "Einwendung",
     "Freigabe",
     "Rechtsgrundlage",
     "RetrievalMetadata",

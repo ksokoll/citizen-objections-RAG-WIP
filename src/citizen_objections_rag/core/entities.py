@@ -87,11 +87,24 @@ class RetrievedChunk:
 
 
 @dataclass(frozen=True)
+class Einwendung:
+    """Raw citizen objection as received at the system boundary.
+
+    Carries the original input text and document identity. Referenced
+    by einwendungs_id throughout the pipeline. Immutable after ingestion.
+    transformation_chain is recorded in AuditLog, not here.
+    """
+
+    einwendungs_id: str
+    document_id: str
+    raw_text: str
+
+
+@dataclass(frozen=True)
 class Abwaegungsstellungnahme:
     """Core model: objection statement with state machine.
 
     This is the central aggregate for the entire objection workflow. It tracks:
-    - The original user input (for reproducibility)
     - Assessment against legal bases (Rechtsgrundlagen)
     - Triage classification and catalog matching
     - Retrieval metadata (for debugging and auditing)
@@ -101,12 +114,16 @@ class Abwaegungsstellungnahme:
     instance. The original instance is never modified.
     """
 
-    # Identification
+    # Required fields (no defaults) — must come first in dataclass
     einwendungs_id: str
     einwendungs_typ: EinwendungsTyp
+    wuerdigungs_status: WuerdigungsStatus
+    model_version: str
+    prompt_version: str
+    retrieval_config_hash: str
 
+    # Optional fields
     # Assessment
-    wuerdigungs_status: WuerdigungsStatus | None = None
     rechtsgrundlagen: list[Rechtsgrundlage] = field(default_factory=list)
 
     # Triage & Catalog
@@ -116,13 +133,6 @@ class Abwaegungsstellungnahme:
 
     # Retrieval
     retrieval_metadata: RetrievalMetadata | None = None
-
-    # Reproducibility (non-negotiable per ADR-011: enables audit trail)
-    raw_user_input: str = ""
-    transformation_chain: list[str] = field(default_factory=list)
-    model_version: str = ""
-    prompt_version: str = ""
-    retrieval_config_hash: str = ""
 
     # Legal Content (output of the system; the actual
     # Abwaegungsstellungnahme text)
@@ -138,6 +148,18 @@ class Abwaegungsstellungnahme:
     # Timestamps
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+
+    def __post_init__(self) -> None:
+        """Enforce state machine invariant at construction time.
+
+        Raises:
+            ValueError: If status is APPROVED but freigabe is None.
+        """
+        if self.status == AbwaegungsStatus.APPROVED and self.freigabe is None:
+            raise ValueError(
+                "Abwaegungsstellungnahme with status=APPROVED must have freigabe set. "
+                "Use apply_freigabe() instead of constructing directly."
+            )
 
     def apply_freigabe(self, freigabe: Freigabe) -> Abwaegungsstellungnahme:
         """Transition to APPROVED status via case worker approval.

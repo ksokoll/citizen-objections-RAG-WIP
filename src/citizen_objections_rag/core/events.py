@@ -2,21 +2,26 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+# Naming convention: German for domain events, English for code identifiers
 
 
 class AuditEventType(StrEnum):
     """Classification of audit event by pipeline stage."""
-    INGESTION = "ingestion"
+
+    EINGANG = "eingang"
     TRIAGE = "triage"
-    DRAFT_GENERATED = "draft_generated"
-    DRAFT_SUPPRESSED = "draft_suppressed"
-    NO_MATCH = "no_match"
+    ENTWURF_GENERIERT = "entwurf_generiert"
+    ENTWURF_UNTERDRUECKT = "entwurf_unterdrueckt"
+    KEIN_TREFFER = "kein_treffer"
     FREIGABE = "freigabe"
-    PIPELINE_ERROR = "pipeline_error"
+    PIPELINE_FEHLER = "pipeline_fehler"
 
 
 class AuditEvent(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
     """Append-only audit event for the objection workflow.
 
     All state changes in the objection workflow must emit an AuditEvent.

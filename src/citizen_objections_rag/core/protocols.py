@@ -46,7 +46,7 @@ class KatalogMatcherProtocol(Protocol):
     Matches extracted argument text against the predefined catalog of
     objection types and handling rules. Returns None when no entry exceeds
     the confidence threshold. The Coordinator is responsible for emitting
-    a NO_MATCH event if needed; this Protocol only returns matching results.
+    a KEIN_TREFFER event if needed; this Protocol only returns matching results.
     """
 
     def match(self, text: str) -> CatalogMatch | None: ...
