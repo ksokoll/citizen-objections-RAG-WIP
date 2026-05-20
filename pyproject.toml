@@ -3,28 +3,42 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "datacenter-behoerdencase"
+name = "citizen-objections-rag"
 version = "0.1.0"
-description = "LLM-assisted Abwägungsstellungnahme pipeline for Einwendungen im Beteiligungsverfahren"
+description = "RAG system for processing mass citizen objections in German public participation procedures"
 requires-python = ">=3.11"
-dependencies = []
+dependencies = [
+    "pydantic>=2.0",
+    "faiss-cpu>=1.7",
+    "numpy>=1.26",
+    "anthropic>=0.25",
+    "openai>=1.30",
+    "python-dotenv>=1.0",
+    sentence-transformers
+]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0",
     "pytest-cov>=5.0",
+    "ruff>=0.4",
+    "mypy>=1.10",
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/einwendungen"]
+packages = ["src/citizen_objections_rag"]
+
+[tool.ruff]
+line-length = 88
+src = ["src"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "ANN"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+files = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["src"]
-
-[tool.ruff]
-line-length = 100
-target-version = "py311"
-
-[tool.ruff.lint]
-select = ["E", "F", "I"]
