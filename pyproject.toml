@@ -40,6 +40,8 @@ ignore = ["ANN101", "ANN102"]
 python_version = "3.11"
 strict = true
 files = ["src"]
+mypy_path = "src"
+explicit_package_bases = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
