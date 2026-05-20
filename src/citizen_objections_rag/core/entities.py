@@ -1,36 +1,15 @@
+"""Domain entities (frozen dataclasses) for the objection workflow."""
+
 from __future__ import annotations
 
 import dataclasses
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from enum import StrEnum
 from typing import Literal
 
-
-# Enums
-class WuerdigungsStatus(StrEnum):
-    """Status of legal basis assessment (Würdigung)."""
-
-    GENERIERT = "generiert"
-    UNTERDRUECKT_UNVERIFIED = "unterdrueckt_unverified"
-    NO_MATCH = "no_match"
+from .statuses import AbwaegungsStatus, EinwendungsTyp, WuerdigungsStatus
 
 
-class AbwaegungsStatus(StrEnum):
-    """Status of objection statement in approval workflow."""
-
-    DRAFT = "draft"
-    APPROVED = "approved"
-
-
-class EinwendungsTyp(StrEnum):
-    """Classification of objection type."""
-
-    TYP_1 = "typ_1"
-    TYP_2 = "typ_2"
-
-
-# Core Models
 @dataclass(frozen=True)
 class Rechtsgrundlage:
     """Atomic unit of legal basis assessment.
@@ -88,6 +67,23 @@ class Freigabe:
     sachbearbeiter_id: str
     timestamp: datetime = field(default_factory=lambda: datetime.now(UTC))
     kommentar: str | None = None
+
+
+@dataclass(frozen=True)
+class RetrievedChunk:
+    """Retrieved document chunk from the RAG retriever.
+
+    Represents a single chunk returned by the retriever ranked by relevance
+    to a query embedding. The paragraph_id is the canonical form used for
+    auditing and legal reference (e.g., baugb_§3_abs1). Score is the
+    relevance score from the retriever (0-1, higher = more relevant).
+    """
+
+    chunk_id: str
+    paragraph_id: str
+    gesetz: str
+    text: str
+    score: float
 
 
 @dataclass(frozen=True)
@@ -169,51 +165,3 @@ class Abwaegungsstellungnahme:
             freigabe=freigabe,
             updated_at=datetime.now(UTC),
         )
-
-
-# Output Models for BC Boundaries
-@dataclass(frozen=True)
-class IngestionResult:
-    """Output of Ingestion bounded context.
-
-    DTO for cross-context communication. Represents the ingestion pipeline
-    output before passing to downstream contexts. Lives in core/data_structures.py
-    for Coordinator visibility per Bounded Context Isolation rule.
-    """
-
-    document_id: str
-    clean_text: str
-    raw_document_path: str
-
-
-@dataclass(frozen=True)
-class TriageResult:
-    """Output of Triage bounded context.
-
-    DTO for cross-context communication. Triage pipeline output for Coordinator
-    visibility per Bounded Context Isolation rule. No match is a valid result
-    per ADR-002; catalog_match can be None.
-    """
-
-    catalog_match: CatalogMatch | None
-    einwendungs_typ: EinwendungsTyp
-    extracted_arguments: list[str]
-    triage_confidence: float
-
-
-# Retrieval Value Object
-@dataclass(frozen=True)
-class RetrievedChunk:
-    """Retrieved document chunk from the RAG retriever.
-
-    Represents a single chunk returned by the retriever ranked by relevance
-    to a query embedding. The paragraph_id is the canonical form used for
-    auditing and legal reference (e.g., baugb_§3_abs1). Score is the
-    relevance score from the retriever (0-1, higher = more relevant).
-    """
-
-    chunk_id: str
-    paragraph_id: str
-    gesetz: str
-    text: str
-    score: float

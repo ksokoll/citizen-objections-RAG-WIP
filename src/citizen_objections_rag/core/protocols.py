@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Protocol
 
-from .data_structures import CatalogMatch, RetrievedChunk
+from .entities import CatalogMatch, RetrievedChunk
 from .events import AuditEvent, AuditEventType
 
 

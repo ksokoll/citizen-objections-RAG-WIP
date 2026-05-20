@@ -1,19 +1,21 @@
 """Core domain models and protocols."""
 
-from .data_structures import (
-    AbwaegungsStatus,
+from .entities import (
     Abwaegungsstellungnahme,
     CatalogMatch,
-    EinwendungsTyp,
     Freigabe,
-    IngestionResult,
     Rechtsgrundlage,
     RetrievalMetadata,
     RetrievedChunk,
-    TriageResult,
-    WuerdigungsStatus,
 )
 from .events import AuditEvent, AuditEventType
+from .failures import (
+    AuditLogError,
+    GenerationError,
+    IngestionError,
+    RetrievalError,
+    TriageError,
+)
 from .protocols import (
     AuditEventPublisherProtocol,
     EmbedderProtocol,
@@ -21,20 +23,30 @@ from .protocols import (
     LLMClientProtocol,
     RetrieverProtocol,
 )
+from .results import IngestionResult, TriageResult
+from .statuses import AbwaegungsStatus, EinwendungsTyp, WuerdigungsStatus
 
 __all__ = [
-    # Data structures
+    # Statuses
     "AbwaegungsStatus",
+    "EinwendungsTyp",
+    "WuerdigungsStatus",
+    # Entities
     "Abwaegungsstellungnahme",
     "CatalogMatch",
-    "EinwendungsTyp",
     "Freigabe",
-    "IngestionResult",
+    "Rechtsgrundlage",
     "RetrievalMetadata",
     "RetrievedChunk",
-    "Rechtsgrundlage",
+    # Results
+    "IngestionResult",
     "TriageResult",
-    "WuerdigungsStatus",
+    # Failures
+    "AuditLogError",
+    "GenerationError",
+    "IngestionError",
+    "RetrievalError",
+    "TriageError",
     # Events
     "AuditEvent",
     "AuditEventType",
