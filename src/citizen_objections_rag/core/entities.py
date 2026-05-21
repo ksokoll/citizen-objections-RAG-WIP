@@ -5,7 +5,6 @@ from __future__ import annotations
 import dataclasses
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Literal
 
 from .statuses import AbwaegungsStatus, EinwendungsTyp, WuerdigungsStatus
 
@@ -17,7 +16,7 @@ class Rechtsgrundlage:
     Represents a single legal reference extracted from the law, linked to
     the original source chunk for reproducibility and verification tracking.
     The verified flag indicates whether this reference passed automated
-    verification (e.g., paragraph existence check against law database).
+    verification against the retrieved corpus (ADR-006 Layer 2).
     """
 
     paragraph: str
@@ -27,30 +26,12 @@ class Rechtsgrundlage:
 
 
 @dataclass(frozen=True)
-class CatalogMatch:
-    """Result of triage matching against catalog.
-
-    Tracks which catalog entry was matched and via which method.
-    match_stage indicates whether embedding similarity or LLM fallback
-    was used to produce the match, which is critical for reproducibility.
-    """
-
-    catalog_id: str
-    beschreibung: str
-    konfidenz_score: float
-    match_stage: Literal["embedding", "llm_fallback"]
-
-
-@dataclass(frozen=True)
 class RetrievalMetadata:
-    """Documentation of RAG retrieval step.
+    """Documentation of a single RAG retrieval step.
 
-    Captures the full trajectory of the retrieval process:
-    - Which domain classifier routed the query
-    - Which chunks were retrieved and their scores
-    - Whether fallback to full corpus occurred
-
-    This enables auditing retrieval decisions and debugging ranking failures.
+    Captures the full trajectory of one per-argument retrieval call:
+    which domain was routed to, which chunks were retrieved, and whether
+    the confidence fallback to full corpus was triggered (ADR-005).
     """
 
     chunk_ids: list[str] = field(default_factory=list)
@@ -61,8 +42,42 @@ class RetrievalMetadata:
 
 
 @dataclass(frozen=True)
+class ExtrahiertesArgument:
+    """A single discrete legal argument extracted from an Einwendung.
+
+    Lifecycle: fields in the first block are set by Triage. Fields in
+    the second block are set by ResponseDrafting via dataclasses.replace().
+    The frozen contract is preserved: ResponseDrafting always produces a
+    new instance, never mutates the Triage output.
+
+    argument_verified reflects ADR-006 Layer 1: whether original_zitat
+    is a substring of the masked source document.
+    wuerdigungs_status reflects ADR-006 Layer 2: whether all
+    Rechtsgrundlagen for this argument passed §-reference verification.
+    """
+
+    # --- Set by Triage ---
+    argument_id: str
+    argument_text: str  # normalized for vector search
+    original_zitat: str  # verbatim quote for ADR-006 Layer 1 check
+    catalog_id: str | None  # predefined domain enum; None = NoMatchEvent
+    einwendungs_typ: EinwendungsTyp
+
+    # --- Set by ResponseDrafting via dataclasses.replace() ---
+    argument_verified: bool = False
+    retrieval_metadata: RetrievalMetadata | None = None
+    rechtsgrundlagen: list[Rechtsgrundlage] = field(default_factory=list)
+    rechtliche_wuerdigung: str | None = None
+    wuerdigungs_status: WuerdigungsStatus = WuerdigungsStatus.KEIN_TREFFER
+
+
+@dataclass(frozen=True)
 class Freigabe:
-    """Case worker approval for objection statement."""
+    """Case worker approval record for an Abwaegungsstellungnahme.
+
+    Immutable after creation. Set exclusively via apply_freigabe() on
+    Abwaegungsstellungnahme to enforce the state machine (ADR-008).
+    """
 
     sachbearbeiter_id: str
     timestamp: datetime = field(default_factory=lambda: datetime.now(UTC))
@@ -71,12 +86,11 @@ class Freigabe:
 
 @dataclass(frozen=True)
 class RetrievedChunk:
-    """Retrieved document chunk from the RAG retriever.
+    """A single document chunk returned by the RAG retriever.
 
-    Represents a single chunk returned by the retriever ranked by relevance
-    to a query embedding. The paragraph_id is the canonical form used for
-    auditing and legal reference (e.g., baugb_§3_abs1). Score is the
-    relevance score from the retriever (0-1, higher = more relevant).
+    paragraph_id is the canonical form used for §-reference verification
+    (e.g. baugb_§3_abs1). Score is the relevance score from the retriever,
+    normalised to [0, 1] via L2-normalised inner product (ADR-003).
     """
 
     chunk_id: str
@@ -92,7 +106,7 @@ class Einwendung:
 
     Carries the original input text and document identity. Referenced
     by einwendungs_id throughout the pipeline. Immutable after ingestion.
-    transformation_chain is recorded in AuditLog, not here.
+    PII is present here; downstream contexts receive only masked text.
     """
 
     einwendungs_id: str
@@ -102,52 +116,57 @@ class Einwendung:
 
 @dataclass(frozen=True)
 class Abwaegungsstellungnahme:
-    """Core model: objection statement with state machine.
+    """Central aggregate of the objection workflow.
 
-    This is the central aggregate for the entire objection workflow. It tracks:
-    - Assessment against legal bases (Rechtsgrundlagen)
-    - Triage classification and catalog matching
-    - Retrieval metadata (for debugging and auditing)
-    - State transitions via apply_freigabe() (state machine enforced)
+    Holds the per-argument results produced by Triage and ResponseDrafting,
+    plus document-level fields for the final Abwägungsstellungnahme text.
+    wuerdigungs_status is a computed property derived from the per-argument
+    statuses: the aggregate reflects the worst-case outcome across all
+    arguments (ADR-006).
 
-    Immutable: all state transitions via apply_freigabe(), which returns a new
-    instance. The original instance is never modified.
+    State transitions happen exclusively via apply_freigabe(), which returns
+    a new APPROVED instance. Direct construction of APPROVED instances is
+    blocked by __post_init__ (ADR-008).
     """
 
-    # Required fields (no defaults) — must come first in dataclass
+    # Required reproducibility fields (ADR-009)
     einwendungs_id: str
     einwendungs_typ: EinwendungsTyp
-    wuerdigungs_status: WuerdigungsStatus
     model_version: str
     prompt_version: str
     retrieval_config_hash: str
 
-    # Optional fields
-    # Assessment
-    rechtsgrundlagen: list[Rechtsgrundlage] = field(default_factory=list)
+    # Per-argument results (core of the argumentwise model, ADR-013)
+    argumente: list[ExtrahiertesArgument] = field(default_factory=list)
 
-    # Triage & Catalog
-    catalog_match: CatalogMatch | None = None
-    extracted_arguments: list[str] = field(default_factory=list)
-    triage_confidence: float = 0.0
-
-    # Retrieval
-    retrieval_metadata: RetrievalMetadata | None = None
-
-    # Legal Content (output of the system; the actual
-    # Abwaegungsstellungnahme text)
+    # Document-level legal content
     sachverhalt: str | None = None
     vorgebrachte_einwendung: str | None = None
-    rechtliche_wuerdigung: str | None = None
     abwaegungsergebnis: str | None = None
 
-    # State Machine & Approval
+    # State machine (ADR-008)
     status: AbwaegungsStatus = AbwaegungsStatus.DRAFT
     freigabe: Freigabe | None = None
 
     # Timestamps
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+
+    @property
+    def wuerdigungs_status(self) -> WuerdigungsStatus:
+        """Aggregate Würdigungs-Status derived from per-argument statuses.
+
+        Returns:
+            KEIN_TREFFER if no arguments are present.
+            UNTERDRUECKT_UNVERIFIED if any argument has that status.
+            GENERIERT if all arguments are verified and generated.
+        """
+        if not self.argumente:
+            return WuerdigungsStatus.KEIN_TREFFER
+        statuses = {a.wuerdigungs_status for a in self.argumente}
+        if WuerdigungsStatus.UNTERDRUECKT_UNVERIFIED in statuses:
+            return WuerdigungsStatus.UNTERDRUECKT_UNVERIFIED
+        return WuerdigungsStatus.GENERIERT
 
     def __post_init__(self) -> None:
         """Enforce state machine invariant at construction time.
@@ -157,15 +176,15 @@ class Abwaegungsstellungnahme:
         """
         if self.status == AbwaegungsStatus.APPROVED and self.freigabe is None:
             raise ValueError(
-                "Abwaegungsstellungnahme with status=APPROVED must have freigabe set. "
-                "Use apply_freigabe() instead of constructing directly."
+                "Abwaegungsstellungnahme with status=APPROVED must have freigabe "
+                "set. Use apply_freigabe() instead of constructing directly."
             )
 
     def apply_freigabe(self, freigabe: Freigabe) -> Abwaegungsstellungnahme:
-        """Transition to APPROVED status via case worker approval.
+        """Transition from DRAFT to APPROVED via case worker approval.
 
-        Returns a new Abwaegungsstellungnahme instance with status APPROVED
-        and freigabe set. The original instance is not modified (frozen).
+        Returns a new instance with status APPROVED and freigabe set.
+        The original instance is not modified (frozen).
 
         Args:
             freigabe: The Freigabe record created by the Sachbearbeiter.

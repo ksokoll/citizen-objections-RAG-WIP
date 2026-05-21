@@ -115,32 +115,30 @@ class IngestionResult:
 ## Context 2: Triage
 
 ### 1. Responsibility
-Extract the core legal arguments from the clean text, match them against the predefined catalog, and classify the objection as TYP_1 or TYP_2.
+Extract all discrete legal arguments from the clean text, classify each against the predefined catalog, and return a structured argument list for per-argument retrieval and generation.
 
 ### 2. Why It's Separate
-Catalog matching requires its own embedding index and its own update cycle: new catalog entries can be added without touching retrieval or generation. The Triage domain model (catalog entries, match confidence, objection type) changes at a different rate and requires different domain expertise (administrative law, not NLP) than ResponseDrafting. Failure modes differ: a failed catalog match is a `NoMatchEvent`, not an error; a failed LLM call in generation is a different class of failure.
+Argument extraction requires its own LLM call with a domain-specific schema and catalog constraint. The extraction logic, catalog definition, and failure modes are distinct from retrieval and generation. A failed extraction is a `TriageError`; a failed generation is a `GenerationError`. Catalog updates happen here without touching ResponseDrafting.
 
 ### 3. Interface Contract
 
 ```python
 def triage(clean_text: str) -> TriageResult:
-    """Extract arguments and match against the predefined catalog.
+    """Extract legal arguments and classify each against the catalog.
 
-    Embeds the clean_text, computes cosine similarity against
-    all catalog entry embeddings, and returns a match if any
-    entry exceeds the confidence threshold.
+    Single structured LLM call returns list[ExtrahiertesArgument].
+    Each argument contains a normalized search text, a verbatim
+    quote for verification, and a catalog_id from the predefined enum.
 
     Assumes:
         clean_text has been PII-masked by DocumentIngestion.
-        The catalog index is loaded and non-empty.
 
     Does NOT check:
-        Whether the text is coherent or well-formed.
-        Whether the matched legal domain is correct.
-        Whether a response can be generated.
+        Whether extracted arguments are legally correct.
+        Whether a response can be generated for each argument.
 
     Raises:
-        TriageError: If the embedding model call fails.
+        TriageError: If the LLM call fails.
     """
 ```
 
@@ -153,53 +151,59 @@ clean_text: str
 # Output
 @dataclass
 class TriageResult:
-    catalog_match: CatalogMatch | None  # None triggers NoMatchEvent in pipeline
     einwendungs_typ: EinwendungsTyp
-    extracted_arguments: str            # LLM-extracted argument summary
-    triage_confidence: float
+    extracted_arguments: list[ExtrahiertesArgument]
+    # Empty list is valid: TYP_1 document with no legal arguments.
+    # Pipeline sets wuerdigungs_status=KEIN_TREFFER.
+
+@dataclass
+class ExtrahiertesArgument:
+    argument_id: str
+    argument_text: str       # normalized for vector search
+    original_zitat: str      # verbatim quote for ADR-006 verification
+    catalog_id: str | None   # from predefined enum; None triggers NoMatchEvent
 ```
 
 ### 5. Business Rules
 
-1. **Catalog is predefined and maintained externally.** The Triage context never creates new catalog entries autonomously. New entries require a deliberate catalog update workflow (out of scope for skeleton).
-2. **Match stage must be recorded.** Every `CatalogMatch` carries `match_stage: Literal["embedding", "llm_fallback"]` so downstream analysis can track how often the fallback path is used.
-3. **No match is a valid outcome, not an error.** When no catalog entry exceeds `catalog_match_threshold` and the LLM fallback also fails, `TriageResult.catalog_match` is `None`. The Coordinator handles this by emitting a `NoMatchEvent` and terminating the pipeline without generating a draft.
-4. **TYP_1 / TYP_2 classification is orthogonal to catalog match.** A single catalog entry (e.g. Umweltschutz) can receive both TYP_1 (informal paraphrase) and TYP_2 (formal legal citation) objections. The classification determines generation strategy, not retrieval domain.
-5. **Minimum five catalog entries required.** Two entries cannot verify that matching actually discriminates. The skeleton ships with five entries covering: Umweltschutz, Schwerlastverkehr, Lärmschutz, Verfahrensformalitäten, Artenschutz.
+1. **Single LLM call for extraction and classification.** Argument extraction, text normalization, and domain classification happen in one structured output call. No second preprocessing roundtrip.
+2. **Catalog is a constraint enum, not a matching target.** The LLM chooses `catalog_id` from the predefined set. It cannot invent new domain labels.
+3. **`original_zitat` is mandatory per argument.** Every extracted argument must contain a verbatim quote from the source document. Substring check against `clean_text` validates presence. Failed check marks argument as `ARGUMENT_UNVERIFIED`.
+4. **Empty extraction list is a valid terminal state.** TYP_1 documents with no identifiable legal argument return `extracted_arguments=[]`. Not a `TriageError`.
+5. **Per-argument `NoMatchEvent` does not abort the pipeline.** Arguments with `catalog_id=None` are skipped; remaining arguments are still processed.
 
-*Note: LLM classification fallback is introduced in `feat/domain-routing`. In the skeleton, only embedding similarity matching is active.*
+*Note: In the skeleton, the LLM call is stubbed. Triage returns a hardcoded `list[ExtrahiertesArgument]` covering the five catalog entries.*
 
 ### 6. Error Strategy
 
-- Embedding model failure: raise `TriageError` with the upstream exception.
-- Empty catalog: raise `TriageError("Catalog index is empty")` at init time, not at match time.
-- No match found: return `TriageResult(catalog_match=None, ...)`. Not an error.
+- LLM call failure: raise `TriageError` with the upstream exception.
+- Empty extraction list: return `TriageResult(extracted_arguments=[], ...)`. Not an error.
+- Argument verification failure (`original_zitat` not found): mark argument `ARGUMENT_UNVERIFIED`, continue with remaining arguments.
 
 ### 7. Dependencies
 
-**Skeleton:** `faiss-cpu`, `numpy`, `openai` (embeddings), `sentence-transformers` (multilingual model for German text).
-**feat/domain-routing:** `anthropic` (LLM classification fallback).
+**Skeleton:** `anthropic` (stubbed), stdlib.
+**feat/triage:** `anthropic` (real LLM call with structured output schema).
 
 ### 8. Test Scenarios
 
 | Scenario | Input | Expected Output |
 |---|---|---|
-| Clear match | Text about wind turbine noise | `CatalogMatch` for Lärmschutz, `match_stage="embedding"` |
-| Ambiguous input | Vague text with no clear legal argument | `catalog_match=None` |
-| Each of the five catalog themes | Representative text per theme | Correct catalog entry matched |
-| Confidence below threshold | Text unrelated to any catalog entry | `catalog_match=None` |
-| TYP_1 classification | Informal, emotional text | `einwendungs_typ=TYP_1` |
-| TYP_2 classification | Text citing specific §-references | `einwendungs_typ=TYP_2` |
+| TYP_2 document with three arguments | Legal text citing BauGB and BauNVO | Three `ExtrahiertesArgument` entries with correct `catalog_id` |
+| TYP_1 document | Informal complaint, no legal basis | `extracted_arguments=[]`, `einwendungs_typ=TYP_1` |
+| Argument with unverifiable zitat | Stub returns quote not in source text | Argument marked `ARGUMENT_UNVERIFIED` |
+| LLM call failure | Stubbed to raise exception | `TriageError` raised |
+| Mixed match / no-match | Two arguments: one with catalog_id, one without | One argument proceeds, one triggers `NoMatchEvent` |
 
 ---
 
 ## Context 3: ResponseDrafting
 
 ### 1. Responsibility
-Retrieve relevant legal norms from the Bundesrecht corpus and generate a structured Abwägungsstellungnahme draft, with post-hoc verification of all §-references against the retrieved sources.
+For each verified extracted argument, retrieve relevant legal norms from the domain-specific corpus, generate a Würdigung, verify all §-references, and aggregate into a single Abwägungsstellungnahme draft.
 
 ### 2. Why It's Separate
-ResponseDrafting has the highest infrastructure complexity in the system: it owns two retrieval indexes (catalog and norms), an LLM generation call, and a verification pass. Its failure modes are distinct from Triage: retrieval failure, generation failure, and verification failure are three independent failure classes. The RAG retrieval logic (chunking strategy, hybrid retrieval, RRF fusion) changes at a different rate from argument extraction. This is also the primary learning context for the portfolio: keeping it separate makes the RAG architecture visible and independently testable.
+ResponseDrafting owns the RAG pipeline: per-argument retrieval, LLM generation, and §-reference verification. Its failure modes (retrieval failure, generation failure, verification failure) are independent of argument extraction. The retrieval logic changes at a different rate from classification logic. This is the primary learning context for the portfolio.
 
 ### 3. Interface Contract
 
@@ -209,19 +213,19 @@ def draft(
     clean_text: str,
     document_id: str,
 ) -> Abwaegungsstellungnahme:
-    """Retrieve legal norms and generate a draft Abwägungsstellungnahme.
+    """Retrieve and generate per argument, aggregate into one draft.
 
-    Performs dense retrieval against the Bundesrecht corpus,
-    calls the LLM with retrieved context, verifies all
-    §-references in the output, and returns a fully populated
-    Abwaegungsstellungnahme in DRAFT status.
+    For each ExtrahiertesArgument with a valid catalog_id:
+    - Retrieve top-k chunks from the domain-specific corpus
+    - Generate a Würdigung grounded in retrieved context
+    - Verify all §-references against retrieved chunk_ids
 
     Assumes:
-        triage_result.catalog_match is not None (checked by Coordinator).
+        triage_result.extracted_arguments is non-empty.
         The norm index is loaded and non-empty.
 
     Does NOT check:
-        Whether the objection was correctly classified.
+        Whether arguments were correctly extracted.
         Whether the Sachbearbeiter will approve the draft.
 
     Raises:
@@ -239,129 +243,47 @@ clean_text: str
 document_id: str
 
 # Output
-Abwaegungsstellungnahme  # Always in DRAFT status. Never APPROVED.
-                         # wuerdigungs_status may be GENERIERT or
-                         # UNTERDRUECKT_UNVERIFIED depending on
-                         # verification outcome.
+Abwaegungsstellungnahme  # Always DRAFT. Never APPROVED.
+                         # wuerdigungs_status reflects worst-case
+                         # across all arguments: if any argument
+                         # has an unverified §-reference, the full
+                         # Würdigung is UNTERDRUECKT_UNVERIFIED.
 ```
 
 ### 5. Business Rules
 
-1. **ResponseDrafting never produces APPROVED status.** The `apply_freigabe()` transition is the Sachbearbeiter's responsibility, not this context's.
-2. **All §-references must be verified against retrieved chunk IDs.** Any reference not found in the retrieved chunks sets `verified=False` on the corresponding `Rechtsgrundlage`.
-3. **Hard Failure on any unverified Rechtsgrundlage.** If any `Rechtsgrundlage.verified == False`, `wuerdigungs_status` is set to `UNTERDRUECKT_UNVERIFIED` and `rechtliche_wuerdigung` and `abwaegungsergebnis` are set to `None`. See ADR-006.
-4. **Reproducibility fields are mandatory.** `model_version`, `prompt_version`, and `retrieval_config_hash` must be set on every returned `Abwaegungsstellungnahme`. No field may be `None` or an empty string.
-5. **The LLM may only cite norms present in the retrieval context.** The generation prompt explicitly prohibits citation of norms not in the provided context. Post-hoc verification catches any violation.
-6. **Generation strategy differs by EinwendungsTyp.** TYP_1 receives a concise, plain-language Würdigung. TYP_2 receives a precise legal Würdigung with explicit norm references. Same retrieval depth, different prompt.
+1. **ResponseDrafting never produces APPROVED status.**
+2. **Processing is per argument.** Each `ExtrahiertesArgument` with a valid `catalog_id` gets its own retrieval call scoped to its domain corpus partition.
+3. **Arguments with `catalog_id=None` are skipped.** They were already handled by `NoMatchEvent` in Triage.
+4. **§-reference verification per ADR-006.** Any unverified reference sets `wuerdigungs_status=UNTERDRUECKT_UNVERIFIED` for the entire draft.
+5. **Reproducibility fields are mandatory.** `model_version`, `prompt_version`, `retrieval_config_hash` must be set on every returned object.
+6. **Generation strategy differs by `EinwendungsTyp`.** TYP_1: concise plain-language Würdigung. TYP_2: precise legal Würdigung with explicit norm references. Same retrieval depth, different prompt.
 
-*Note: Verification logic and Hard Failure routing are introduced in `feat/verification`. The LLM stub in the skeleton returns a fixed string and produces no §-references, so `wuerdigungs_status` is always `GENERIERT` in skeleton runs. Hybrid retrieval (BM25 + RRF) is introduced in `feat/hybrid-retrieval`.*
+*Note: In the skeleton, LLM is stubbed and returns a fixed string. Verification always passes. Hybrid retrieval (BM25 + RRF) introduced in `feat/hybrid-retrieval`.*
 
 ### 6. Error Strategy
 
 - FAISS query failure: raise `RetrievalError`.
 - LLM call failure after retries: raise `GenerationError`.
-- Verification failure (unverified §-reference): not an error. Set `wuerdigungs_status=UNTERDRUECKT_UNVERIFIED`, return the object. This is a valid, expected outcome.
-- No norms retrieved (empty result set): return draft with `rechtsgrundlagen=[]` and `wuerdigungs_status=UNTERDRUECKT_UNVERIFIED`.
+- Unverified §-reference: set `wuerdigungs_status=UNTERDRUECKT_UNVERIFIED`, return object. Valid outcome.
+- All arguments skipped (all `catalog_id=None`): return draft with `wuerdigungs_status=KEIN_TREFFER`.
 
 ### 7. Dependencies
 
-**Skeleton:** `faiss-cpu`, `numpy`, `openai` (embeddings), `anthropic` (LLM generation, stubbed in skeleton).
+**Skeleton:** `faiss-cpu`, `numpy`, `openai` (embeddings), `anthropic` (stubbed).
 **feat/hybrid-retrieval:** `rank-bm25`.
-**feat/verification:** `re` (stdlib, §-reference normalization).
+**feat/verification:** `re` (stdlib).
 
 ### 8. Test Scenarios
 
 | Scenario | Input | Expected Output |
 |---|---|---|
-| Happy path (skeleton stub) | Valid `TriageResult`, short clean text | `Abwaegungsstellungnahme` with `status=DRAFT`, all reproducibility fields set |
-| TYP_1 input | `einwendungs_typ=TYP_1` | Draft generated with plain-language tone marker |
-| TYP_2 input | `einwendungs_typ=TYP_2` | Draft generated with legal precision tone marker |
-| Unverified §-reference (post-verification branch) | LLM output containing a hallucinated paragraph | `wuerdigungs_status=UNTERDRUECKT_UNVERIFIED`, `rechtliche_wuerdigung=None` |
-| Empty retrieval result | Norm index returns zero chunks | `wuerdigungs_status=UNTERDRUECKT_UNVERIFIED` |
-| Reproducibility fields | Any valid input | `model_version`, `prompt_version`, `retrieval_config_hash` all non-empty |
-
----
-
-## Context 4: AuditLog
-
-### 1. Responsibility
-Persist typed domain events from all other BCs in an append-only store, and expose a query interface for audit and investigation.
-
-### 2. Why It's Separate
-AuditLog has a fundamentally different persistence contract from all other contexts: writes are immutable by design and must never be rolled back, modified, or deleted. It has no dependency on domain logic and must remain writable even when other BCs fail. Keeping it separate means a ResponseDrafting failure does not prevent the audit event from being recorded. The regulatory retention requirement (Aufbewahrungspflicht) applies to AuditLog independently of whether the pipeline completed successfully.
-
-### 3. Interface Contract
-
-```python
-def publish(event: AuditEvent) -> None:
-    """Append a domain event to the audit store.
-
-    Writes are append-only. Calling publish() on an already-recorded
-    event_id raises AuditLogError rather than silently overwriting.
-
-    Assumes:
-        The store is writable (file system or future DB).
-
-    Does NOT check:
-        Whether the event content is valid domain data.
-        Whether the pipeline completed successfully.
-
-    Raises:
-        AuditLogError: If the store write fails or if event_id
-            already exists in the store.
-    """
-
-def query(
-    einwendungs_id: str | None = None,
-    wuerdigungs_status: WuerdigungsStatus | None = None,
-    after: datetime | None = None,
-    before: datetime | None = None,
-) -> list[AuditEvent]:
-    """Return events matching the given filters.
-
-    Returns an empty list if no events match. Never raises on
-    an empty result.
-
-    Raises:
-        AuditLogError: If the store read fails.
-    """
-```
-
-### 4. Input / Output
-
-```python
-# Input to publish()
-@dataclass
-class AuditEvent:
-    event_id: str                    # UUID, set by the emitting context
-    event_type: AuditEventType       # Enum: INGESTION, TRIAGE, DRAFT, FREIGABE
-    einwendungs_id: str
-    timestamp: datetime
-    payload: dict[str, Any]          # Context-specific detail
-
-# Output of query()
-list[AuditEvent]
-```
-
-### 5. Business Rules
-
-1. **Append-only.** No `UPDATE` or `DELETE` operations exist. The file is opened in append mode (`"a"`). Any implementation that allows modification violates the audit contract.
-2. **event_id is unique.** Duplicate event IDs raise `AuditLogError`. Idempotent replay requires a deduplication check on write.
-3. **AuditLog has no dependency on other BCs.** It does not import from `triage`, `document_ingestion`, or `response_drafting`. It consumes typed event payloads but knows nothing about their meaning.
-4. **Every pipeline step emits an event.** The Coordinator is responsible for emitting events at each step. AuditLog does not call into the pipeline; the pipeline calls into AuditLog.
-5. **Write failure does not suppress the domain result.** If AuditLog fails to write, the Coordinator logs the failure at ERROR level and continues. The audit failure is separately alertable. The domain result is not discarded because of an audit write failure.
-
-*Note: The skeleton implements AuditLog as a JSON Lines file. A database-backed implementation is deferred to a future branch.*
-
-### 6. Error Strategy
-
-- Store write failure: raise `AuditLogError` with the underlying OS error. The Coordinator catches this, logs at ERROR, and does not re-raise (per Business Rule 5).
-- Duplicate event_id: raise `AuditLogError("Duplicate event_id: {event_id}")`.
-- Empty query result: return `[]`. Not an error.
-
-### 7. Dependencies
-
-**Skeleton:** stdlib only (`json`, `pathlib`, `datetime`, `uuid`).
+| Happy path (skeleton stub) | Valid `TriageResult` with one argument | `Abwaegungsstellungnahme` with `status=DRAFT`, all reproducibility fields set |
+| Two arguments, different domains | BauGB + BauNVO arguments | Two retrieval calls, results aggregated |
+| TYP_1 input | `einwendungs_typ=TYP_1` | Plain-language tone in generated Würdigung |
+| TYP_2 input | `einwendungs_typ=TYP_2` | Legal precision tone, explicit norm references |
+| Unverified §-reference | LLM output with hallucinated paragraph | `wuerdigungs_status=UNTERDRUECKT_UNVERIFIED` |
+| All arguments catalog_id=None | Triage returned only unmatched arguments | `wuerdigungs_status=KEIN_TREFFER` |
 
 ### 8. Test Scenarios
 

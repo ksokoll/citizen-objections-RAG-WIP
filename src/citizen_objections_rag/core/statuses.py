@@ -10,6 +10,8 @@ class WuerdigungsStatus(StrEnum):
     GENERIERT = "generiert"
     UNTERDRUECKT_UNVERIFIED = "unterdrueckt_unverified"
     KEIN_TREFFER = "kein_treffer"
+    ARGUMENT_UNVERIFIZIERT = "argument_unverifiziert"
+    RECHTSGRUNDLAGE_UNVERIFIZIERT = "rechtsgrundlage_unverifiziert"
 
 
 class AbwaegungsStatus(StrEnum):
