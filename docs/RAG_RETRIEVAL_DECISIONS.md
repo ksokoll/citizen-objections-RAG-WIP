@@ -214,24 +214,66 @@ Q-B drops from 0.84 to 0.63 after Rank 1. This is real semantic signal, not nois
 
 **Notes on Q-A and Q-B:**
 
-Q-A: §214 Abs. 2 at Rank 1 is not incorrect. §214 governs the legal consequences
-of violating the FNP-BP development obligation that §8 Abs. 2 defines. For an
-objection raising an FNP contradiction, both norms are relevant. A production
-system would surface both to the Sachbearbeiter.
+Q-A: §214 Abs. 2 at Rank 1 (0.9547) vs §8 Abs. 2 at Rank 2 (0.9399) is a 0.015
+difference, effectively noise. Juristisch ist §8 Abs. 2 die Primärnorm (das
+Entwicklungsgebot selbst); §214 ist die Konsequenznorm (was passiert bei Verletzung).
+Ein Anwalt würde §8 Abs. 2 zuerst zitieren. §7 at Rank 3 (0.9193) is a residual
+false positive via token overlap. Both §214 and §8 Abs. 2 are in Top-5 context
+for the generation LLM, which is the operative criterion.
 
-Q-B: §1 Abs. 6 at Rank 1 is the better answer for this specific query. §1 Abs. 6
-explicitly enumerates weinbauliche and landwirtschaftliche Belange among those
-that must be weighed. §1 Abs. 7 (Abwägungsgebot) establishes the general
-obligation. The reranker correctly identified §1 Abs. 6 as more directly responsive
-to the query about these specific Belange.
+Q-B: §1 Abs. 6 at Rank 1 is the correct reranker decision for this query. §1 Abs. 6
+enumerates the specific Belange to be weighed (including Land- und Forstwirtschaft
+under Nr. 8); §1 Abs. 7 states the general Abwägungsgebot. For a query naming
+specific Belange, §1 Abs. 6 is more directly responsive. Note: §1 Abs. 6 does not
+mention Weinbau explicitly — that falls under Land- und Forstwirtschaft. The
+reranker's decision is correct; the earlier characterisation of "weinbauliche Belange
+explizit genannt" was imprecise.
 
 **Finding:** Cross-encoder reranking resolves the ranking failures from Spike C.
-The full retrieval stack (Subsection-Chunking + Hybrid BM25+FAISS+RRF +
-Cross-Encoder Reranker) delivers correct Top-3 results for all three test queries.
-The reranker is not an optional enhancement: without it, RRF score differences
-within the candidate pool are below 0.001, making Top-1 selection unreliable.
+All three correct answers appear in Top-5 context for the generation LLM. The
+reranker is not optional: without it, RRF score differences within the candidate
+pool are below 0.001, making Top-1 selection unreliable. Q-A residual issue
+(§214 vs §8 order) is within noise and both chunks reach the LLM context.
 
 **Decision:** Retrieval architecture validated end-to-end. Four-component stack
 confirmed: subsection chunking (ADR-004), hybrid BM25 + FAISS (ADR-003), RRF
 fusion (ADR-003), cross-encoder reranking (`feat/reranking`). ADR-003 amendment
-stands: reranking is a near-term branch, not a Phase-2 deferral.
+stands. See ADR-014 for reranker model choice rationale.
+
+---
+
+## Limitations of This Spike Series
+
+These spikes validate the retrieval architecture direction but are not a production
+benchmark. Three explicit limitations:
+
+**1. Three queries only.** All conclusions are drawn from Q-A, Q-B, Q-C. This is
+sufficient for architecture direction but not for production confidence. A proper
+evaluation requires a labelled dataset of 50-100 query-paragraph pairs covering
+the full catalog domain spread.
+
+**2. No quantitative Recall@K or MRR measurement.** Results are reported as
+rank positions and score differences, not as aggregated metrics. Before production,
+a systematic Recall@5 and MRR@3 measurement over the full query set is required.
+
+**3. No latency profiling.** Cross-encoder reranking on Top-20 is significantly
+more expensive than bi-encoder retrieval (estimated factor 5-10x). Skeleton latency
+is irrelevant; production latency budget for Sachbearbeiter-facing response time
+must be defined and measured before `feat/reranking` ships.
+
+---
+
+## Post-Skeleton Considerations
+
+- **Latency:** Cross-encoder on Top-20 pairs per query at inference time. Profile
+  before production deployment. Consider batching or async execution.
+- **Evaluation dataset:** Build a labelled set of (argument_text, expected_chunk_id)
+  pairs covering all five catalog domains. Minimum 50 pairs for meaningful metrics.
+- **German stemming:** Not validated as needed given Spike D results. Revisit only
+  if Q-B-style failures recur with different query formulations.
+- **Embedder upgrade:** `paraphrase-multilingual-mpnet-base-v2` (768-dim) or
+  `T-Systems-onsite/cross-en-de-roberta-sentence-transformer` are candidates if
+  recall problems emerge on a larger query set.
+- **Query formulation quality:** `ExtrahiertesArgument.argument_text` quality
+  directly determines retrieval quality. LLM extraction should produce normalized
+  legal terminology, not raw paraphrases. Architecture decision deferred post-skeleton.

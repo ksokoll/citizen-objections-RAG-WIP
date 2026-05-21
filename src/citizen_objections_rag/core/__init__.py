@@ -2,8 +2,8 @@
 
 from .entities import (
     Abwaegungsstellungnahme,
-    CatalogMatch,
     Einwendung,
+    ExtrahiertesArgument,
     Freigabe,
     Rechtsgrundlage,
     RetrievalMetadata,
@@ -20,7 +20,6 @@ from .failures import (
 from .protocols import (
     AuditEventPublisherProtocol,
     EmbedderProtocol,
-    KatalogMatcherProtocol,
     LLMClientProtocol,
     RetrieverProtocol,
 )
@@ -34,8 +33,8 @@ __all__ = [
     "WuerdigungsStatus",
     # Entities
     "Abwaegungsstellungnahme",
-    "CatalogMatch",
     "Einwendung",
+    "ExtrahiertesArgument",
     "Freigabe",
     "Rechtsgrundlage",
     "RetrievalMetadata",
@@ -55,7 +54,6 @@ __all__ = [
     # Protocols
     "AuditEventPublisherProtocol",
     "EmbedderProtocol",
-    "KatalogMatcherProtocol",
     "LLMClientProtocol",
     "RetrieverProtocol",
 ]

@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Protocol
 
-from .entities import CatalogMatch, RetrievedChunk
+from .entities import RetrievedChunk
 from .events import AuditEvent, AuditEventType
 
 
@@ -38,18 +38,6 @@ class RetrieverProtocol(Protocol):
     def retrieve(
         self, query_embedding: list[float], top_k: int = 5
     ) -> list[RetrievedChunk]: ...
-
-
-class KatalogMatcherProtocol(Protocol):
-    """Catalog matching for objection classification.
-
-    Matches extracted argument text against the predefined catalog of
-    objection types and handling rules. Returns None when no entry exceeds
-    the confidence threshold. The Coordinator is responsible for emitting
-    a KEIN_TREFFER event if needed; this Protocol only returns matching results.
-    """
-
-    def match(self, text: str) -> CatalogMatch | None: ...
 
 
 class AuditEventPublisherProtocol(Protocol):
