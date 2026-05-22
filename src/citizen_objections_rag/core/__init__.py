@@ -17,6 +17,8 @@ from .failures import (
     RetrievalError,
     TriageError,
 )
+
+# from .prompts import PromptTemplate
 from .protocols import (
     AuditEventPublisherProtocol,
     EmbedderProtocol,
