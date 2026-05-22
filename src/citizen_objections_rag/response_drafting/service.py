@@ -26,6 +26,7 @@ from citizen_objections_rag.response_drafting.prompts import (
     ABWAEGUNG_PROMPT,
     format_rechtsgrundlagen,
 )
+from citizen_objections_rag.triage.classification import classify_einwendungs_typ
 
 
 class ResponseDraftingService:
@@ -69,14 +70,14 @@ class ResponseDraftingService:
             GenerationError: If the LLM call fails.
         """
         processed = [
-            self._process_argument(arg, triage_result.einwendungs_typ)
+            self._process_argument(arg, arg.einwendungs_typ)
             for arg in triage_result.extracted_arguments
             if arg.catalog_id is not None and arg.argument_verified
         ]
 
         return Abwaegungsstellungnahme(
             einwendungs_id=document_id,
-            einwendungs_typ=triage_result.einwendungs_typ,
+            einwendungs_typ=classify_einwendungs_typ(triage_result.extracted_arguments),
             model_version=self._model_version,
             prompt_version=ABWAEGUNG_PROMPT.version,
             retrieval_config_hash="skeleton-stub",
