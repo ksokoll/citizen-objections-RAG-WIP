@@ -38,6 +38,11 @@ exclude = ["experiments"]
 select = ["E", "F", "I", "UP", "ANN"]
 ignore = ["ANN101", "ANN102"]
 
+[tool.ruff.lint.per-file-ignores]
+"src/citizen_objections_rag/triage/prompts.py" = ["E501"]
+"src/citizen_objections_rag/response_drafting/prompts.py" = ["E501"]
+"tests/**" = ["ANN"]
+
 [tool.mypy]
 python_version = "3.11"
 strict = true

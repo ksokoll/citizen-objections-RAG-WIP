@@ -57,7 +57,6 @@ class TestResponseDraftingServiceSkeleton:
             model_version="skeleton-v0.1",
         )
         triage_result = TriageResult(
-            einwendungs_typ=EinwendungsTyp.TYP_2,
             extracted_arguments=[make_argument()],
         )
 
@@ -75,7 +74,6 @@ class TestResponseDraftingServiceSkeleton:
             model_version="skeleton-v0.1",
         )
         triage_result = TriageResult(
-            einwendungs_typ=EinwendungsTyp.TYP_2,
             extracted_arguments=[make_argument()],
         )
 
@@ -95,7 +93,6 @@ class TestResponseDraftingServiceSkeleton:
             model_version="skeleton-v0.1",
         )
         triage_result = TriageResult(
-            einwendungs_typ=EinwendungsTyp.TYP_1,
             extracted_arguments=[make_argument(catalog_id=None)],
         )
 
@@ -113,7 +110,6 @@ class TestResponseDraftingServiceSkeleton:
             model_version="skeleton-v0.1",
         )
         triage_result = TriageResult(
-            einwendungs_typ=EinwendungsTyp.TYP_2,
             extracted_arguments=[make_argument(argument_verified=False)],
         )
 
@@ -133,7 +129,6 @@ class TestResponseDraftingServiceSkeleton:
             model_version="skeleton-v0.1",
         )
         triage_result = TriageResult(
-            einwendungs_typ=EinwendungsTyp.TYP_2,
             extracted_arguments=[make_argument()],
         )
 
@@ -151,7 +146,6 @@ class TestResponseDraftingServiceSkeleton:
             model_version="skeleton-v0.1",
         )
         triage_result = TriageResult(
-            einwendungs_typ=EinwendungsTyp.TYP_2,
             extracted_arguments=[make_argument()],
         )
 
@@ -169,7 +163,6 @@ class TestResponseDraftingServiceSkeleton:
             model_version="skeleton-v0.1",
         )
         triage_result = TriageResult(
-            einwendungs_typ=EinwendungsTyp.TYP_1,
             extracted_arguments=[],
         )
 

@@ -1,0 +1,358 @@
+[
+  {
+    "dokument": "einspruch_11",
+    "einreicher": "Dr. Klaus Bertram, Rechtsanwalt",
+    "schwerpunkt": "Planungsrecht / Bebauungsplan",
+    "explizit_zitierte_normen": [
+      {
+        "norm": "§ 8 Abs. 2 BauGB",
+        "fundstelle": "II.1, Fließtext",
+        "grund": "Widerspruch zum Flächennutzungsplan, fehlendes Parallelverfahren"
+      },
+      {
+        "norm": "§ 1 Abs. 7 BauGB",
+        "fundstelle": "II.2, Überschrift",
+        "grund": "Fehlerhafte Abwägung der betroffenen Belange"
+      },
+      {
+        "norm": "§ 1 Abs. 6 Nr. 8 BauGB",
+        "fundstelle": "II.2, Fließtext",
+        "grund": "Belange des Weinbaus, Fremdenverkehrs und der natürlichen Eigenart der Landschaft"
+      },
+      {
+        "norm": "§ 14 Abs. 2 BauNVO",
+        "fundstelle": "II.3, Fließtext",
+        "grund": "Rechenzentrum als fernmeldetechnische Anlage, keine klassische Gewerbenutzung"
+      },
+      {
+        "norm": "§ 11 BauNVO",
+        "fundstelle": "II.3 und III.3",
+        "grund": "Erforderliche Ausweisung als Sondergebiet statt GE"
+      }
+    ],
+    "inferierte_anwendbare_normen": [
+      {
+        "norm": "§ 8 BauNVO",
+        "begruendung": "GE-Festsetzung basiert juristisch auf § 8 BauNVO, wird im Text aber nicht explizit zitiert. Es wird nur 'Gewerbegebiet GE' und 'Baunutzungsverordnung (BauNVO)' allgemein erwähnt.",
+        "grund_in_ground_truth": "Fehlerhafte Festsetzung als Gewerbegebiet"
+      }
+    ]
+  },
+  {
+    "dokument": "einspruch_12",
+    "einreicher": "Björn Sauer, Dipl.-Ing. Wasserwirtschaft",
+    "schwerpunkt": "Wasserrecht / Kühlwassernutzung Mosel",
+    "explizit_zitierte_normen": [
+      {
+        "norm": "§ 9 Abs. 1 Nr. 1 WHG",
+        "fundstelle": "II.1, Fließtext",
+        "grund": "Erlaubnispflicht für Wasserentnahme aus Gewässer"
+      },
+      {
+        "norm": "§ 8 WHG",
+        "fundstelle": "II.1, Fließtext (i.V.m. § 9 Abs. 1 Nr. 1 WHG)",
+        "grund": "Wasserrechtliche Erlaubnis als Voraussetzung jeder Gewässerbenutzung"
+      },
+      {
+        "norm": "§ 57 WHG",
+        "fundstelle": "III, Fließtext",
+        "grund": "Gesonderte Prüfpflicht bei thermischer Belastung durch Kühlwassereinleitung"
+      },
+      {
+        "norm": "Wasserhaushaltsgesetz (WHG)",
+        "fundstelle": "II.2, Fließtext",
+        "grund": "Mosel als Bundeswasserstraße, allgemeiner Rahmen",
+        "anmerkung": "Gesetzes-Bezeichnung ohne Paragraphen-Spezifikation"
+      },
+      {
+        "norm": "Bundeswasserstraßengesetz (WaStrG)",
+        "fundstelle": "II.2, Fließtext",
+        "grund": "Abstimmungspflicht mit Wasserstraßen- und Schifffahrtsverwaltung des Bundes",
+        "anmerkung": "Gesetzes-Bezeichnung ohne Paragraphen-Spezifikation"
+      }
+    ],
+    "inferierte_anwendbare_normen": [
+      {
+        "norm": "Landesrechtliche Schutzgebietsverordnung Rheinland-Pfalz",
+        "begruendung": "Text erwähnt generisch 'Schutzgebietsverordnungen' und 'nach Landesrecht festgesetzten Trinkwasserschutzgebiets', aber nicht die spezifische landesrechtliche Verordnung namentlich. Konzept implizit angesprochen, formal nicht zitiert.",
+        "grund_in_ground_truth": "Lage im Trinkwasserschutzgebiet Zone III, Vereinbarkeitsprüfung erforderlich"
+      }
+    ]
+  },
+  {
+    "dokument": "einspruch_13",
+    "einreicher": "Ingrid und Paul Nessler, vertreten durch Dipl.-Ing. Akustik Thomas Reiff",
+    "schwerpunkt": "Lärmschutzrecht / Schallgutachten",
+    "explizit_zitierte_normen": [
+      {
+        "norm": "TA Lärm",
+        "fundstelle": "II.1, II.3, II.4 (mehrfach)",
+        "grund": "Nachtzeitwert 40 dB(A) für allgemeines Wohngebiet, Impulszuschläge, Ton- und Impulshaltigkeit"
+      },
+      {
+        "norm": "TA Lärm Anhang A.1.5",
+        "fundstelle": "II.1, Fließtext",
+        "grund": "Gesonderte Prüfpflicht für tieffrequente Geräusche"
+      },
+      {
+        "norm": "DIN 45680",
+        "fundstelle": "II.1 und III.1",
+        "grund": "Messung und Bewertung tieffrequenter Geräuschimmissionen"
+      }
+    ],
+    "inferierte_anwendbare_normen": []
+  },
+  {
+    "dokument": "einspruch_14",
+    "einreicher": "NABU Kreisgruppe Bernkastel-Wittlich e.V.",
+    "schwerpunkt": "Naturschutzrecht / Artenschutz / FFH",
+    "explizit_zitierte_normen": [
+      {
+        "norm": "§ 4 Abs. 2 BauGB",
+        "fundstelle": "Untertitel (Stellungnahme gemäß ...)",
+        "grund": "Beteiligungsrecht anerkannter Naturschutzverbände als Träger öffentlicher Belange"
+      },
+      {
+        "norm": "§ 63 BNatSchG",
+        "fundstelle": "Untertitel (i.V.m. § 4 Abs. 2 BauGB)",
+        "grund": "Mitwirkungsrecht anerkannter Naturschutzvereinigungen"
+      },
+      {
+        "norm": "§ 2a BauGB",
+        "fundstelle": "II, Überschrift",
+        "grund": "Umweltbericht als Pflichtbestandteil der Bebauungsplanbegründung"
+      },
+      {
+        "norm": "Anlage 1 BauGB",
+        "fundstelle": "II, Überschrift",
+        "grund": "Inhaltliche Anforderungen an den Umweltbericht"
+      },
+      {
+        "norm": "§ 44 BNatSchG",
+        "fundstelle": "II.2 und III, Fließtext (mehrfach)",
+        "grund": "Artenschutzrechtliche Zugriffsverbote, unvollständige Artenschutzprüfung"
+      },
+      {
+        "norm": "§ 34 BNatSchG",
+        "fundstelle": "II.3, Fließtext (i.V.m. Art. 6 Abs. 3 FFH-Richtlinie)",
+        "grund": "FFH-Verträglichkeitsvorprüfung für Gebiet DE-6007-302"
+      },
+      {
+        "norm": "Art. 6 Abs. 3 FFH-Richtlinie",
+        "fundstelle": "II.3, Fließtext",
+        "grund": "Europarechtliche Grundlage der FFH-Verträglichkeitsprüfung",
+        "anmerkung": "Richtlinien-Nummer '(92/43/EWG)' ist Ergänzung der Ground Truth, steht nicht im Text"
+      }
+    ],
+    "inferierte_anwendbare_normen": []
+  },
+  {
+    "dokument": "einspruch_15",
+    "einreicher": "Initiative Energiefragen Mosel, Stefan Kramer",
+    "schwerpunkt": "Energiewirtschaftsrecht / Netzanschluss / Klimaschutz",
+    "explizit_zitierte_normen": [
+      {
+        "norm": "§ 17 EnWG",
+        "fundstelle": "II.1, Fließtext",
+        "grund": "Netzanschlusspflicht, verbindliche Netzanschlussbestätigung erforderlich"
+      },
+      {
+        "norm": "§ 17 Abs. 3 EnWG",
+        "fundstelle": "II.2, Fließtext",
+        "grund": "Kostentragung für Netzanschlussmaßnahmen durch den Anschlussnehmer"
+      }
+    ],
+    "inferierte_anwendbare_normen": [
+      {
+        "norm": "§ 1 Abs. 5 BauGB",
+        "begruendung": "Text erwähnt 'Klimaschutzkonzept', 'kommunale Klimaziele' und Konflikt mit den Zielen, aber kein expliziter Verweis auf § 1 Abs. 5 BauGB. Klimaschutz als Belang der Bauleitplanung wird inhaltlich angesprochen, nicht formal zitiert.",
+        "grund_in_ground_truth": "Klimaschutzziele als Belang der Bauleitplanung, Widerspruch zum kommunalen Klimaschutzkonzept"
+      }
+    ]
+  },
+  {
+    "dokument": "einspruch_16",
+    "einreicher": "Stadtwerke Traben-Trarbach AöR",
+    "schwerpunkt": "Wärmeplanungsrecht / Abwärmenutzung",
+    "explizit_zitierte_normen": [
+      {
+        "norm": "§ 7 WPG",
+        "fundstelle": "IV, Fließtext (Wärmeplanungsgesetz auch in I erwähnt)",
+        "grund": "Berücksichtigungspflicht industrieller Abwärmequellen in der kommunalen Wärmeplanung",
+        "anmerkung": "Ground Truth schreibt '§ 7 WPG (Wärmeplanungsgesetz)' mit Klammer-Erklärung. Im Text steht '§ 7 WPG'. Match nach Normalisierung."
+      },
+      {
+        "norm": "§ 12 BauGB",
+        "fundstelle": "IV, Fließtext",
+        "grund": "Möglichkeit zur Verankerung einer Abwärmeverpflichtung im Durchführungsvertrag"
+      }
+    ],
+    "inferierte_anwendbare_normen": []
+  },
+  {
+    "dokument": "einspruch_17",
+    "einreicher": "Moselwein e.V., Dr. Karl-Heinz Pontzen",
+    "schwerpunkt": "Landschaftsschutzrecht / Weinbau / UNESCO",
+    "explizit_zitierte_normen": [
+      {
+        "norm": "§ 67 BNatSchG",
+        "fundstelle": "III, Fließtext",
+        "grund": "Befreiungserfordernis bei Lage von Plangebietsteilen im Landschaftsschutzgebiet Moseltal"
+      },
+      {
+        "norm": "LSG-Verordnung Kreis Bernkastel-Wittlich",
+        "fundstelle": "III, Fließtext (mit Hinweis 'zuletzt geändert 2018')",
+        "grund": "Landschaftsschutzgebietsverordnung Moseltal",
+        "anmerkung": "Ground Truth ergänzt '(Landesrecht RLP)'. Im Text wird die Verordnung mit Datum erwähnt, der Klammer-Hinweis ist Annotator-Ergänzung."
+      }
+    ],
+    "inferierte_anwendbare_normen": [
+      {
+        "norm": "§ 1 Abs. 6 Nr. 8 BauGB",
+        "begruendung": "Belange des Weinbaus und der natürlichen Eigenart der Landschaft werden inhaltlich thematisiert, der Paragraph wird aber nicht zitiert. Ground Truth markiert diese Norm selbst bereits als '(implizit)'.",
+        "grund_in_ground_truth": "Belange des Weinbaus und der natürlichen Eigenart der Landschaft im Abwägungsgebot (implizit)"
+      }
+    ]
+  },
+  {
+    "dokument": "einspruch_18",
+    "einreicher": "Bürgerinitiative Mosel bleibt Mosel, Erika Feldmann",
+    "schwerpunkt": "Verkehr / Erschließung / Infrastrukturkosten",
+    "explizit_zitierte_normen": [],
+    "inferierte_anwendbare_normen": [
+      {
+        "norm": "§ 30 Abs. 1 BauGB",
+        "begruendung": "Text spricht von 'planungsrechtlicher Zulässigkeit' und 'Erschließung', zitiert aber keinen Paragraphen. Ground Truth markiert selbst bereits als '(implizit)'.",
+        "grund_in_ground_truth": "Erschließungssicherung als planungsrechtliche Zulässigkeitsvoraussetzung (implizit)"
+      },
+      {
+        "norm": "§ 12 BauGB",
+        "begruendung": "Text spricht von 'Durchführungsvertrag' und dessen fehlenden Regelungen, ohne den Paragraphen zu zitieren. Ground Truth markiert selbst bereits als '(implizit)'.",
+        "grund_in_ground_truth": "Durchführungsvertrag als Instrument zur Regelung von Erschließungs- und Schadensersatzkosten (implizit)"
+      }
+    ],
+    "anmerkung_dokument": "Dieses Dokument enthält keinen einzigen Paragraphen explizit. Die juristische Argumentation läuft komplett über inhaltliche Kategorien ('Erschließung', 'Durchführungsvertrag', 'Verkehrsgutachten'). Erklärt das 0%-Recall-Resultat aus der Eval. Für die Architekturplanung relevant: solche TYP_2-Dokumente existieren in der Realität und können nicht über §-Extraktion behandelt werden."
+  },
+  {
+    "dokument": "einspruch_19",
+    "einreicher": "Dr. Sabine Wolff",
+    "schwerpunkt": "Verfahrensrecht / Bürgerbeteiligung / Auslegungsmängel",
+    "explizit_zitierte_normen": [
+      {
+        "norm": "§ 3 Abs. 2 S. 1 BauGB",
+        "fundstelle": "II.1 und III, Fließtext",
+        "grund": "Auslegungspflicht für Bebauungsplanentwurf und alle wesentlichen umweltbezogenen Informationen"
+      },
+      {
+        "norm": "§ 3 Abs. 1 BauGB",
+        "fundstelle": "II.4 und III.2, Fließtext",
+        "grund": "Frühzeitige Bürgerbeteiligung über Ziele, Zwecke und voraussichtliche Auswirkungen der Planung"
+      },
+      {
+        "norm": "§ 214 Abs. 1 Nr. 2 BauGB",
+        "fundstelle": "III, Fließtext",
+        "grund": "Beachtlichkeit von Verfahrensfehlern bei der Auslegung für die Wirksamkeit des Bebauungsplans"
+      }
+    ],
+    "inferierte_anwendbare_normen": []
+  },
+  {
+    "dokument": "einspruch_20",
+    "einreicher": "Kanzlei Franken & Stein, im Auftrag BI Mosel bleibt Mosel",
+    "schwerpunkt": "Umfassende Gesamteinwendung, 4 Sachkomplexe",
+    "explizit_zitierte_normen": [
+      {
+        "norm": "§ 8 Abs. 2 BauGB",
+        "fundstelle": "A.1, Fließtext",
+        "grund": "Entwicklungsgebot: Bebauungsplan muss aus Flächennutzungsplan entwickelt sein"
+      },
+      {
+        "norm": "§ 214 Abs. 2 Nr. 2 BauGB",
+        "fundstelle": "A.1, Fließtext",
+        "grund": "Formeller Fehler durch fehlende FNP-Änderung, führt zur Unwirksamkeit des Bebauungsplans"
+      },
+      {
+        "norm": "§ 8 BauNVO",
+        "fundstelle": "A.2, Fließtext",
+        "grund": "Fehlerhafte Festsetzung als Gewerbegebiet"
+      },
+      {
+        "norm": "§ 8 Abs. 2 Nr. 1 BauNVO",
+        "fundstelle": "A.2, Fließtext",
+        "grund": "Rechenzentrum nicht als Anlage für technische Infrastruktur im GE einordenbar"
+      },
+      {
+        "norm": "§ 11 BauNVO",
+        "fundstelle": "A.2, Fließtext",
+        "grund": "Sachgerechte Festsetzung wäre Sondergebiet mit zweckspezifischen Festsetzungen"
+      },
+      {
+        "norm": "§ 1 Abs. 3 BauGB",
+        "fundstelle": "A.3, Überschrift und Fließtext",
+        "grund": "Fehlende städtebauliche Rechtfertigung des Vorhabens"
+      },
+      {
+        "norm": "BVerwG, Urteil vom 17.09.2003, Az. 4 C 14.01",
+        "fundstelle": "A.3, Fließtext",
+        "grund": "Rechtsprechungsanker für Anforderungen an die Planrechtfertigung"
+      },
+      {
+        "norm": "§ 30 Abs. 1 BauGB",
+        "fundstelle": "B.1, Fließtext",
+        "grund": "Erschließungssicherung als Voraussetzung planungsrechtlicher Zulässigkeit"
+      },
+      {
+        "norm": "§ 17 EnWG",
+        "fundstelle": "B.1, Fließtext",
+        "grund": "Fehlende verbindliche Netzanschlussbestätigung als Erschließungsnachweis"
+      },
+      {
+        "norm": "§ 34 BNatSchG",
+        "fundstelle": "C.1, Fließtext",
+        "grund": "Fehlende FFH-Verträglichkeitsprüfung für Gebiet DE-6007-302"
+      },
+      {
+        "norm": "§ 44 BNatSchG",
+        "fundstelle": "C.2, Fließtext",
+        "grund": "Unvollständige Artenschutzprüfung, fehlende Kartierungen für Fledermäuse, Reptilien, Vögel"
+      },
+      {
+        "norm": "Leitfaden Artenschutz Rheinland-Pfalz (MULEWF 2019)",
+        "fundstelle": "C.2, Fließtext",
+        "grund": "Landesrechtlicher Fachstandard für Artenschutzprüfungen, nicht eingehalten"
+      },
+      {
+        "norm": "§ 1 Abs. 5 S. 2 BauGB",
+        "fundstelle": "C.3, Fließtext",
+        "grund": "Klimaschutzziele als Belang der Bauleitplanung, fehlendes Abwägungsgebot"
+      },
+      {
+        "norm": "§ 3 Abs. 2 S. 1 BauGB",
+        "fundstelle": "D.1, Fließtext",
+        "grund": "Unvollständige Auslegung: Hydrogeologisches Gutachten und Durchführungsvertrag fehlten"
+      },
+      {
+        "norm": "§ 214 Abs. 1 Nr. 2 BauGB",
+        "fundstelle": "D.1, Fließtext",
+        "grund": "Beachtlichkeit des Auslegungsfehlers für die Wirksamkeit des Bebauungsplans"
+      },
+      {
+        "norm": "§ 3 Abs. 1 BauGB",
+        "fundstelle": "VI.6, Antrag",
+        "grund": "Fehlende frühzeitige Bürgerbeteiligung"
+      },
+      {
+        "norm": "§ 47 VwGO",
+        "fundstelle": "Schlussabsatz",
+        "grund": "Ankündigung verwaltungsgerichtlicher Normenkontrolle nach Satzungsbeschluss"
+      }
+    ],
+    "inferierte_anwendbare_normen": [
+      {
+        "norm": "§ 1 Abs. 7 BauGB",
+        "begruendung": "Abschnitt D.2 ist als 'Abwägungsdefizit bei touristischen und weinbaulichen Belangen' überschrieben und kritisiert die Abwägung inhaltlich, zitiert aber § 1 Abs. 7 BauGB nicht. Im Gegensatz zu einspruch_11, wo der Paragraph in der Überschrift steht, wird er hier nicht genannt.",
+        "grund_in_ground_truth": "Abwägungsdefizit bei touristischen und weinbaulichen Belangen"
+      }
+    ]
+  }
+]

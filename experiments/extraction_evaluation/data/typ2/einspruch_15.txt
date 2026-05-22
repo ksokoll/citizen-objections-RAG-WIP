@@ -1,0 +1,39 @@
+Einwendung im Auslegungsverfahren
+Vorhabenbezogener Bebauungsplan Nr. 15 "Gewerbegebiet Starkenburg-Süd"
+Verbandsgemeinde Traben-Trarbach
+
+Eingereicht bei: Verbandsgemeinde Traben-Trarbach, Bauamt, Rathausstraße 5, 56841 Traben-Trarbach
+Nachrichtlich: Bundesnetzagentur, Tulpenfeld 4, 53113 Bonn
+Datum: 13.11.2024
+Einreicher: Initiative "Energiefragen Mosel", vertreten durch Dipl.-Wirtsch.-Ing. Stefan Kramer, Weingärtenweg 19, 56841 Traben-Trarbach
+
+--- EINWENDUNG ZU ENERGIEVERSORGUNGS- UND NETZANSCHLUSSFRAGEN ---
+
+I. AUSGANGSLAGE
+
+Das geplante Rechenzentrum der NordCore Digital GmbH soll laut Bebauungsplanbegründung in Phase 1 mit einer Netzanschlussleistung von 60 MW, im Vollausbau (Phase 2) mit 120 MW betrieben werden. Zum Vergleich: Die gesamte Spitzenlastleistung der Verbandsgemeinde Traben-Trarbach beträgt nach öffentlich verfügbaren Angaben des Netzbetreibers Westnetz GmbH derzeit ca. 15 bis 18 MW. Das geplante Rechenzentrum würde im Vollausbau einen Strombedarf erzeugen, der ca. siebenmal so hoch ist wie der gesamte bisherige kommunale Bedarf.
+
+II. UNGEKLÄRTER NETZANSCHLUSS
+
+Die Bebauungsplanbegründung verweist auf einen "in Abstimmung befindlichen" Netzanschluss auf der 110-kV-Ebene über eine neue Einspeisestation der Westnetz GmbH. Folgende Fragen sind dabei nicht beantwortet:
+
+1. Liegt eine verbindliche Netzanschlussbestätigung der Westnetz GmbH oder des zuständigen Übertragungsnetzbetreibers Amprion GmbH gemäß § 17 EnWG vor? Die Einspeisbarkeit von 120 MW in das regionale 110-kV-Netz ist keine Selbstverständlichkeit und setzt ggf. erhebliche Netzertüchtigungsmaßnahmen voraus.
+
+2. Wer trägt die Kosten der notwendigen Netzausbaumaßnahmen? Gemäß § 17 Abs. 3 EnWG sind Netzanschlusskosten vom Anschlussnehmer zu tragen. Es ist jedoch unklar, ob die Plankosten dieser Maßnahmen dem Vorhaben zugeordnet sind oder ob sie auf die Allgemeinheit der Netznutzer umgelegt werden.
+
+3. Welche Auswirkungen haben ggf. erforderliche Leitungsbaumaßnahmen auf Natur und Landschaft in der Region? Ein Hochspannungsleitungsneubau durch das Moseltal wäre genehmigungspflichtig und mit eigenen Umweltfolgen verbunden.
+
+III. VEREINBARKEIT MIT KOMMUNALEN KLIMAZIELEN
+
+Die Verbandsgemeinde Traben-Trarbach hat im Rahmen des Klimaschutzkonzepts 2022 eine Reduktion des kommunalen Energieverbrauchs um 30 Prozent bis 2035 als Ziel formuliert. Die Ansiedlung eines Rechenzentrums mit 120 MW Dauerleistung (entspricht einem Jahresverbrauch von ca. 1.050 GWh) steht diesem Ziel diametral entgegen. Der Bebauungsplan enthält keine Begründung, wie dieser Widerspruch aufgelöst werden soll, etwa durch Kompensationsmaßnahmen, Strombezug aus zertifizierten Erneuerbaren oder verbindliche Effizienzstandards.
+
+IV. FORDERUNGEN
+
+Es wird gefordert:
+1. Vorlage einer verbindlichen Netzanschlussbestätigung des zuständigen Netzbetreibers als Voraussetzung für die Fortführung des Bebauungsplanverfahrens.
+2. Klärung der Kostentragung für Netzausbaumaßnahmen mit transparenter Darstellung etwaiger Folgekosten für die öffentliche Hand.
+3. Ergänzung des Bebauungsplans um verbindliche Festsetzungen zur Nutzung erneuerbarer Energien und zu einem Mindest-PUE-Wert (Power Usage Effectiveness) des Rechenzentrums.
+4. Darlegung der Vereinbarkeit des Vorhabens mit dem Klimaschutzkonzept der Verbandsgemeinde.
+
+Stefan Kramer
+Initiative "Energiefragen Mosel"

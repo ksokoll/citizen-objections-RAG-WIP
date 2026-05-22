@@ -1,0 +1,46 @@
+Einwendung im Rahmen der öffentlichen Auslegung
+Vorhabenbezogener Bebauungsplan Nr. 15 "Gewerbegebiet Starkenburg-Süd"
+Verbandsgemeinde Traben-Trarbach
+
+Eingereicht bei: Verbandsgemeinde Traben-Trarbach, Bauamt, Rathausstraße 5, 56841 Traben-Trarbach
+Datum: 11.11.2024
+Einreicher: Ingrid und Paul Nessler, Starkenburger Weg 11, 56841 Traben-Trarbach
+(vertreten durch: Dipl.-Ing. Akustik Thomas Reiff, Schallschutzgutachter, im Auftrag der Einreicher)
+
+Ich bin gegen das geplante Rechenzentrum. Das will hier keiner haben. Wir wohnen hier seit 30 Jahren und so ein Ding passt hier einfach nicht hin. Das ist doch klar. Ich hoffe Sie hören auf uns Bürger und nicht nur auf die großen Firmen.
+
+--- EINWENDUNG ZU LÄRMSCHUTZRECHTLICHEN ASPEKTEN ---
+
+I. SACHVERHALT UND ANLASS
+
+Die Einreicher bewohnen das Anwesen Starkenburger Weg 11, das sich in einer Entfernung von ca. 380 Metern zur nördlichen Grenze des geplanten Betriebsgeländes befindet und im Geltungsbereich eines allgemeinen Wohngebiets (WA) liegt. Das geplante Rechenzentrum soll nach Angaben der Bebauungsplanbegründung mit einer Kühlanlage mit Rückkühltürmen, 24 Dieselnotstromaggregaten (je 2,5 MW) sowie permanenter Lüftungstechnik betrieben werden.
+
+II. MÄNGEL DES VORLIEGENDEN SCHALLGUTACHTENS
+
+Das in den Auslegungsunterlagen enthaltene schalltechnische Gutachten der Firma AcouTech GmbH (Gutachten-Nr. AT-2024-117) weist nach Prüfung durch den beauftragten Sachverständigen folgende wesentliche Mängel auf:
+
+1. Keine Berücksichtigung der Tiefrequenz-Emissionen
+Rückkühltürme und Großaggregate emittieren ausgeprägte tieffrequente Schallanteile (unter 100 Hz) sowie Infraschall. Das vorgelegte Gutachten wertet ausschließlich A-bewertete Schalldruckpegel aus. Nach den Anforderungen der DIN 45680 und der TA Lärm Anhang A.1.5 ist für tieffrequente Geräusche eine gesonderte Prüfung erforderlich. Diese fehlt vollständig.
+
+2. Ungünstige meteorologische Ausbreitungsszenarien nicht abgedeckt
+Das Gutachten modelliert die Schallausbreitung unter Standardbedingungen. Für das Moseltal als topografisch eingeschlossene Tallage sind bei bestimmten Wetterlagen (Inversionswetterlage, Windrichtung Nordwest) erheblich erhöhte Immissionspegel an den relevanten Wohngebäuden zu erwarten. Diese meteorologischen Sondersituationen sind im Gutachten nicht berücksichtigt.
+
+3. Überschreitung der Richtwerte der TA Lärm nicht ausgeschlossen
+Gemäß TA Lärm gilt für allgemeine Wohngebiete ein Nachtwert von 40 dB(A). Das Gutachten weist für den Immissionsort IO-3 (entspricht in etwa dem Anwesen der Einreicher) einen Nachtwert von 38 dB(A) aus, d.h. mit einem Sicherheitsabstand von lediglich 2 dB. Bei Berücksichtigung von Zuschlägen für Ton- und Impulshaltigkeit der Kühlanlage sowie für tieffrequente Anteile ist eine Überschreitung des Richtwertes nicht auszuschließen.
+
+4. Impulszuschläge für Notstromaggregate nicht berücksichtigt
+Das simultane Anfahren von bis zu 24 Dieselaggregaten im Notbetrieb stellt ein impulsartiges Schallereignis dar. Für solche Ereignisse sieht die TA Lärm unter Umständen Zuschläge vor. Das vorliegende Gutachten enthält hierfür keine Berechnung.
+
+III. FORDERUNGEN
+
+Die Einreicher fordern:
+1. Vorlage eines ergänzenden Gutachtens zur tieffrequenten Schallausbreitung gemäß DIN 45680.
+2. Neuberechnung der Immissionspegel unter Einbeziehung ungünstiger Ausbreitungssituationen für das Moseltal.
+3. Nachvollziehbare Prüfung der Ton- und Impulshaltigkeit der Kühlaggregate.
+4. Festsetzung verbindlicher Schallleistungspegel für die genehmigten Betriebsanlagen im Bebauungsplan.
+5. Durchführung von Lärmmessungen im Probebetrieb als Genehmigungsauflage.
+
+Sollten die nachgeforderten Gutachten eine Überschreitung der TA-Lärm-Richtwerte an den betroffenen Wohngebäuden ergeben, ist der Bebauungsplan in seiner vorliegenden Form nicht genehmigungsfähig.
+
+Ingrid und Paul Nessler
+(vertreten durch Dipl.-Ing. Thomas Reiff)

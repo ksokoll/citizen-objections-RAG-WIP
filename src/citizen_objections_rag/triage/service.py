@@ -15,7 +15,6 @@ from citizen_objections_rag.core.protocols import LLMClientProtocol
 from citizen_objections_rag.core.results import TriageResult
 from citizen_objections_rag.core.statuses import EinwendungsTyp
 from citizen_objections_rag.triage.catalog import CatalogId
-from citizen_objections_rag.triage.classification import classify_einwendungs_typ
 
 
 class TriageService:
@@ -45,9 +44,7 @@ class TriageService:
         verified_arguments = [
             self._verify_argument(arg, clean_text) for arg in raw_arguments
         ]
-        einwendungs_typ = classify_einwendungs_typ(verified_arguments)
         return TriageResult(
-            einwendungs_typ=einwendungs_typ,
             extracted_arguments=verified_arguments,
         )
 

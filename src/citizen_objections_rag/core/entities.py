@@ -62,6 +62,7 @@ class ExtrahiertesArgument:
     original_zitat: str  # verbatim quote for ADR-006 Layer 1 check
     catalog_id: str | None  # predefined domain enum; None = NoMatchEvent
     einwendungs_typ: EinwendungsTyp
+    zitierte_normen: list[str] = field(default_factory=list)
 
     # --- Set by ResponseDrafting via dataclasses.replace() ---
     argument_verified: bool = False

@@ -1,0 +1,241 @@
+{
+  "katalog": {
+    "C-001": {
+      "name": "Bauplanungsrecht",
+      "beschreibung": "Materielles Bauplanungsrecht nach BauGB und BauNVO. Umfasst die Bauleitplanung in ihrer materiellen Dimension einschließlich Plan-Aufstellungsverfahren, Festsetzungs-Anforderungen, planerische Abwägung und städtebauliche Erforderlichkeit.",
+      "gesetze": ["BauGB", "BauNVO"]
+    },
+    "C-002": {
+      "name": "Wasserrecht",
+      "beschreibung": "Wasserrechtliche Bestimmungen nach WHG und WaStrG. Umfasst Erlaubnis- und Bewilligungstatbestände der Gewässerbenutzung sowie die Anforderungen aus landesrechtlichen Schutzgebietsverordnungen.",
+      "gesetze": ["WHG", "WaStrG", "Landesrechtliche Schutzgebietsverordnungen"]
+    },
+    "C-003": {
+      "name": "Immissionsschutz und Lärm",
+      "beschreibung": "Immissionsschutzrechtliche Anforderungen mit Schwerpunkt Lärm. Umfasst die Anwendung der TA Lärm sowie technischer Regeln zur Messung und Bewertung von Geräuschimmissionen.",
+      "gesetze": ["TA Lärm", "DIN 45680", "BImSchG"]
+    },
+    "C-004": {
+      "name": "Naturschutz und Arten",
+      "beschreibung": "Naturschutzrecht nach BNatSchG und europarechtlichen Vorgaben. Umfasst Arten- und Habitatschutz, gebietsbezogenen Schutz nach FFH- und Vogelschutzrichtlinie sowie die Umweltbericht-Anforderungen des BauGB.",
+      "gesetze": ["BNatSchG", "FFH-Richtlinie (92/43/EWG)", "BauGB §2a und Anlage 1", "Landesrechtliche LSG-Verordnungen"]
+    },
+    "C-005": {
+      "name": "Energierecht",
+      "beschreibung": "Energierechtliche Bestimmungen nach EnWG. Umfasst Anschluss- und Versorgungspflichten, Netzentgelte und Kostenregelungen.",
+      "gesetze": ["EnWG"]
+    },
+    "C-006": {
+      "name": "Wärmeplanungsrecht",
+      "beschreibung": "Anforderungen aus dem Wärmeplanungsgesetz. Umfasst die kommunale Wärmeplanung und ihre Berücksichtigung von Wärmequellen.",
+      "gesetze": ["WPG"]
+    },
+    "C-007": {
+      "name": "Verfahrensrecht der Bauleitplanung",
+      "beschreibung": "Verfahrensrechtliche Anforderungen an Bauleitplanverfahren nach BauGB sowie verwaltungsgerichtliche Kontrolle. Umfasst Öffentlichkeits- und Trägerbeteiligung, Auslegungs- und Bekanntmachungsregeln, Fehlerfolgen und Normenkontrollverfahren.",
+      "gesetze": ["BauGB §§ 3, 4, 214", "VwGO §47"]
+    },
+    "C-008": {
+      "name": "Denkmalschutz",
+      "beschreibung": "Schutz von Bau- und Bodendenkmälern sowie Denkmalbereichen nach Landesdenkmalschutzgesetzen. Umfasst Erlaubnispflichten für Veränderungen an Denkmälern, Umgebungsschutz und denkmalpflegerische Belange in der Bauleitplanung.",
+      "gesetze": ["DSchG der Länder", "BauGB §1 Abs.6 Nr.5"]
+    },
+    "C-009": {
+      "name": "Bodenschutz und Altlasten",
+      "beschreibung": "Schutz des Bodens vor schädlichen Veränderungen und Behandlung von Altlasten nach Bundes-Bodenschutzgesetz. Umfasst Vorsorge-, Sanierungs- und Sorgfaltspflichten sowie die Berücksichtigung von Altlastenverdachtsflächen in der Bauleitplanung.",
+      "gesetze": ["BBodSchG", "BBodSchV"]
+    },
+    "C-010": {
+      "name": "Bergrecht und Rohstoffsicherung",
+      "beschreibung": "Bergrechtliche Bestimmungen nach Bundesberggesetz einschließlich Rohstoffsicherung und Bergaufsicht. Umfasst Aufsuchungs-, Gewinnungs- und Bewilligungstatbestände sowie die Sicherung von Lagerstätten in raumbedeutsamen Planungen.",
+      "gesetze": ["BBergG"]
+    }
+  },
+  "kataloge_leakage_anmerkung": "Der Katalog enthält 7 Cluster (C-001 bis C-007) die direkt im Test-Set vorkommen, plus 3 Distractor-Cluster (C-008 Denkmalschutz, C-009 Bodenschutz, C-010 Bergrecht) die in keinem der Test-Dokumente vertreten sind. Die Distractor-Cluster prüfen die Diskriminations-Fähigkeit des Systems: das LLM muss aktiv erkennen wenn ein Argument nicht in diese Bereiche fällt. False-Positive-Zuweisungen zu C-008, C-009 oder C-010 sind direkte Eval-Failures (Halluzinations-Mode). Die Distractor-Auswahl reduziert die Test-Set-Informierung der Katalog-Struktur, eliminiert sie aber nicht vollständig: die Auswahl der 7 Haupt-Cluster bleibt test-set-informiert. Für Production-Anwendung sollte der Katalog aus historischen Einwendungs-Verfahren der Behörde abgeleitet werden, nicht aus dem Test-Set.",
+  "expected_catalog_assignment": [
+    {
+      "dokument": "einspruch_11",
+      "doc_type": "typ2",
+      "expected_einwendungs_typ": "TYP_2",
+      "expected_catalog_ids": ["C-001"],
+      "expected_argument_count_range": [3, 4],
+      "kommentar": "Planungsrecht: FNP-Widerspruch, Abwägung, Gebietsfestsetzung. Alle Argumente in C-001."
+    },
+    {
+      "dokument": "einspruch_12",
+      "doc_type": "typ2",
+      "expected_einwendungs_typ": "TYP_2",
+      "expected_catalog_ids": ["C-002"],
+      "expected_argument_count_range": [3, 5],
+      "kommentar": "Wasserrecht: Erlaubnispflicht, thermische Belastung, Grundwasserschutz, Bundeswasserstraße."
+    },
+    {
+      "dokument": "einspruch_13",
+      "doc_type": "typ2",
+      "expected_einwendungs_typ": "TYP_2",
+      "expected_catalog_ids": ["C-003"],
+      "expected_argument_count_range": [3, 5],
+      "kommentar": "Immissionsschutz: Schallgutachten-Mängel, tieffrequente Geräusche, Richtwerte."
+    },
+    {
+      "dokument": "einspruch_14",
+      "doc_type": "typ2",
+      "expected_einwendungs_typ": "TYP_2",
+      "expected_catalog_ids": ["C-004"],
+      "expected_argument_count_range": [3, 5],
+      "kommentar": "Naturschutz: Umweltbericht, Artenschutz, FFH. Verbandsklage-Hinweis (§4 BauGB, §63 BNatSchG) ist Verfahrensgrundlage des Einreichers, kein eigenes C-007-Argument."
+    },
+    {
+      "dokument": "einspruch_15",
+      "doc_type": "typ2",
+      "expected_einwendungs_typ": "TYP_2",
+      "expected_catalog_ids": ["C-005", "C-001"],
+      "expected_argument_count_range": [3, 5],
+      "kommentar": "Schwerpunkt Energierecht (Netzanschluss), aber Argument zur Vereinbarkeit mit Klimaschutzkonzept ist Bauleitplanungs-Abwägung (C-001 §1 Abs.5 BauGB)."
+    },
+    {
+      "dokument": "einspruch_16",
+      "doc_type": "typ2",
+      "expected_einwendungs_typ": "TYP_2",
+      "expected_catalog_ids": ["C-006", "C-001"],
+      "expected_argument_count_range": [2, 4],
+      "kommentar": "Schwerpunkt Wärmeplanungsrecht (§7 WPG), aber Vorschlag zur Verankerung im Durchführungsvertrag (§12 BauGB) ist C-001."
+    },
+    {
+      "dokument": "einspruch_17",
+      "doc_type": "typ2",
+      "expected_einwendungs_typ": "TYP_2",
+      "expected_catalog_ids": ["C-004"],
+      "expected_argument_count_range": [3, 4],
+      "kommentar": "Landschaftsschutz und Naturschutz (BNatSchG §67, LSG-Verordnung). Weinbau- und UNESCO-Argumente sind inhaltlich, aber juristisch im Naturschutz-Cluster."
+    },
+    {
+      "dokument": "einspruch_18",
+      "doc_type": "typ2",
+      "expected_einwendungs_typ": "TYP_2",
+      "expected_catalog_ids": ["C-001"],
+      "expected_argument_count_range": [2, 4],
+      "kommentar": "Verkehrsgutachten-Kritik und Erschließungskostenfragen. Inhaltlich aus C-001 (Erschließung als Voraussetzung der Zulässigkeit per §30 BauGB, Durchführungsvertrag per §12 BauGB). Dokument enthält keine expliziten Paragraphen, daher schwer maschinell zuzuordnen."
+    },
+    {
+      "dokument": "einspruch_19",
+      "doc_type": "typ2",
+      "expected_einwendungs_typ": "TYP_2",
+      "expected_catalog_ids": ["C-007"],
+      "expected_argument_count_range": [3, 5],
+      "kommentar": "Verfahrensrecht: Auslegungsmängel (§3 Abs.2), frühzeitige Beteiligung (§3 Abs.1), Beachtlichkeit (§214)."
+    },
+    {
+      "dokument": "einspruch_20",
+      "doc_type": "typ2",
+      "expected_einwendungs_typ": "TYP_2",
+      "expected_catalog_ids": ["C-001", "C-004", "C-005", "C-007"],
+      "expected_argument_count_range": [8, 12],
+      "kommentar": "Umfassende Anwaltseinwendung mit 4 Sachkomplexen. A (städtebaulich) = C-001, B (Erschließung/Netzanschluss) = C-005 plus C-001, C (Umweltbelange) = C-004, D (Verfahren) = C-007. Multi-Catalog-Dokument."
+    },
+    {
+      "dokument": "einspruch_01",
+      "doc_type": "typ1",
+      "expected_einwendungs_typ": null,
+      "expected_catalog_ids": [],
+      "expected_argument_count_range": [0, 0],
+      "kommentar": "TYP_1 Bürgerbrief. Per ADR-013 soll Argument-Liste leer sein, kein catalog_id zugewiesen werden."
+    },
+    {
+      "dokument": "einspruch_02",
+      "doc_type": "typ1",
+      "expected_einwendungs_typ": null,
+      "expected_catalog_ids": [],
+      "expected_argument_count_range": [0, 0],
+      "kommentar": "TYP_1 Bürgerbrief."
+    },
+    {
+      "dokument": "einspruch_03",
+      "doc_type": "typ1",
+      "expected_einwendungs_typ": null,
+      "expected_catalog_ids": [],
+      "expected_argument_count_range": [0, 0],
+      "kommentar": "TYP_1 Bürgerbrief."
+    },
+    {
+      "dokument": "einspruch_04",
+      "doc_type": "typ1",
+      "expected_einwendungs_typ": null,
+      "expected_catalog_ids": [],
+      "expected_argument_count_range": [0, 0],
+      "kommentar": "TYP_1 Bürgerbrief."
+    },
+    {
+      "dokument": "einspruch_05",
+      "doc_type": "typ1",
+      "expected_einwendungs_typ": null,
+      "expected_catalog_ids": [],
+      "expected_argument_count_range": [0, 0],
+      "kommentar": "TYP_1 Bürgerbrief."
+    },
+    {
+      "dokument": "einspruch_06",
+      "doc_type": "typ1",
+      "expected_einwendungs_typ": null,
+      "expected_catalog_ids": [],
+      "expected_argument_count_range": [0, 0],
+      "kommentar": "TYP_1 Bürgerbrief."
+    },
+    {
+      "dokument": "einspruch_07",
+      "doc_type": "typ1",
+      "expected_einwendungs_typ": null,
+      "expected_catalog_ids": [],
+      "expected_argument_count_range": [0, 0],
+      "kommentar": "TYP_1 Bürgerbrief."
+    },
+    {
+      "dokument": "einspruch_08",
+      "doc_type": "typ1",
+      "expected_einwendungs_typ": null,
+      "expected_catalog_ids": [],
+      "expected_argument_count_range": [0, 0],
+      "kommentar": "TYP_1 Bürgerbrief."
+    },
+    {
+      "dokument": "einspruch_09",
+      "doc_type": "typ1",
+      "expected_einwendungs_typ": null,
+      "expected_catalog_ids": [],
+      "expected_argument_count_range": [0, 0],
+      "kommentar": "TYP_1 Bürgerbrief."
+    },
+    {
+      "dokument": "einspruch_10",
+      "doc_type": "typ1",
+      "expected_einwendungs_typ": null,
+      "expected_catalog_ids": [],
+      "expected_argument_count_range": [0, 0],
+      "kommentar": "TYP_1 Bürgerbrief."
+    },
+    {
+      "dokument": "einspruch_11_mixed",
+      "doc_type": "mixed",
+      "expected_einwendungs_typ": "TYP_2",
+      "expected_catalog_ids": ["C-001"],
+      "expected_argument_count_range": [3, 4],
+      "kommentar": "Mixed = einspruch_11 mit persönlichem Header davor. Juristische Substanz ist TYP_2. System soll Header ignorieren und Argumente aus dem juristischen Teil extrahieren wie bei einspruch_11. Bisheriger Failure-Case: LLM klassifiziert ganzes Dokument als TYP_1 wegen Header-Dominanz."
+    },
+    {
+      "dokument": "einspruch_12_mixed",
+      "doc_type": "mixed",
+      "expected_einwendungs_typ": "TYP_2",
+      "expected_catalog_ids": ["C-002"],
+      "expected_argument_count_range": [3, 5],
+      "kommentar": "Mixed = einspruch_12 mit persönlichem Header davor. Wasserrecht."
+    },
+    {
+      "dokument": "einspruch_13_mixed",
+      "doc_type": "mixed",
+      "expected_einwendungs_typ": "TYP_2",
+      "expected_catalog_ids": ["C-003"],
+      "expected_argument_count_range": [3, 5],
+      "kommentar": "Mixed = einspruch_13 mit persönlichem Header davor. Immissionsschutz."
+    }
+  ]
+}
