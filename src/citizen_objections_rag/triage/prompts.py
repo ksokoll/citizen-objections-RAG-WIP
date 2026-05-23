@@ -82,9 +82,6 @@ belegt. Muss exakt im Originaltext auffindbar sein (Substring-Match).
 5. `einwendungs_typ`: "TYP_2" wenn das Argument juristische Fachbegriffe, \
 Paragraphen oder Rechtsprechung zitiert. "TYP_1" für informelle Argumentation \
 ohne explizite Rechtsbezüge. Diese Klassifikation gilt pro Argument.
-6. `zitierte_normen`: Liste aller im Originaltext explizit genannten \
-Paragraphen für dieses Argument. Nur Normen die wörtlich im Text stehen, \
-keine Ableitungen oder Inferenzen. Bei Multi-Norm-Argumenten alle nennen.
 
 ## Ausgabeformat
 Antworte ausschließlich mit einem JSON-Objekt nach folgendem Schema. \
@@ -100,8 +97,7 @@ Kein erklärender Text vor oder nach dem JSON.
       Darstellung des Flächennutzungsplans abweicht, ist nach § 8 Abs. 2 BauGB \
       grundsätzlich nur zulässig...",
       "catalog_id": "C-001",
-      "einwendungs_typ": "TYP_2",
-      "zitierte_normen": ["§ 8 Abs. 2 BauGB"]
+      "einwendungs_typ": "TYP_2"
     }}
   ]
 }}
