@@ -8,6 +8,7 @@ import pytest
 from citizen_objections_rag.audit_log.store import JsonLinesAuditStore
 from citizen_objections_rag.core.events import AuditEventType
 from citizen_objections_rag.core.failures import IngestionError
+from citizen_objections_rag.core.results import TriageResult
 from citizen_objections_rag.core.statuses import AbwaegungsStatus, WuerdigungsStatus
 from citizen_objections_rag.pipeline import Pipeline
 
@@ -76,9 +77,7 @@ class TestPipelineSmoke:
         from citizen_objections_rag.triage.service import TriageService
 
         class EmptyTriageService(TriageService):
-            def triage(self, clean_text: str):
-                from citizen_objections_rag.core.results import TriageResult
-
+            def triage(self, clean_text: str) -> TriageResult:
                 return TriageResult(extracted_arguments=[])
 
         pipeline = Pipeline(

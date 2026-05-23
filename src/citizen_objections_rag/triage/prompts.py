@@ -94,8 +94,11 @@ Kein erklärender Text vor oder nach dem JSON.
 {{
   "argumente": [
     {{
-      "argument_text": "Der vorhabenbezogene Bebauungsplan weicht vom Flächennutzungsplan ab ohne dass ein Parallelverfahren eingeleitet wurde.",
-      "original_zitat": "Ein vorhabenbezogener Bebauungsplan, der von dieser Darstellung des Flächennutzungsplans abweicht, ist nach § 8 Abs. 2 BauGB grundsätzlich nur zulässig...",
+      "argument_text": "Der vorhabenbezogene Bebauungsplan weicht vom \
+      Flächennutzungsplan ab ohne dass ein Parallelverfahren eingeleitet wurde.", \
+      "original_zitat": "Ein vorhabenbezogener Bebauungsplan, der von dieser  \
+      Darstellung des Flächennutzungsplans abweicht, ist nach § 8 Abs. 2 BauGB \
+      grundsätzlich nur zulässig...",
       "catalog_id": "C-001",
       "einwendungs_typ": "TYP_2",
       "zitierte_normen": ["§ 8 Abs. 2 BauGB"]
