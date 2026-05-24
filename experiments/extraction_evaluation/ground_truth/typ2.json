@@ -285,6 +285,18 @@
         "type": "paragraph_norm",
         "fundstelle": "III, Fließtext",
         "grund": "Beachtlichkeit von Verfahrensfehlern bei der Auslegung für die Wirksamkeit des Bebauungsplans"
+      },
+      {
+      "norm": "§ 3 BauGB",
+      "type": "paragraph_norm",
+      "fundstelle": "III, Fließtext (Verfahrensfehler nach § 3 BauGB sind nach § 214 Abs. 1 Nr. 2 BauGB beachtlich)",
+      "grund": "Allgemeiner Verweis auf die Beteiligungsvorschriften des § 3 BauGB als Voraussetzung für die Beachtlichkeit nach § 214"
+      },
+      {
+        "norm": "§ 3 Abs. 2 BauGB",
+        "type": "paragraph_norm",
+        "fundstelle": "<Fundstelle aus dem Text einfügen>",
+        "grund": "<Begründung aus dem Kontext der zweiten Fundstelle>"
       }
     ],
     "inferierte_anwendbare_normen": [],
@@ -407,5 +419,52 @@
         "grund_in_ground_truth": "Abwägungsdefizit bei touristischen und weinbaulichen Belangen"
       }
     ]
-  }
+  },
+  {
+  "dokument": "einspruch_11_mixed",
+  "einreicher": "Mixed: Inhalt wie einspruch_11 plus persönlicher Header",
+  "schwerpunkt": "Planungsrecht / Bebauungsplan",
+  "explizit_zitierte_normen": [
+    {"norm": "§ 8 Abs. 2 BauGB", "type": "paragraph_norm", "fundstelle": "wie einspruch_11"},
+    {"norm": "§ 1 Abs. 7 BauGB", "type": "paragraph_norm", "fundstelle": "wie einspruch_11"},
+    {"norm": "§ 1 Abs. 6 Nr. 8 BauGB", "type": "paragraph_norm", "fundstelle": "wie einspruch_11"},
+    {"norm": "§ 14 Abs. 2 BauNVO", "type": "paragraph_norm", "fundstelle": "wie einspruch_11"},
+    {"norm": "§ 11 BauNVO", "type": "paragraph_norm", "fundstelle": "wie einspruch_11"}
+  ],
+  "inferierte_anwendbare_normen": [],
+  "anmerkung_dokument": "Mixed-Variante von einspruch_11. Inhalt identisch, plus persönlicher Header."
+},
+{
+  "dokument": "einspruch_12_mixed",
+  "einreicher": "Mixed: Inhalt wie einspruch_12 plus persönlicher Header",
+  "schwerpunkt": "Wasserrecht / Kühlwassernutzung Mosel",
+  "explizit_zitierte_normen": [
+    {
+  "norm": "§ 9 Abs. 1 Nr. 1 WHG",
+  "type": "extractor_limitation",
+  "fundstelle": "wie einspruch_12 (Notation 'i.V.m. § 8 WHG')",
+  "grund": "Erlaubnispflicht für Wasserentnahme aus Gewässer",
+  "anmerkung": "i.V.m.-Kette ohne Gesetzes-Angabe nach erster Norm. Pattern erkennt nur die zweite Citation (§ 8 WHG). Phase 2 Roadmap."
+},
+    {"norm": "§ 8 WHG", "type": "paragraph_norm", "fundstelle": "wie einspruch_12"},
+    {"norm": "§ 57 WHG", "type": "paragraph_norm", "fundstelle": "wie einspruch_12"},
+    {"norm": "Wasserhaushaltsgesetz (WHG)", "type": "gesetz_erwaehnung", "fundstelle": "wie einspruch_12"},
+    {"norm": "Bundeswasserstraßengesetz (WaStrG)", "type": "gesetz_erwaehnung", "fundstelle": "wie einspruch_12"}
+  ],
+  "inferierte_anwendbare_normen": [],
+  "anmerkung_dokument": "Mixed-Variante von einspruch_12."
+},
+{
+  "dokument": "einspruch_13_mixed",
+  "einreicher": "Mixed: Inhalt wie einspruch_13 plus persönlicher Header",
+  "schwerpunkt": "Lärmschutzrecht / Schallgutachten",
+  "explizit_zitierte_normen": [
+    {"norm": "TA Lärm", "type": "extractor_limitation", "fundstelle": "wie einspruch_13"},
+    {"norm": "TA Lärm Anhang A.1.5", "type": "extractor_limitation", "fundstelle": "wie einspruch_13"},
+    {"norm": "DIN 45680", "type": "extractor_limitation", "fundstelle": "wie einspruch_13"}
+  ],
+  "inferierte_anwendbare_normen": [],
+  "anmerkung_dokument": "Mixed-Variante von einspruch_13."
+}
+
 ]
