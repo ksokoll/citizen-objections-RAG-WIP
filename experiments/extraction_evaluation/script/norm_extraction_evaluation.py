@@ -1,27 +1,29 @@
 """Evaluation script for deterministic norm extraction.
 
-Measures the recall of triage.norm_extractor against the human-annotated
-ground truth (explizit_zitierte_normen only, NOT inferred norms).
+v2: Uses the type-tagged ground truth (paragraph_norm filter). Earlier
+runs of v1 mixed paragraph norms with non-norm entries (court decisions,
+administrative guidelines, statute mentions without paragraphs), which
+suppressed recall artificially.
 
-Unlike extraction_evaluation.py, this script does NOT call any LLM. The
-norm extractor is deterministic and runs in milliseconds, so the eval is
-free to run in CI on every commit.
+The primary recall metric now compares the extractor output against
+GT entries with type == "paragraph_norm" only. A secondary diagnostic
+block tracks how many extractor_limitation entries exist in the GT
+(documents the Phase 2 roadmap: FFH-Richtlinie, TA Lärm, DIN standards,
+Anlage-X, Landesverordnungen).
 
-Per-document metrics:
+Per-document metrics (against paragraph_norm subset):
 - Recall: |extracted ∩ expected| / |expected|, vacuously 1.0 if no expectations
 - Precision: |extracted ∩ expected| / |extracted|, vacuously 1.0 if nothing extracted
 - GT-Loss: norms in GT but missed by extractor (false negatives, concrete misses)
-- Overcount: norms found by extractor but not in GT (plausibility check, not a hard error)
+- Overcount: norms found by extractor but not in GT (plausibility check)
 
 Aggregated:
 - Mean recall and precision across documents
-- Total TP, GT-Loss, and Overcount counts
-- Loss-Diagnostik: explicit list of every missed GT norm with source document
-- Overcount-Diagnostik: explicit list of every extra extracted norm
-
-Loss-Diagnostik is useful for spotting systematic gaps (FFH-Richtlinie not
-in whitelist, §§-chains over 10 char filler). Overcount catches both
-extractor false-positives and GT annotator oversights.
+- Total TP, GT-Loss, Overcount counts
+- Loss-Diagnostik: every missed paragraph_norm with source document
+- Overcount-Diagnostik: every extra extracted norm with source document
+- Limitation-Diagnostik: every extractor_limitation entry from the GT,
+  grouped by document, with anmerkung notes for the Phase 2 roadmap
 """
 
 from __future__ import annotations
@@ -51,11 +53,7 @@ RESULTS_PATH.mkdir(parents=True, exist_ok=True)
 # ---------------------------------------------------------------------------
 
 def _normalize_norm_string(s: str) -> str:
-    """Collapse whitespace for robust string-set comparison.
-
-    Ensures '§ 8 Abs. 2 BauGB' and '§ 8 Abs.  2 BauGB' compare equal.
-    Both extractor output and GT pass through this before set operations.
-    """
+    """Collapse whitespace for robust string-set comparison."""
     return " ".join(s.split())
 
 
@@ -67,41 +65,85 @@ def _avg(values: list[float]) -> float:
 # Ground truth loader
 # ---------------------------------------------------------------------------
 
-def _load_gt() -> dict[str, set[str]]:
-    """Load ground truth: doc_id -> normalized set of expected norm strings.
+@dataclass(frozen=True)
+class GroundTruthEntry:
+    """Single GT entry, partitioned by type."""
 
-    Tolerates both list-of-docs and dict-with-documents-key shapes. Each
-    document's explizit_zitierte_normen entries may be plain strings or
-    objects with a 'norm' key (the latter also carries fundstelle).
+    norm: str
+    type: str
+    fundstelle: str | None
+    anmerkung: str | None
+
+
+@dataclass
+class DocumentGT:
+    """All GT entries for one document, partitioned by type."""
+
+    doc_id: str
+    paragraph_norms: set[str]
+    extractor_limitations: list[GroundTruthEntry]
+    other_entries: list[GroundTruthEntry]
+
+
+def _load_gt() -> dict[str, DocumentGT]:
+    """Load type-tagged GT and partition entries by their type field.
+
+    Returns a mapping from doc_id to DocumentGT. Each DocumentGT separates
+    paragraph_norms (set of normalized strings, used for primary recall)
+    from extractor_limitations (kept for diagnostic reporting) and other
+    entries (gesetz mentions, court decisions, guidelines).
     """
     with open(GT_PATH, encoding="utf-8") as f:
-        gt_data = json.load(f)
+        documents = json.load(f)
 
-    documents = gt_data if isinstance(gt_data, list) else gt_data.get("documents", [])
-
-    by_doc: dict[str, set[str]] = {}
+    by_doc: dict[str, DocumentGT] = {}
     for entry in documents:
-        doc_id = entry.get("doc_id") or entry.get("dokument")
+        doc_id = entry.get("dokument")
         if doc_id is None:
             continue
 
         explizit = entry.get("explizit_zitierte_normen", [])
+        paragraph_norms: set[str] = set()
+        limitations: list[GroundTruthEntry] = []
+        other: list[GroundTruthEntry] = []
 
-        norms: set[str] = set()
         for item in explizit:
-            if isinstance(item, str):
-                norms.add(_normalize_norm_string(item))
-            elif isinstance(item, dict) and "norm" in item:
-                norms.add(_normalize_norm_string(item["norm"]))
+            if not isinstance(item, dict) or "norm" not in item:
+                continue
+            gt_entry = GroundTruthEntry(
+                norm=item["norm"],
+                type=item.get("type", "UNTAGGED"),
+                fundstelle=item.get("fundstelle"),
+                anmerkung=item.get("anmerkung"),
+            )
 
-        by_doc[doc_id] = norms
+            if gt_entry.type == "paragraph_norm":
+                paragraph_norms.add(_normalize_norm_string(gt_entry.norm))
+            elif gt_entry.type == "extractor_limitation":
+                limitations.append(gt_entry)
+            else:
+                other.append(gt_entry)
+
+        by_doc[doc_id] = DocumentGT(
+            doc_id=doc_id,
+            paragraph_norms=paragraph_norms,
+            extractor_limitations=limitations,
+            other_entries=other,
+        )
 
     return by_doc
 
 
-GT_NORMS = _load_gt()
-print(f"Loaded ground truth for {len(GT_NORMS)} documents")
-print(f"Total expected norms: {sum(len(norms) for norms in GT_NORMS.values())}\n")
+GT_BY_DOC = _load_gt()
+
+total_paragraph = sum(len(gt.paragraph_norms) for gt in GT_BY_DOC.values())
+total_limitations = sum(len(gt.extractor_limitations) for gt in GT_BY_DOC.values())
+total_other = sum(len(gt.other_entries) for gt in GT_BY_DOC.values())
+
+print(f"Loaded ground truth for {len(GT_BY_DOC)} documents")
+print(f"  paragraph_norm:                 {total_paragraph}")
+print(f"  extractor_limitation:           {total_limitations}")
+print(f"  other (Gesetz/Urteil/Leitfaden): {total_other}\n")
 
 
 # ---------------------------------------------------------------------------
@@ -110,7 +152,10 @@ print(f"Total expected norms: {sum(len(norms) for norms in GT_NORMS.values())}\n
 
 @dataclass
 class NormExtractionResult:
-    """Eval result for norm extraction on a single document."""
+    """Eval result for norm extraction on a single document.
+
+    Measured against the paragraph_norm subset of the GT only.
+    """
 
     doc_id: str
     doc_type: str
@@ -123,28 +168,20 @@ class NormExtractionResult:
 
     @property
     def gt_loss(self) -> set[str]:
-        """Norms in GT but missed by extractor (false negatives)."""
         return self.expected - self.extracted
 
     @property
     def overcount(self) -> set[str]:
-        """Norms found by extractor but not in GT.
-
-        Not necessarily errors: may indicate GT annotator oversights of norms
-        that genuinely appear in the source text.
-        """
         return self.extracted - self.expected
 
     @property
     def recall(self) -> float:
-        """Vacuously 1.0 when no GT expectations."""
         if not self.expected:
             return 1.0
         return len(self.true_positives) / len(self.expected)
 
     @property
     def precision(self) -> float:
-        """Vacuously 1.0 when nothing extracted."""
         if not self.extracted:
             return 1.0
         return len(self.true_positives) / len(self.extracted)
@@ -155,10 +192,12 @@ class NormExtractionResult:
 # ---------------------------------------------------------------------------
 
 def evaluate_document(doc_id: str, doc_type: str, text: str) -> NormExtractionResult:
-    """Run extractor on text, normalize results, compare against GT."""
+    """Extract norms from text and compare against paragraph_norm GT subset."""
     extracted_raw = extract_canonical_norms(text)
     extracted = {_normalize_norm_string(n) for n in extracted_raw}
-    expected = GT_NORMS.get(doc_id, set())
+
+    gt = GT_BY_DOC.get(doc_id)
+    expected = gt.paragraph_norms if gt is not None else set()
 
     return NormExtractionResult(
         doc_id=doc_id,
@@ -197,14 +236,14 @@ def summarize(label: str, subset: list[NormExtractionResult]) -> None:
     total_overcount = sum(len(r.overcount) for r in subset)
 
     print(f"\n{'=' * 80}")
-    print(f"{label} (n={len(subset)})")
+    print(f"{label} (n={len(subset)}, paragraph_norm only)")
     if recalls:
-        print(f"  Mean Recall:    {_avg(recalls):.2%}  (n={len(recalls)} with GT)")
+        print(f"  Mean Recall:     {_avg(recalls):.2%}  (n={len(recalls)} with paragraph_norm GT)")
     if precisions:
-        print(f"  Mean Precision: {_avg(precisions):.2%}  (n={len(precisions)} with extractions)")
-    print(f"  Total TP:       {total_tp}")
-    print(f"  Total Loss:     {total_loss}  (norms in GT, missed by extractor)")
-    print(f"  Total Overcount: {total_overcount}  (norms extracted, not in GT)")
+        print(f"  Mean Precision:  {_avg(precisions):.2%}  (n={len(precisions)} with extractions)")
+    print(f"  Total TP:        {total_tp}")
+    print(f"  Total Loss:      {total_loss}  (paragraph_norm in GT, missed by extractor)")
+    print(f"  Total Overcount: {total_overcount}  (extracted, not in paragraph_norm GT)")
 
     print(f"\n  {'Doc':<32} {'Rec':>6} {'Prec':>6} {'Expect':>7} {'Found':>6} {'TP':>4} {'Loss':>5} {'Over':>5}")
     print(f"  {'-' * 78}")
@@ -231,11 +270,11 @@ summarize("Mixed", mixed)
 
 
 # ---------------------------------------------------------------------------
-# Loss-Diagnostik: which norms are systematically missed?
+# Loss-Diagnostik
 # ---------------------------------------------------------------------------
 
 print(f"\n{'=' * 80}")
-print("Loss-Diagnostik: welche Normen gehen verloren?")
+print("Loss-Diagnostik: welche paragraph_norm Einträge gehen verloren?")
 print(f"{'=' * 80}")
 
 all_losses: list[tuple[str, str]] = []
@@ -251,15 +290,14 @@ if all_losses:
     print(f"\n  {len(all_losses)} Verluste über {len({d for d, _ in all_losses})} Dokumente")
     print(f"  ({len(losses_by_norm)} distinct norms)\n")
     for norm in sorted(losses_by_norm.keys()):
-        docs = losses_by_norm[norm]
-        doc_list = ", ".join(docs)
-        print(f"  {norm:<40} → {doc_list}")
+        docs = ", ".join(losses_by_norm[norm])
+        print(f"  {norm:<40} → {docs}")
 else:
-    print("\n  Keine Verluste. Extractor hat alle GT-Normen gefunden.")
+    print("\n  Keine Verluste. Extractor hat alle paragraph_norm Einträge gefunden.")
 
 
 # ---------------------------------------------------------------------------
-# Overcount-Diagnostik: which extra norms is the extractor picking up?
+# Overcount-Diagnostik
 # ---------------------------------------------------------------------------
 
 print(f"\n{'=' * 80}")
@@ -279,11 +317,35 @@ if all_overcounts:
     print(f"\n  {len(all_overcounts)} Overcounts über {len({d for d, _ in all_overcounts})} Dokumente")
     print(f"  ({len(over_by_norm)} distinct norms)\n")
     for norm in sorted(over_by_norm.keys()):
-        docs = over_by_norm[norm]
-        doc_list = ", ".join(docs)
-        print(f"  {norm:<40} → {doc_list}")
+        docs = ", ".join(over_by_norm[norm])
+        print(f"  {norm:<40} → {docs}")
 else:
-    print("\n  Kein Overcount. Extractor hat nur GT-Normen gefunden.")
+    print("\n  Kein Overcount. Extractor hat nur paragraph_norm Einträge gefunden.")
+
+
+# ---------------------------------------------------------------------------
+# Limitation-Diagnostik: documented Phase 2 roadmap
+# ---------------------------------------------------------------------------
+
+print(f"\n{'=' * 80}")
+print("Limitation-Diagnostik: dokumentierte extractor_limitation Einträge")
+print(f"{'=' * 80}")
+
+total_limitation_entries = 0
+for doc_id in sorted(GT_BY_DOC.keys()):
+    gt = GT_BY_DOC[doc_id]
+    if not gt.extractor_limitations:
+        continue
+    print(f"\n  {doc_id}: {len(gt.extractor_limitations)} Einträge")
+    for entry in gt.extractor_limitations:
+        total_limitation_entries += 1
+        note = f"  ({entry.anmerkung})" if entry.anmerkung else ""
+        print(f"    - {entry.norm}{note}")
+
+if total_limitation_entries == 0:
+    print("\n  Keine extractor_limitation Einträge in der GT.")
+else:
+    print(f"\n  Gesamt: {total_limitation_entries} dokumentierte Limitations (Phase 2 Roadmap)")
 
 
 # ---------------------------------------------------------------------------
@@ -297,7 +359,7 @@ output = [
     {
         "doc_id": r.doc_id,
         "doc_type": r.doc_type,
-        "expected": sorted(r.expected),
+        "expected_paragraph_norms": sorted(r.expected),
         "extracted": sorted(r.extracted),
         "true_positives": sorted(r.true_positives),
         "gt_loss": sorted(r.gt_loss),
