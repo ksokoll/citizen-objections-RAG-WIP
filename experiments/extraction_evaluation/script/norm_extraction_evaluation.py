@@ -34,7 +34,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
-from citizen_objections_rag.triage.norm_extractor import extract_canonical_norms
+from app.triage.norm_extractor import extract_canonical_norms
 
 # ---------------------------------------------------------------------------
 # Paths

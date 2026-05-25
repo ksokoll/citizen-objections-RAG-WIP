@@ -58,7 +58,7 @@ Rechtsanwalt
 """
 
 from pydantic import BaseModel
-from citizen_objections_rag.triage.catalog import KATALOG, CatalogId
+from app.triage.catalog import KATALOG, CatalogId
 
 
 # ---------------------------------------------------------------------------
@@ -90,7 +90,7 @@ catalog_entries = "\n".join(
 # Prompt zusammenbauen
 # ---------------------------------------------------------------------------
 
-from citizen_objections_rag.triage.prompts import ARGUMENT_EXTRACTION_PROMPT
+from app.triage.prompts import ARGUMENT_EXTRACTION_PROMPT
 
 prompt = ARGUMENT_EXTRACTION_PROMPT.prompt.format(
     catalog_entries=catalog_entries,

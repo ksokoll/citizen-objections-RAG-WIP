@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from citizen_objections_rag.core.prompts import PromptTemplate
+from app.core.prompts import PromptTemplate
 
 ARGUMENT_EXTRACTION_PROMPT = PromptTemplate(
     name="triage_argument_extraction",

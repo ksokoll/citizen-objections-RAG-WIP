@@ -9,24 +9,23 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-from citizen_objections_rag.core.entities import (
+from app.core.entities import (
     Abwaegungsstellungnahme,
     ExtrahiertesArgument,
     Rechtsgrundlage,
     RetrievedChunk,
 )
-from citizen_objections_rag.core.failures import GenerationError, RetrievalError
-from citizen_objections_rag.core.protocols import LLMClientProtocol, RetrieverProtocol
-from citizen_objections_rag.core.results import TriageResult
-from citizen_objections_rag.core.statuses import (
+from app.core.failures import GenerationError, RetrievalError
+from app.core.protocols import LLMClientProtocol, RetrieverProtocol
+from app.core.results import TriageResult
+from app.core.statuses import (
     EinwendungsTyp,
     WuerdigungsStatus,
 )
-from citizen_objections_rag.response_drafting.prompts import (
+from app.response_drafting.prompts import (
     ABWAEGUNG_PROMPT,
     format_rechtsgrundlagen,
 )
-from citizen_objections_rag.triage.classification import classify_einwendungs_typ
 
 
 class ResponseDraftingService:
@@ -77,7 +76,7 @@ class ResponseDraftingService:
 
         return Abwaegungsstellungnahme(
             einwendungs_id=document_id,
-            einwendungs_typ=classify_einwendungs_typ(triage_result.extracted_arguments),
+            einwendungs_typ=triage_result.einwendungs_typ,
             model_version=self._model_version,
             prompt_version=ABWAEGUNG_PROMPT.version,
             retrieval_config_hash="skeleton-stub",
@@ -128,7 +127,11 @@ class ResponseDraftingService:
             RetrievalError: If the retriever fails.
         """
         try:
-            return self._retriever.retrieve(query_embedding=[], top_k=5)
+            return self._retriever.retrieve(
+                query=argument.argument_text,
+                partition="",  # TODO(feat/retrieval): derive from catalog_id
+                top_k=5,
+            )
         except Exception as e:
             raise RetrievalError(f"Retrieval failed: {e}") from e
 

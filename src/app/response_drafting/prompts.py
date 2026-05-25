@@ -1,7 +1,7 @@
 from datetime import datetime
 
-from citizen_objections_rag.core.entities import RetrievedChunk
-from citizen_objections_rag.core.prompts import PromptTemplate
+from app.core.entities import RetrievedChunk
+from app.core.prompts import PromptTemplate
 
 
 def format_rechtsgrundlagen(chunks: list[RetrievedChunk]) -> str:

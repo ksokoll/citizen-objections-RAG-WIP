@@ -2,9 +2,9 @@
 
 import uuid
 
-from citizen_objections_rag.core.entities import ExtrahiertesArgument
-from citizen_objections_rag.core.statuses import EinwendungsTyp
-from citizen_objections_rag.triage.classification import classify_einwendungs_typ
+from app.core.entities import ExtrahiertesArgument
+from app.core.statuses import EinwendungsTyp
+from app.triage.classification import classify_einwendungs_typ
 
 
 class TestClassifyEinwendungsTyp:

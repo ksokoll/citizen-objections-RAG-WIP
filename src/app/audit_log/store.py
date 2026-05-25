@@ -5,8 +5,8 @@ from __future__ import annotations
 from datetime import datetime
 from pathlib import Path
 
-from citizen_objections_rag.core.events import AuditEvent, AuditEventType
-from citizen_objections_rag.core.failures import AuditLogError
+from app.core.events import AuditEvent, AuditEventType
+from app.core.failures import AuditLogError
 
 
 class JsonLinesAuditStore:

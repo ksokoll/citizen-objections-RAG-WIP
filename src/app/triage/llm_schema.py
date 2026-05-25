@@ -11,8 +11,8 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
-from citizen_objections_rag.core.statuses import EinwendungsTyp
-from citizen_objections_rag.triage.catalog import CatalogId
+from app.core.statuses import EinwendungsTyp
+from app.triage.catalog import CatalogId
 
 
 class LLMArgument(BaseModel):

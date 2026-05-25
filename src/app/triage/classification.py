@@ -4,8 +4,8 @@ Extracted from TriageService to enable direct testing without
 instantiating the full service. No I/O, no dependencies.
 """
 
-from citizen_objections_rag.core.entities import ExtrahiertesArgument
-from citizen_objections_rag.core.statuses import EinwendungsTyp
+from app.core.entities import ExtrahiertesArgument
+from app.core.statuses import EinwendungsTyp
 
 
 def classify_einwendungs_typ(

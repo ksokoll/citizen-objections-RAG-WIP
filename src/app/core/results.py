@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from .entities import ExtrahiertesArgument
+from .statuses import EinwendungsTyp
 
 
 @dataclass(frozen=True)
@@ -25,11 +26,13 @@ class IngestionResult:
 class TriageResult:
     """Output of Triage bounded context.
 
-    DTO for cross-context communication. Carries all discrete legal arguments
-    extracted from the Einwendung, each classified against the predefined
-    catalog (ADR-002, ADR-013). An empty extracted_arguments list is a valid
-    result: TYP_1 documents with no identifiable legal argument produce no
-    entries. The Coordinator sets wuerdigungs_status=KEIN_TREFFER in that case.
+    DTO for cross-context communication. Carries the document-level
+    EinwendungsTyp plus all discrete legal arguments extracted from the
+    Einwendung, each classified against the predefined catalog (ADR-002,
+    ADR-013). An empty extracted_arguments list is a valid result: TYP_1
+    documents with no identifiable legal argument produce no entries. The
+    Coordinator sets wuerdigungs_status=KEIN_TREFFER in that case.
     """
 
+    einwendungs_typ: EinwendungsTyp
     extracted_arguments: list[ExtrahiertesArgument] = field(default_factory=list)

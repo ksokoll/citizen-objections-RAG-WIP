@@ -8,9 +8,9 @@ from pathlib import Path
 
 import pytest
 
-from citizen_objections_rag.audit_log.store import JsonLinesAuditStore
-from citizen_objections_rag.core.events import AuditEvent, AuditEventType
-from citizen_objections_rag.core.failures import AuditLogError
+from app.audit_log.store import JsonLinesAuditStore
+from app.core.events import AuditEvent, AuditEventType
+from app.core.failures import AuditLogError
 
 
 def _make_event(

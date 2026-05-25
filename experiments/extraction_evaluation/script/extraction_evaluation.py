@@ -30,8 +30,8 @@ from dotenv import load_dotenv
 from openai import OpenAI
 from pydantic import BaseModel
 
-from citizen_objections_rag.triage.catalog import KATALOG
-from citizen_objections_rag.triage.prompts import ARGUMENT_EXTRACTION_PROMPT
+from app.triage.catalog import KATALOG
+from app.triage.prompts import ARGUMENT_EXTRACTION_PROMPT
 
 load_dotenv()
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))

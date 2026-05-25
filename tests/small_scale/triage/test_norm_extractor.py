@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from citizen_objections_rag.triage.norm_extractor import (
+from app.triage.norm_extractor import (
     ExtractedNorm,
     Gesetz,
     extract_canonical_norms,

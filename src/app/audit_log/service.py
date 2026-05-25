@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from citizen_objections_rag.core.events import AuditEvent, AuditEventType
-from citizen_objections_rag.core.protocols import AuditEventPublisherProtocol
+from app.core.events import AuditEvent, AuditEventType
+from app.core.protocols import AuditEventPublisherProtocol
 
 
 class AuditLogService:

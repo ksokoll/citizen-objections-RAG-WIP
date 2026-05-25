@@ -2,17 +2,17 @@
 
 import uuid
 
-from citizen_objections_rag.core.entities import (
+from app.core.entities import (
     ExtrahiertesArgument,
     RetrievedChunk,
 )
-from citizen_objections_rag.core.results import TriageResult
-from citizen_objections_rag.core.statuses import (
+from app.core.results import TriageResult
+from app.core.statuses import (
     AbwaegungsStatus,
     EinwendungsTyp,
     WuerdigungsStatus,
 )
-from citizen_objections_rag.response_drafting.service import ResponseDraftingService
+from app.response_drafting.service import ResponseDraftingService
 
 
 class FakeLLMClient:
@@ -28,7 +28,7 @@ class FakeRetriever:
     """Fake Retriever returning an empty chunk list."""
 
     def retrieve(
-        self, query_embedding: list[float], top_k: int = 5
+        self, query: str, partition: str, top_k: int = 5
     ) -> list[RetrievedChunk]:
         return []
 
@@ -57,6 +57,7 @@ class TestResponseDraftingServiceSkeleton:
             model_version="skeleton-v0.1",
         )
         triage_result = TriageResult(
+            einwendungs_typ=EinwendungsTyp.TYP_2,
             extracted_arguments=[make_argument()],
         )
 
@@ -74,6 +75,7 @@ class TestResponseDraftingServiceSkeleton:
             model_version="skeleton-v0.1",
         )
         triage_result = TriageResult(
+            einwendungs_typ=EinwendungsTyp.TYP_2,
             extracted_arguments=[make_argument()],
         )
 
@@ -93,6 +95,7 @@ class TestResponseDraftingServiceSkeleton:
             model_version="skeleton-v0.1",
         )
         triage_result = TriageResult(
+            einwendungs_typ=EinwendungsTyp.TYP_2,
             extracted_arguments=[make_argument(catalog_id=None)],
         )
 
@@ -110,6 +113,7 @@ class TestResponseDraftingServiceSkeleton:
             model_version="skeleton-v0.1",
         )
         triage_result = TriageResult(
+            einwendungs_typ=EinwendungsTyp.TYP_2,
             extracted_arguments=[make_argument(argument_verified=False)],
         )
 
@@ -129,6 +133,7 @@ class TestResponseDraftingServiceSkeleton:
             model_version="skeleton-v0.1",
         )
         triage_result = TriageResult(
+            einwendungs_typ=EinwendungsTyp.TYP_2,
             extracted_arguments=[make_argument()],
         )
 
@@ -146,6 +151,7 @@ class TestResponseDraftingServiceSkeleton:
             model_version="skeleton-v0.1",
         )
         triage_result = TriageResult(
+            einwendungs_typ=EinwendungsTyp.TYP_2,
             extracted_arguments=[make_argument()],
         )
 
@@ -163,6 +169,7 @@ class TestResponseDraftingServiceSkeleton:
             model_version="skeleton-v0.1",
         )
         triage_result = TriageResult(
+            einwendungs_typ=EinwendungsTyp.TYP_1,
             extracted_arguments=[],
         )
 

@@ -14,18 +14,18 @@ import sys
 import uuid
 from typing import Any
 
-from citizen_objections_rag.audit_log.service import AuditLogService
-from citizen_objections_rag.core.entities import Abwaegungsstellungnahme
-from citizen_objections_rag.core.events import AuditEvent, AuditEventType
-from citizen_objections_rag.core.failures import (
+from app.audit_log.service import AuditLogService
+from app.core.entities import Abwaegungsstellungnahme
+from app.core.events import AuditEvent, AuditEventType
+from app.core.failures import (
     GenerationError,
     IngestionError,
     RetrievalError,
     TriageError,
 )
-from citizen_objections_rag.document_ingestion.service import DocumentIngestionService
-from citizen_objections_rag.response_drafting.service import ResponseDraftingService
-from citizen_objections_rag.triage.service import TriageService
+from app.document_ingestion.service import DocumentIngestionService
+from app.response_drafting.service import ResponseDraftingService
+from app.triage.service import TriageService
 
 
 class Pipeline:

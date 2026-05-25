@@ -13,7 +13,7 @@ import numpy as np
 from rank_bm25 import BM25Okapi
 from sentence_transformers import CrossEncoder, SentenceTransformer
 
-from citizen_objections_rag.core.entities import RetrievedChunk
+from app.core.entities import RetrievedChunk
 
 
 @dataclass(frozen=True)

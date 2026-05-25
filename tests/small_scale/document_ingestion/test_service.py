@@ -4,8 +4,8 @@ from pathlib import Path
 
 import pytest
 
-from citizen_objections_rag.core.failures import IngestionError
-from citizen_objections_rag.document_ingestion.service import DocumentIngestionService
+from app.core.failures import IngestionError
+from app.document_ingestion.service import DocumentIngestionService
 
 
 class TestDocumentIngestionService:

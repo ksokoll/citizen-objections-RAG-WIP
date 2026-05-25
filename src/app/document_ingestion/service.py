@@ -10,8 +10,8 @@ from __future__ import annotations
 import uuid
 from pathlib import Path
 
-from citizen_objections_rag.core.failures import IngestionError
-from citizen_objections_rag.core.results import IngestionResult
+from app.core.failures import IngestionError
+from app.core.results import IngestionResult
 
 
 class DocumentIngestionService:

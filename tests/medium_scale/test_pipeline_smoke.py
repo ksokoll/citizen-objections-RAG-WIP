@@ -5,12 +5,12 @@ from pathlib import Path
 
 import pytest
 
-from citizen_objections_rag.audit_log.store import JsonLinesAuditStore
-from citizen_objections_rag.core.events import AuditEventType
-from citizen_objections_rag.core.failures import IngestionError
-from citizen_objections_rag.core.results import TriageResult
-from citizen_objections_rag.core.statuses import AbwaegungsStatus, WuerdigungsStatus
-from citizen_objections_rag.pipeline import Pipeline
+from app.audit_log.store import JsonLinesAuditStore
+from app.core.events import AuditEventType
+from app.core.failures import IngestionError
+from app.core.results import TriageResult
+from app.core.statuses import AbwaegungsStatus, EinwendungsTyp, WuerdigungsStatus
+from app.pipeline import Pipeline
 
 SAMPLE_EINWENDUNG = (
     "Ein vorhabenbezogener Bebauungsplan, der von dieser "
@@ -66,19 +66,22 @@ class TestPipelineSmoke:
         # Given a pipeline where triage produces no arguments (empty text)
         from tests.conftest import FakeLLMClient, FakeRetriever
 
-        from citizen_objections_rag.audit_log.service import AuditLogService
-        from citizen_objections_rag.audit_log.store import JsonLinesAuditStore
-        from citizen_objections_rag.document_ingestion.service import (
+        from app.audit_log.service import AuditLogService
+        from app.audit_log.store import JsonLinesAuditStore
+        from app.document_ingestion.service import (
             DocumentIngestionService,
         )
-        from citizen_objections_rag.response_drafting.service import (
+        from app.response_drafting.service import (
             ResponseDraftingService,
         )
-        from citizen_objections_rag.triage.service import TriageService
+        from app.triage.service import TriageService
 
         class EmptyTriageService(TriageService):
             def triage(self, clean_text: str) -> TriageResult:
-                return TriageResult(extracted_arguments=[])
+                return TriageResult(
+                    einwendungs_typ=EinwendungsTyp.TYP_1,
+                    extracted_arguments=[],
+                )
 
         pipeline = Pipeline(
             ingestion=DocumentIngestionService(raw_store_path=tmp_path / "raw"),
