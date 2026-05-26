@@ -599,3 +599,52 @@ class TestRealisticCorpusSnippets:
         assert len(result) == 1
         assert result[0].norm == "999"
         assert result[0].gesetz == Gesetz.BAUGB
+
+
+class TestIVMChainExtraction:
+    """i.V.m. chain handling: both primary and inner citations extracted."""
+
+    def test_should_extract_both_norms_from_simple_ivm_chain(self) -> None:
+        text = "§ 12 i.V.m. § 30 BauGB regelt..."
+        norms = extract_norms(text)
+        canonicals = {n.canonical() for n in norms}
+        assert "§ 12 BauGB" in canonicals
+        assert "§ 30 BauGB" in canonicals
+
+    def test_should_extract_both_norms_from_complex_ivm_chain(self) -> None:
+        # Pattern from einspruch_12_mixed that motivated this feature.
+        text = "gemäß § 9 Abs. 1 Nr. 1 i.V.m. § 8 WHG einer Erlaubnis"
+        norms = extract_norms(text)
+        canonicals = {n.canonical() for n in norms}
+        assert "§ 9 Abs. 1 Nr. 1 WHG" in canonicals
+        assert "§ 8 WHG" in canonicals
+
+    def test_should_attribute_inner_citation_to_outer_gesetz(self) -> None:
+        text = "§ 12 i.V.m. § 30 BauGB"
+        norms = extract_norms(text)
+        gesetze = {n.gesetz for n in norms}
+        assert gesetze == {Gesetz.BAUGB}
+
+    def test_should_handle_multiple_ivm_links(self) -> None:
+        text = "§ 9 i.V.m. § 8 i.V.m. § 7 BauGB regelt..."
+        norms = extract_norms(text)
+        canonicals = {n.canonical() for n in norms}
+        assert canonicals == {"§ 7 BauGB", "§ 8 BauGB", "§ 9 BauGB"}
+
+
+class TestIVMChainRegressionGuards:
+    """Ensure i.V.m. extension does not break simple citations."""
+
+    def test_should_preserve_simple_citation_behavior(self) -> None:
+        text = "§ 8 BauGB und § 9 WHG."
+        norms = extract_norms(text)
+        canonicals = {n.canonical() for n in norms}
+        assert canonicals == {"§ 8 BauGB", "§ 9 WHG"}
+
+    def test_should_not_attribute_unrelated_citations_to_first_gesetz(self) -> None:
+        # Two distinct citations, no i.V.m. - must keep separate gesetze.
+        text = "Verstoß gegen § 8 BauGB. Auch § 9 WHG betroffen."
+        norms = extract_norms(text)
+        canonicals = {n.canonical() for n in norms}
+        assert "§ 8 BauGB" in canonicals
+        assert "§ 9 WHG" in canonicals

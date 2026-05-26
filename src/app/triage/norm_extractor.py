@@ -19,6 +19,14 @@ LLM-based extraction adds variance and hallucination surface without semantic
 benefit. The jura_regex pattern has been validated in production legal NLP
 contexts and is the de facto Python standard for this task.
 
+i.V.m. chain handling: legal citations of the form "§ X Abs. Y i.V.m. § Z GESETZ"
+are common in formal Anwaltsdokumente and earlier versions of this extractor
+missed them because the inner § Z fell outside the regex's filler tolerance.
+The pattern now explicitly allows i.V.m. chains between the primary citation
+and the closing gesetz, and a post-processing step in extract_norms emits
+separate ExtractedNorm objects for the inner citations, all attributed to the
+same gesetz that closes the chain.
+
 Known limitations:
 - §§-chains ("§§ 346, 437, 440 BGB") are matched as a single citation with
   only the first norm captured. Affects formal Anwaltsdokumente; mitigation
@@ -67,6 +75,8 @@ class ExtractedNorm:
 
     Attributes:
         full_match: Verbatim citation text (e.g. "§ 8 Abs. 2 BauGB"), trimmed.
+            For inner citations from i.V.m. chains, this is the inner span
+            only (e.g. "§ 8") without the chain context or the gesetz suffix.
         gesetz: Law abbreviation from the whitelist.
         norm: Paragraph or article number, possibly with letter suffix (e.g. "305c").
         absatz: Absatz value if cited (e.g. "2", "1a"), else None.
@@ -127,10 +137,15 @@ def _build_pattern() -> re.Pattern[str]:
         3. Absatz: optional, introduced by "Abs.", digits with optional letter.
         4. Satz: optional, introduced by "S.", digits only.
         5. Nr.: optional, introduced by "Nr.", digits with optional letter.
-        6. lit.: optional, introduced by "lit.", single lowercase letter.
-        7. Up to 10 characters of filler (non-greedy) before the law abbreviation.
+        6. lit.: optional, single lowercase letter introduced by "lit.".
+        7. i.V.m. chains: optional, repeatable. Each chain is `i.V.m. § X
+           (Abs. Y)? (S. Z)? (Nr. W)?`. The inner § N citations are not
+           captured here; they are extracted in a post-processing step in
+           extract_norms() so they can be attributed to the closing gesetz
+           as separate ExtractedNorm objects.
+        8. Up to 10 characters of filler (non-greedy) before the law abbreviation.
            The 10-character limit prevents accidental cross-citation matches.
-        8. Law abbreviation: alternation over the whitelist, with a trailing
+        9. Law abbreviation: alternation over the whitelist, with a trailing
            negative lookahead to prevent partial matches (e.g. "WHG" should
            not match inside "WHGesetz").
 
@@ -145,13 +160,37 @@ def _build_pattern() -> re.Pattern[str]:
         (?:S\.\s*(?P<satz>\d+))?\s*
         (?:Nr\.\s*(?P<nr>\d+(?:\w\b)?))?\s*
         (?:lit\.\s*(?P<lit>[a-z]))?
-        .{{0,10}}?
+        (?:\s*i\.\s*V\.\s*m\.\s*§§?\s*\d+(?:\w\b)?
+            (?:\s*Abs\.\s*\d+(?:\w\b)?)?
+            (?:\s*S\.\s*\d+)?
+            (?:\s*Nr\.\s*\d+(?:\w\b)?)?
+        )*
+        \s*.{{0,10}}?
         (?P<gesetz>{gesetze})(?![\w-])
     """
     return re.compile(pattern, re.IGNORECASE | re.VERBOSE)
 
 
 _NORM_PATTERN: re.Pattern[str] = _build_pattern()
+
+# Marker to detect "i.V.m." (in Verbindung mit), tolerating whitespace.
+_IVM_MARKER: re.Pattern[str] = re.compile(r"i\.\s*V\.\s*m\.", re.IGNORECASE)
+
+# Sub-pattern for extracting individual citations from inside a matched span.
+# Used by _extract_ivm_inner_citations to find the secondary norms in an
+# i.V.m. chain. Does not include the gesetz, because the gesetz is shared
+# across all citations in the chain.
+_INNER_CITATION_PATTERN: re.Pattern[str] = re.compile(
+    r"""
+        §§?\s*
+        (?P<norm>\d+(?:\w\b)?)\s*
+        (?:Abs\.\s*(?P<absatz>\d+(?:\w\b)?))?\s*
+        (?:S\.\s*(?P<satz>\d+))?\s*
+        (?:Nr\.\s*(?P<nr>\d+(?:\w\b)?))?\s*
+        (?:lit\.\s*(?P<lit>[a-z]))?
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
 
 
 def _resolve_gesetz(matched_string: str) -> Gesetz | None:
@@ -171,21 +210,71 @@ def _resolve_gesetz(matched_string: str) -> Gesetz | None:
     return None
 
 
+def _extract_ivm_inner_citations(
+    matched_text: str,
+    span_start: int,
+    gesetz: Gesetz,
+) -> list[ExtractedNorm]:
+    """Extract secondary citations from inside an i.V.m. chain.
+
+    Called by extract_norms when the primary match contains an i.V.m. marker.
+    The primary citation has already been recorded by the caller. This
+    function walks through all `§ N (Abs. M)? ...` sub-citations inside the
+    matched span and emits one ExtractedNorm per secondary citation, all
+    attributed to the gesetz that closes the chain.
+
+    The first inner citation match is the primary citation itself; it is
+    skipped because the caller has already recorded it.
+
+    Args:
+        matched_text: The full match text from the primary regex, including
+            the i.V.m. chain and the gesetz name.
+        span_start: Absolute start position of matched_text in the source text.
+            Used to compute absolute positions for each inner ExtractedNorm.
+        gesetz: The gesetz that closes the chain. All inner citations inherit
+            this gesetz, since the i.V.m. construct shares the gesetz across
+            all linked norms.
+
+    Returns:
+        List of ExtractedNorm objects for the inner citations. Empty list if
+        the matched span contains no secondary citations (defensive; should
+        not happen if the caller only invokes this on i.V.m.-containing spans).
+    """
+    inner_norms: list[ExtractedNorm] = []
+    matches = list(_INNER_CITATION_PATTERN.finditer(matched_text))
+    # Skip the first match: it is the primary citation, already recorded.
+    for inner in matches[1:]:
+        inner_norms.append(
+            ExtractedNorm(
+                full_match=inner.group(0).strip(),
+                gesetz=gesetz,
+                norm=inner.group("norm"),
+                absatz=inner.group("absatz"),
+                satz=inner.group("satz"),
+                nummer=inner.group("nr"),
+                lit=inner.group("lit"),
+                start=span_start + inner.start(),
+                end=span_start + inner.end(),
+            )
+        )
+    return inner_norms
+
+
 def extract_norms(text: str) -> list[ExtractedNorm]:
     """Find all norm references in the given text.
 
     Deterministic and hallucination-free: cannot return norms not present
-    in the source text. Matches are returned in text order (sorted by
-    start position). Duplicates by canonical form are NOT removed, because
-    positional information is needed for argument assignment downstream.
+    in the source text. Matches are returned in primary-match order with
+    inner i.V.m. citations appended directly after their primary. Duplicates
+    by canonical form are NOT removed, because positional information is
+    needed for argument assignment downstream.
 
     Args:
         text: Source text to search (e.g. an Einwendung document or an
             original_zitat from a single ExtrahiertesArgument).
 
     Returns:
-        List of ExtractedNorm objects in text order. Empty list if no
-        norms are found.
+        List of ExtractedNorm objects. Empty list if no norms are found.
     """
     results: list[ExtractedNorm] = []
     for match in _NORM_PATTERN.finditer(text):
@@ -206,6 +295,13 @@ def extract_norms(text: str) -> list[ExtractedNorm]:
                 end=match.end(),
             )
         )
+        # Post-process i.V.m. chains: emit secondary citations attributed
+        # to the same gesetz that closes the chain.
+        matched_text = match.group(0)
+        if _IVM_MARKER.search(matched_text):
+            results.extend(
+                _extract_ivm_inner_citations(matched_text, match.start(), gesetz)
+            )
     return results
 
 
