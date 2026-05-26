@@ -1,0 +1,160 @@
+{
+  "doc_id": "einspruch_14",
+  "einwendungs_typ": "TYP_2",
+  "expected_argument_count_range": [
+    5,
+    5
+  ],
+  "expected_arguments": [
+    {
+      "argument_id": "arg1",
+      "argument_summary": "Umweltbericht enthält unvollständige Bestandserhebung",
+      "argument_anchor": "einmalige Kartierung ohne Wiederholungserhebung fachlich nicht ausreichend",
+      "expected_catalog_ids": [
+        "baugb"
+      ],
+      "expected_norms": {
+        "must_retrieve": [
+          {
+            "paragraph_id": "baugb_§2a",
+            "citation": "§ 2a BauGB",
+            "source": "verbatim_in_text",
+            "rank_target": "top_1",
+            "rationale": "Umweltbericht als Pflichtbestandteil der Bebauungsplanbegründung."
+          }
+        ],
+        "should_retrieve": [],
+        "not_retrievable_via_xml": [
+          {
+            "citation": "Anlage 1 BauGB",
+            "source": "not_retrievable_via_xml",
+            "rationale": "Inhaltliche Anforderungen an den Umweltbericht. Anlage statt Paragraph, nicht in §-Pattern erfasst."
+          }
+        ]
+      }
+    },
+    {
+      "argument_id": "arg2",
+      "argument_summary": "Fledermausgutachten zu Zug- und Winterzeiten fehlt",
+      "argument_anchor": "Erfassung des Fledermausbestands zu Zugzeiten sowie eine Überprüfung von Winterquartieren fehlen",
+      "expected_catalog_ids": [
+        "bnatschg"
+      ],
+      "expected_norms": {
+        "must_retrieve": [
+          {
+            "paragraph_id": "bnatschg_§44",
+            "citation": "§ 44 BNatSchG",
+            "source": "verbatim_in_text",
+            "rank_target": "top_1",
+            "rationale": "Artenschutzrechtliche Zugriffsverbote, Fledermäuse als besonders geschützte Art."
+          }
+        ],
+        "should_retrieve": [
+          {
+            "paragraph_id": "bnatschg_§45",
+            "citation": "§ 45 BNatSchG",
+            "source": "inferred_applicable",
+            "rank_target": "top_20",
+            "rationale": "Ausnahmen vom Zugriffsverbot. Im Text nicht zitiert, aber thematisch relevant."
+          }
+        ],
+        "not_retrievable_via_xml": []
+      }
+    },
+    {
+      "argument_id": "arg3",
+      "argument_summary": "FFH-Verträglichkeitsvorprüfung für DE-6007-302 fehlt",
+      "argument_anchor": "Umweltbericht enthält keine FFH-Verträglichkeitsvorprüfung",
+      "expected_catalog_ids": [
+        "bnatschg"
+      ],
+      "expected_norms": {
+        "must_retrieve": [
+          {
+            "paragraph_id": "bnatschg_§34",
+            "citation": "§ 34 BNatSchG",
+            "source": "verbatim_in_text",
+            "rank_target": "top_1",
+            "rationale": "FFH-Verträglichkeitsprüfung für Gebiet DE-6007-302."
+          }
+        ],
+        "should_retrieve": [
+          {
+            "paragraph_id": "bnatschg_§36",
+            "citation": "§ 36 BNatSchG",
+            "source": "inferred_applicable",
+            "rank_target": "top_20",
+            "rationale": "FFH-Pläne. Im Text nicht zitiert, aber thematisch verwandt."
+          }
+        ],
+        "not_retrievable_via_xml": [
+          {
+            "citation": "Art. 6 Abs. 3 FFH-Richtlinie (92/43/EWG)",
+            "source": "not_retrievable_via_xml",
+            "rationale": "Europarechtliche Grundlage der FFH-VP. EU-Recht, nicht im Bundes-Korpus."
+          }
+        ]
+      }
+    },
+    {
+      "argument_id": "arg4",
+      "argument_summary": "Kompensationsflächen außerhalb der Gemeinde, Verfügbarkeit und Gleichwertigkeit unklar",
+      "argument_anchor": "Es ist nicht dokumentiert, ob diese Flächen tatsächlich verfügbar, planungsrechtlich gesichert und ökologisch gleichwertig sind",
+      "expected_catalog_ids": [
+        "baugb",
+        "bnatschg"
+      ],
+      "expected_norms": {
+        "must_retrieve": [],
+        "should_retrieve": [
+          {
+            "paragraph_id": "bnatschg_§15",
+            "citation": "§ 15 BNatSchG",
+            "source": "inferred_applicable",
+            "rank_target": "top_10",
+            "rationale": "Verursacherpflichten und Kompensation bei Eingriffen. Implizit zur Kompensationsplanung."
+          },
+          {
+            "paragraph_id": "baugb_§1a",
+            "citation": "§ 1a BauGB",
+            "source": "inferred_applicable",
+            "rank_target": "top_10",
+            "rationale": "Ergänzende Vorschriften zum Umweltschutz, Eingriffsregelung im Baurecht. Implizit."
+          }
+        ],
+        "not_retrievable_via_xml": []
+      }
+    },
+    {
+      "argument_id": "arg5",
+      "argument_summary": "Artenschutzrechtliche Erfassungslücken für Vögel, Zauneidechse, Wildbienen",
+      "argument_anchor": "Potenziell betroffene Strukturen auf dem Gelände wurden nicht auf Brutplätze untersucht",
+      "expected_catalog_ids": [
+        "bnatschg"
+      ],
+      "expected_norms": {
+        "must_retrieve": [
+          {
+            "paragraph_id": "bnatschg_§44",
+            "citation": "§ 44 BNatSchG",
+            "source": "verbatim_in_text",
+            "rank_target": "top_1",
+            "rationale": "Zugriffsverbote für besonders geschützte Vogel-, Reptilien- und Wildbienenarten."
+          }
+        ],
+        "should_retrieve": [
+          {
+            "paragraph_id": "bnatschg_§7",
+            "citation": "§ 7 BNatSchG",
+            "source": "inferred_applicable",
+            "rank_target": "top_20",
+            "rationale": "Begriffsbestimmungen, insbesondere besonders geschützte Arten."
+          }
+        ],
+        "not_retrievable_via_xml": []
+      }
+    }
+  ],
+  "notes": "Schwerpunkt Naturschutzrecht. NABU-Stellungnahme mit fünf substantiellen Argumenten in Sektionen II.1 bis II.4 plus Sektion III. Prozedurale Beteiligungsnormen (§ 4 Abs. 2 BauGB i.V.m. § 63 BNatSchG) sind im Untertitel als Verfahrensgrundlage erwähnt, nicht als substantielle Argumente und daher nicht in expected_arguments. bnatschg_§44 erscheint in arg2 und arg5 mit unterschiedlichen Kontexten (Fledermäuse vs. Vögel/Reptilien/Bienen)."
+}

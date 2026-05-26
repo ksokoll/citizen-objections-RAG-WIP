@@ -1,0 +1,88 @@
+{
+  "doc_id": "einspruch_12",
+  "einwendungs_typ": "TYP_2",
+  "expected_argument_count_range": [
+    3,
+    3
+  ],
+  "expected_arguments": [
+    {
+      "argument_id": "arg1",
+      "argument_summary": "Fehlende wasserrechtliche Erlaubnis für Moselentnahme",
+      "argument_anchor": "Jede Entnahme von Wasser aus einem Gewässer bedarf gemäß § 9 Abs. 1 Nr. 1",
+      "expected_catalog_ids": [
+        "whg"
+      ],
+      "expected_norms": {
+        "must_retrieve": [
+          {
+            "paragraph_id": "whg_§9",
+            "citation": "§ 9 Abs. 1 Nr. 1 WHG",
+            "source": "verbatim_in_text",
+            "rank_target": "top_1",
+            "rationale": "Erlaubnispflicht für Gewässerbenutzung."
+          },
+          {
+            "paragraph_id": "whg_§8",
+            "citation": "§ 8 WHG",
+            "source": "verbatim_in_text",
+            "rank_target": "top_3",
+            "rationale": "Erlaubnis als formaler Akt für Gewässerbenutzung."
+          }
+        ],
+        "should_retrieve": [],
+        "not_retrievable_via_xml": [
+          {
+            "citation": "Wasserhaushaltsgesetz (WHG)",
+            "source": "not_retrievable_via_xml",
+            "rationale": "Gesetz-Erwähnung ohne Paragraph zur Einordnung Mosel als Bundeswasserstraße."
+          },
+          {
+            "citation": "Bundeswasserstraßengesetz (WaStrG)",
+            "source": "not_retrievable_via_xml",
+            "rationale": "Gesetz-Erwähnung ohne Paragraph zur Abstimmungspflicht mit WSV."
+          }
+        ]
+      }
+    },
+    {
+      "argument_id": "arg2",
+      "argument_summary": "Thermische Belastung der Mosel durch Kühlwassereinleitung nicht geprüft",
+      "argument_anchor": "Einleitung von Kühlwasser mit erhöhter Temperatur kann zu einer thermischen Belastung",
+      "expected_catalog_ids": [
+        "whg"
+      ],
+      "expected_norms": {
+        "must_retrieve": [
+          {
+            "paragraph_id": "whg_§57",
+            "citation": "§ 57 WHG",
+            "source": "verbatim_in_text",
+            "rank_target": "top_1",
+            "rationale": "Prüfpflicht für thermische Gewässerbelastung bei Kühlwassereinleitung."
+          }
+        ],
+        "should_retrieve": [],
+        "not_retrievable_via_xml": []
+      }
+    },
+    {
+      "argument_id": "arg3",
+      "argument_summary": "Fehlende Prüfung der Lage im Trinkwasserschutzgebiet Zone III",
+      "argument_anchor": "Plangebiet liegt im Einzugsbereich eines nach Landesrecht festgesetzten Trinkwasserschutzgebiets",
+      "expected_catalog_ids": [],
+      "expected_norms": {
+        "must_retrieve": [],
+        "should_retrieve": [],
+        "not_retrievable_via_xml": [
+          {
+            "citation": "Landesrechtliche Schutzgebietsverordnung Rheinland-Pfalz",
+            "source": "not_retrievable_via_xml",
+            "rationale": "Landesrechtliche Verordnung, nicht in Bundes-XML enthalten."
+          }
+        ]
+      }
+    }
+  ],
+  "notes": "Schwerpunkt: Wasserrecht, Kühlwassernutzung Mosel. Einreicher: Björn Sauer, Dipl.-Ing. Wasserwirtschaft. Gesetz-Erwähnungen WHG und WaStrG (ohne Paragraph) sind als not_retrievable unter arg1 verbucht. § 47 VwGO ist kein eigenes Argument, sondern Rechtsbehelfsdrohung am Ende."
+}

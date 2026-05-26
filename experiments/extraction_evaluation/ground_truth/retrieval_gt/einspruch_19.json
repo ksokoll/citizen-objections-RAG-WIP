@@ -1,0 +1,89 @@
+{
+  "doc_id": "einspruch_19",
+  "einwendungs_typ": "TYP_2",
+  "expected_argument_count_range": [
+    3,
+    4
+  ],
+  "expected_arguments": [
+    {
+      "argument_id": "arg1",
+      "argument_summary": "Unvollständige Auslegung der Planunterlagen (Hydrogeologie, Durchführungsvertrag, EMV)",
+      "argument_anchor": "Hydrogeologische Gutachten, aus dem laut Umweltbericht Aussagen zur Grundwassersituation entnommen wurden",
+      "expected_catalog_ids": [
+        "baugb"
+      ],
+      "expected_norms": {
+        "must_retrieve": [
+          {
+          "paragraph_id": "baugb_§3",
+          "citation": "§ 3 BauGB",
+          "source": "verbatim_in_text",
+          "rank_target": "top_3",
+          "rationale": "Allgemeiner Verweis auf § 3 BauGB im Kontext der Verfahrensfehler-Beachtlichkeit (im Text ohne Absatz-Spezifikation zitiert). Zusätzlich zu den spezifischen § 3 Abs. 1 und § 3 Abs. 2 S. 1 Verweisen."
+          },
+          {
+            "paragraph_id": "baugb_§3",
+            "citation": "§ 3 Abs. 2 S. 1 BauGB",
+            "source": "verbatim_in_text",
+            "rank_target": "top_1",
+            "rationale": "Auslegungspflicht inkl. wesentlicher umweltbezogener Informationen."
+          },
+          {
+            "paragraph_id": "baugb_§214",
+            "citation": "§ 214 Abs. 1 Nr. 2 BauGB",
+            "source": "verbatim_in_text",
+            "rank_target": "top_3",
+            "rationale": "Beachtlichkeit des Auslegungsfehlers für Wirksamkeit des B-Plans."
+          }
+        ],
+        "should_retrieve": [],
+        "not_retrievable_via_xml": []
+      }
+    },
+    {
+      "argument_id": "arg2",
+      "argument_summary": "Verkürzte faktische Auslegungszeit (digitale Verfügbarkeit erst ab 10.10.2024)",
+      "argument_anchor": "tatsächliche Auslegungszeit betrug damit effektiv weniger als die gesetzlich vorgeschriebenen 30 Arbeitstage",
+      "expected_catalog_ids": [],
+      "expected_norms": {
+        "must_retrieve": [],
+        "should_retrieve": [],
+        "not_retrievable_via_xml": []
+      }
+    },
+    {
+      "argument_id": "arg3",
+      "argument_summary": "Mangelhafte ortsübliche Bekanntmachung (Aushang entfernt, Amtsblatt fehlt)",
+      "argument_anchor": "ortsübliche Bekanntmachung der Auslegung erfolgte durch Aushang am Rathaus",
+      "expected_catalog_ids": [],
+      "expected_norms": {
+        "must_retrieve": [],
+        "should_retrieve": [],
+        "not_retrievable_via_xml": []
+      }
+    },
+    {
+      "argument_id": "arg4",
+      "argument_summary": "Fehlende frühzeitige Bürgerbeteiligung",
+      "argument_anchor": "frühzeitige Bürgerbeteiligung hat ausweislich der Verfahrensakte nicht stattgefunden",
+      "expected_catalog_ids": [
+        "baugb"
+      ],
+      "expected_norms": {
+        "must_retrieve": [
+          {
+            "paragraph_id": "baugb_§3",
+            "citation": "§ 3 Abs. 1 BauGB",
+            "source": "verbatim_in_text",
+            "rank_target": "top_1",
+            "rationale": "Frühzeitige Beteiligung als Pflicht; selber Paragraph wie arg1, anderer Absatz."
+          }
+        ],
+        "should_retrieve": [],
+        "not_retrievable_via_xml": []
+      }
+    }
+  ],
+  "notes": "Schwerpunkt: Verfahrensrecht, Bürgerbeteiligung. Einreicher: Dr. Sabine Wolff. arg1 und arg4 referenzieren beide baugb_§3 (verschiedene Absätze). Eval-Befund vorher: Extractor findet § 3 BauGB und § 3 Abs. 2 BauGB zusätzlich (Overcount). Volltext-Check ergab: § 3 BauGB ohne Absatz steht in III, § 3 Abs. 2 BauGB ohne S. 1 möglicherweise Pattern-Fragmentierung."
+}

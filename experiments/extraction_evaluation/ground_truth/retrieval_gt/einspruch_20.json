@@ -1,0 +1,273 @@
+{
+  "doc_id": "einspruch_20",
+  "einwendungs_typ": "TYP_2",
+  "expected_argument_count_range": [
+    9,
+    11
+  ],
+  "expected_arguments": [
+    {
+      "argument_id": "arg1",
+      "argument_summary": "A.1 Widerspruch zum FNP, fehlendes Parallelverfahren",
+      "argument_anchor": "Bebauungsplan aus dem Flächennutzungsplan entwickelt sein. Für vorhabenbezogene Bebauungspläne",
+      "expected_catalog_ids": [
+        "baugb"
+      ],
+      "expected_norms": {
+        "must_retrieve": [
+          {
+            "paragraph_id": "baugb_§8",
+            "citation": "§ 8 Abs. 2 BauGB",
+            "source": "verbatim_in_text",
+            "rank_target": "top_1",
+            "rationale": "Entwicklungsgebot und Parallelverfahren bei FNP-Abweichung."
+          },
+          {
+            "paragraph_id": "baugb_§214",
+            "citation": "§ 214 Abs. 2 Nr. 2 BauGB",
+            "source": "verbatim_in_text",
+            "rank_target": "top_3",
+            "rationale": "Beachtlichkeit des formellen Fehlers fehlende FNP-Änderung."
+          }
+        ],
+        "should_retrieve": [],
+        "not_retrievable_via_xml": []
+      }
+    },
+    {
+      "argument_id": "arg2",
+      "argument_summary": "A.2 Fehlerhafte Gebietsfestsetzung GE statt Sondergebiet",
+      "argument_anchor": "Festsetzung des Plangebiets als Gewerbegebiet ist für das vorliegende Vorhaben typologisch ungeeignet",
+      "expected_catalog_ids": [
+        "baunvo"
+      ],
+      "expected_norms": {
+        "must_retrieve": [
+          {
+            "paragraph_id": "baunvo_§8",
+            "citation": "§ 8 BauNVO",
+            "source": "verbatim_in_text",
+            "rank_target": "top_1",
+            "rationale": "GE-Festsetzung als grundlegend ungeeignet."
+          },
+          {
+            "paragraph_id": "baunvo_§11",
+            "citation": "§ 11 BauNVO",
+            "source": "verbatim_in_text",
+            "rank_target": "top_3",
+            "rationale": "Sondergebiet als sachgerechte Alternative."
+          }
+        ],
+        "should_retrieve": [],
+        "not_retrievable_via_xml": []
+      }
+    },
+    {
+      "argument_id": "arg3",
+      "argument_summary": "A.3 Fehlende städtebauliche Rechtfertigung, keine Alternativenprüfung",
+      "argument_anchor": "pauschale Bezugnahme auf wirtschaftliche Entwicklungsinteressen der Gemeinde genügt nicht",
+      "expected_catalog_ids": [
+        "baugb"
+      ],
+      "expected_norms": {
+        "must_retrieve": [
+          {
+            "paragraph_id": "baugb_§1",
+            "citation": "§ 1 Abs. 3 BauGB",
+            "source": "verbatim_in_text",
+            "rank_target": "top_1",
+            "rationale": "Planrechtfertigung als Grundvoraussetzung."
+          }
+        ],
+        "should_retrieve": [],
+        "not_retrievable_via_xml": [
+          {
+            "citation": "BVerwG Urteil 17.09.2003 Az. 4 C 14.01",
+            "source": "not_retrievable_via_xml",
+            "rationale": "Rechtsprechungsanker für Planrechtfertigungsanforderungen."
+          }
+        ]
+      }
+    },
+    {
+      "argument_id": "arg4",
+      "argument_summary": "B.1 Ungeklärter Netzanschluss, Erschließungssicherung fehlt",
+      "argument_anchor": "verbindliche Netzanschlussbestätigung gemäß § 17 EnWG liegt nicht vor",
+      "expected_catalog_ids": [
+        "baugb",
+        "enwg"
+      ],
+      "expected_norms": {
+        "must_retrieve": [
+          {
+            "paragraph_id": "enwg_§17",
+            "citation": "§ 17 EnWG",
+            "source": "verbatim_in_text",
+            "rank_target": "top_1",
+            "rationale": "Netzanschluss als Teil der Erschließungssicherung."
+          },
+          {
+            "paragraph_id": "baugb_§30",
+            "citation": "§ 30 Abs. 1 BauGB",
+            "source": "verbatim_in_text",
+            "rank_target": "top_3",
+            "rationale": "Erschließungssicherung als Voraussetzung planungsrechtlicher Zulässigkeit."
+          }
+        ],
+        "should_retrieve": [],
+        "not_retrievable_via_xml": []
+      }
+    },
+    {
+      "argument_id": "arg5",
+      "argument_summary": "B.2 Fehlende Löschwasserversorgung für Großbrandfall",
+      "argument_anchor": "Löschwasserversorgung laut Auskunft des Landkreises Bernkastel-Wittlich nicht für einen Großbrandfall",
+      "expected_catalog_ids": [],
+      "expected_norms": {
+        "must_retrieve": [],
+        "should_retrieve": [],
+        "not_retrievable_via_xml": []
+      }
+    },
+    {
+      "argument_id": "arg6",
+      "argument_summary": "C.1 Unzulängliche FFH-Verträglichkeitsprüfung",
+      "argument_anchor": "Vorprüfung von lediglich zwei Seiten, die ohne nähere Begründung zum Ergebnis kommt",
+      "expected_catalog_ids": [
+        "bnatschg"
+      ],
+      "expected_norms": {
+        "must_retrieve": [
+          {
+            "paragraph_id": "bnatschg_§34",
+            "citation": "§ 34 BNatSchG",
+            "source": "verbatim_in_text",
+            "rank_target": "top_1",
+            "rationale": "FFH-Verträglichkeitsprüfung als Pflicht."
+          }
+        ],
+        "should_retrieve": [],
+        "not_retrievable_via_xml": []
+      }
+    },
+    {
+      "argument_id": "arg7",
+      "argument_summary": "C.2 Unvollständige Artenschutzprüfung",
+      "argument_anchor": "fehlen Fledermausgutachten für Zugzeiten, eine Reptilienkartierung sowie eine Begehung",
+      "expected_catalog_ids": [
+        "bnatschg"
+      ],
+      "expected_norms": {
+        "must_retrieve": [
+          {
+            "paragraph_id": "bnatschg_§44",
+            "citation": "§ 44 BNatSchG",
+            "source": "verbatim_in_text",
+            "rank_target": "top_1",
+            "rationale": "Artenschutzrechtliche Zugriffsverbote."
+          }
+        ],
+        "should_retrieve": [],
+        "not_retrievable_via_xml": [
+          {
+            "citation": "Leitfaden Artenschutz Rheinland-Pfalz (MULEWF 2019)",
+            "source": "not_retrievable_via_xml",
+            "rationale": "Landesrechtlicher Fachstandard, nicht in Bundes-XMLs."
+          }
+        ]
+      }
+    },
+    {
+      "argument_id": "arg8",
+      "argument_summary": "C.3 Vorhaben unvereinbar mit kommunalem Klimaschutzkonzept",
+      "argument_anchor": "Vorhaben ist mit dem kommunalen Klimaschutzkonzept 2022 der Verbandsgemeinde nicht vereinbar",
+      "expected_catalog_ids": [
+        "baugb"
+      ],
+      "expected_norms": {
+        "must_retrieve": [
+          {
+            "paragraph_id": "baugb_§1",
+            "citation": "§ 1 Abs. 5 S. 2 BauGB",
+            "source": "verbatim_in_text",
+            "rank_target": "top_3",
+            "rationale": "Klimaschutzziele als Belang der Bauleitplanung; selber Paragraph wie arg3."
+          }
+        ],
+        "should_retrieve": [],
+        "not_retrievable_via_xml": []
+      }
+    },
+    {
+      "argument_id": "arg9",
+      "argument_summary": "D.1 Unvollständige Auslegung (Hydrogeologie, Durchführungsvertrag)",
+      "argument_anchor": "vollständige Hydrogeologische Gutachten sowie der Durchführungsvertrag in der Auslegung nicht aus",
+      "expected_catalog_ids": [
+        "baugb"
+      ],
+      "expected_norms": {
+        "must_retrieve": [
+          {
+            "paragraph_id": "baugb_§3",
+            "citation": "§ 3 Abs. 2 S. 1 BauGB",
+            "source": "verbatim_in_text",
+            "rank_target": "top_1",
+            "rationale": "Auslegungspflicht für Bebauungsplanentwurf und Begründung."
+          },
+          {
+            "paragraph_id": "baugb_§214",
+            "citation": "§ 214 Abs. 1 Nr. 2 BauGB",
+            "source": "verbatim_in_text",
+            "rank_target": "top_3",
+            "rationale": "Beachtlichkeit des Auslegungsfehlers; selber Paragraph wie arg1."
+          }
+        ],
+        "should_retrieve": [],
+        "not_retrievable_via_xml": []
+      }
+    },
+    {
+      "argument_id": "arg10",
+      "argument_summary": "D.2 Abwägungsdefizit bei touristischen und weinbaulichen Belangen",
+      "argument_anchor": "Touristische Belange und die Bedeutung des Landschaftsbilds für den Weinort Traben-Trarbach werden nicht abgewogen",
+      "expected_catalog_ids": [
+        "baugb"
+      ],
+      "expected_norms": {
+        "must_retrieve": [],
+        "should_retrieve": [
+          {
+            "paragraph_id": "baugb_§1",
+            "citation": "§ 1 Abs. 7 BauGB",
+            "source": "inferred_applicable",
+            "rank_target": "top_10",
+            "rationale": "Abwägungsgebot implizit, im Text nicht zitiert."
+          }
+        ],
+        "not_retrievable_via_xml": []
+      }
+    },
+    {
+      "argument_id": "arg11",
+      "argument_summary": "Fehlende frühzeitige Bürgerbeteiligung (Antrag VI.6)",
+      "argument_anchor": "frühzeitigen Bürgerbeteiligung nach § 3 Abs. 1 BauGB mit öffentlicher Informationsveranstaltung",
+      "expected_catalog_ids": [
+        "baugb"
+      ],
+      "expected_norms": {
+        "must_retrieve": [
+          {
+            "paragraph_id": "baugb_§3",
+            "citation": "§ 3 Abs. 1 BauGB",
+            "source": "verbatim_in_text",
+            "rank_target": "top_3",
+            "rationale": "Frühzeitige Beteiligung, im Antragsteil als Mangel impliziert."
+          }
+        ],
+        "should_retrieve": [],
+        "not_retrievable_via_xml": []
+      }
+    }
+  ],
+  "notes": "Schwerpunkt: Gesamteinwendung, 4 Sachkomplexe. Einreicher: Kanzlei Franken & Stein, im Auftrag BI Mosel bleibt Mosel. Komplexester Fall mit 11 Argumenten. § 47 VwGO am Ende ist Rechtsbehelfsdrohung, kein substantielles Argument; daher nicht als arg modelliert."
+}

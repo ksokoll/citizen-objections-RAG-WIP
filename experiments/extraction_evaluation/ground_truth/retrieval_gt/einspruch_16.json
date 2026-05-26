@@ -1,0 +1,40 @@
+{
+  "doc_id": "einspruch_16",
+  "einwendungs_typ": "TYP_2",
+  "expected_argument_count_range": [
+    1,
+    2
+  ],
+  "expected_arguments": [
+    {
+      "argument_id": "arg1",
+      "argument_summary": "Fehlende verbindliche Abwärmenutzung im Bebauungsplan und Durchführungsvertrag",
+      "argument_anchor": "verbindliche Klausel im Durchführungsvertrag, die die NordCore Digital GmbH zur Installation einer Wärmeübergabestation",
+      "expected_catalog_ids": [
+        "baugb",
+        "wpg"
+      ],
+      "expected_norms": {
+        "must_retrieve": [
+          {
+            "paragraph_id": "wpg_§7",
+            "citation": "§ 7 WPG",
+            "source": "verbatim_in_text",
+            "rank_target": "top_1",
+            "rationale": "Berücksichtigungspflicht industrieller Abwärmequellen in der kommunalen Wärmeplanung."
+          },
+          {
+            "paragraph_id": "baugb_§12",
+            "citation": "§ 12 BauGB",
+            "source": "verbatim_in_text",
+            "rank_target": "top_3",
+            "rationale": "Durchführungsvertrag als Verankerungsinstrument für Abwärmeverpflichtung."
+          }
+        ],
+        "should_retrieve": [],
+        "not_retrievable_via_xml": []
+      }
+    }
+  ],
+  "notes": "Schwerpunkt: Wärmeplanungsrecht, Abwärmenutzung. Einreicher: Stadtwerke Traben-Trarbach AöR. Ein einziges kohärentes Argument; Sub-Punkte III.1 bis III.3 sind verschiedene Aspekte derselben Forderung."
+}

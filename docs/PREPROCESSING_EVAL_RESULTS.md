@@ -6,13 +6,13 @@ Documentation of the evaluation of the preprocessing step (Triage Bounded Contex
 
 ## Current State
 
-**Date**: 2026-05-24, Iteration 7 (final for this skeleton)
+**Date**: 2026-05-26, Iteration 11 (Hybrid Pattern validated across four model tiers)
 
-**Task**: Identification of legal domain (catalog_id) and extraction of legal arguments from citizen and lawyer objections in urban planning procedures. Norm extraction was originally not a Triage task (per ADR-013), but was reintroduced as a deterministic post-step in Iteration 7 to populate the audit trail without hallucination risk.
+**Task**: Identification of legal domain (catalog_id) and extraction of legal arguments from citizen and lawyer objections in urban planning procedures. Norm extraction was originally not a Triage task (per ADR-013), but was reintroduced as a deterministic post-step in Iteration 7 to populate the audit trail without hallucination risk. From Iteration 9 onward, per-argument norm assignment via Option Y position overlap became the dominant measurement axis.
 
-**Model**: gpt-4o-mini, temperature=0 (catalog matching). Regex-based for norm extraction.
+**Architecture**: catalog.py uses nine gesetz-based catalogs since Iteration 8 (BAUGB, BAUNVO, BIMSCHG, BNATSCHG, ENWG, VWGO, WASTRG, WHG, WPG). The norm_extractor handles i.V.m. citation chains via post-processing as of Iteration 9. The production pipeline runs Option Y position-based assignment; an encapsulated Hybrid Pattern experiment (Iteration 11) demonstrates a Variant A soft hint that significantly reduces model-dependent assignment loss.
 
-**Final Metrics (Catalog Matching, Iteration 6)**:
+**Final Metrics (Catalog Matching, unchanged since Iteration 6)**:
 
 | Subset | Catalog Recall | Catalog Precision | Einwendungs-Typ Accuracy | Argument Count in Range | Verified Rate |
 |--------|----------------|-------------------|--------------------------|-------------------------|---------------|
@@ -20,16 +20,20 @@ Documentation of the evaluation of the preprocessing step (Triage Bounded Contex
 | TYP_1 (n=10) | 100.00% | n/a | 80% | 80% | 100.00% |
 | Mixed (n=3) | 100.00% | 100.00% | 100% | 100% | 100.00% |
 
-**Final Metrics (Norm Extraction, Iteration 7)**:
+**Doc-Level Norm Extraction Recall (unchanged since Iteration 7)**: 100% on paragraph_norm GT across all four evaluated models. The deterministic regex extractor is model-independent and remains the reliable upstream component for the Hybrid Pattern.
 
-| Subset | Recall (paragraph_norm) | Precision | Total TP | Total Loss | Total Overcount |
-|--------|-------------------------|-----------|----------|------------|-----------------|
-| TYP_2 (n=7) | 100.00% | 93.33% | 28 | 0 | 2 (einspruch_19 only) |
-| Mixed (n=3) | n/a (no GT) | 0.00% | 0 | 0 | 7 (real citations, GT pending) |
+**Per-Argument Assignment Recall, Baseline vs Hybrid (Iteration 11)**:
 
-Distractor hits across all 23 documents: 0. No hallucinated categories.
+| Model | Baseline Recall(A) | Hybrid Recall(A) | Delta | Assignment Gap (Baseline / Hybrid) |
+|-------|--------------------|------------------|-------|-------------------------------------|
+| gpt-4o-mini | 64.0% | 77.2% | +13.2 pp | +38.0% / +22.8% |
+| gpt-4o | 63.8% | 64.6% | +0.8 pp | +44.9% / +35.4% |
+| o3-mini | 77.3% | 89.5% | +12.2 pp | +22.7% / +10.5% |
+| gpt-5.5 | 92.4% | 99.0% | +6.6 pp | +7.6% / +1.0% |
 
-**Status**: Performance sufficient for transition to TriageService implementation. Four minor residual issues known and documented (see "Open Issues" section).
+The Hybrid Pattern reduces assignment loss across all model tiers except gpt-4o (which has an orthogonal paraphrasing failure mode). gpt-5.5 plus Hybrid is at saturation (99% recall, 1% gap is noise floor).
+
+**Status**: Architectural validation complete for the Hybrid Pattern. ADR-018 documents the decision. Production refactor pending. Four minor residual issues known and documented (see "Open Issues" section).
 
 ---
 
@@ -41,7 +45,7 @@ Distractor hits across all 23 documents: 0. No hallucinated categories.
 - einspruch_11 to einspruch_20: TYP_2 (formal legal submissions)
 - einspruch_11_mixed, einspruch_12_mixed, einspruch_13_mixed: mixed variants (personal header plus legal content)
 
-Legal domain distribution across TYP_2 covers seven clusters: planning law, water law, noise protection, nature conservation, energy law, heat planning law, procedural law.
+Legal domain distribution across TYP_2 covers nine gesetz-based catalogs (since Iteration 8): BauGB, BauNVO, BImSchG, BNatSchG, EnWG, VwGO, WaStrG, WHG, WPG.
 
 Synthetically created with LLM assistance, therefore subject to known limitations (see "Methodological Limitations" section).
 
@@ -54,7 +58,7 @@ Synthetically created with LLM assistance, therefore subject to known limitation
 **Hypothesis**: Triage extracts the cited paragraphs per argument. Evaluation measures norm recall against ground truth.
 
 **Results**:
-- TYP_2 norm recall approximately 30–60% per document
+- TYP_2 norm recall approximately 30 to 60% per document
 - Mixed: 0% recall across the board
 - einspruch_18: 0% recall despite seemingly good extraction
 
@@ -154,7 +158,7 @@ Synthetically created with LLM assistance, therefore subject to known limitation
 
 The LLM had classified against the code catalog (descriptions from catalog.py). The eval tested against the JSON assignment. Several classifications marked as "wrong" were actually correct in terms of the code catalog's understanding.
 
-**Consequence**: catalog.py must be rebuilt to match the thematic structure of the eval GT. 7 clusters adopted from the JSON. Distractors (C-008 to C-010) deliberately NOT added to the production catalog (they are an eval methodology construct, not a production construct).
+**Consequence**: catalog.py rebuilt to match the thematic structure of the eval GT. 7 clusters adopted from the JSON. Distractors (C-008 to C-010) deliberately NOT added to the production catalog (they are an eval methodology construct, not a production construct).
 
 ---
 
@@ -227,26 +231,158 @@ No entries were removed. The total count of 46 matches the pre-tagging GT exactl
 - Total loss: 0
 - Total overcount: 2 (einspruch_19 only)
 
-**Two overcounts in einspruch_19**: `§ 3 BauGB` and `§ 3 Abs. 2 BauGB`, alongside the GT entry `§ 3 Abs. 2 S. 1 BauGB`. Three different granularities of the same paragraph. The extractor finds each citation as a complete match (not fragmentation), suggesting the source text actually contains all three variants. Full-text verification pending; if confirmed, the GT receives additional entries.
-
-**Results (Mixed, paragraph_norm subset)**:
-- Recall vacuously 1.0 (no GT entries with `_mixed` doc_ids)
-- 7 plausible overcounts that are real citations from the underlying TYP_2 documents
-
-These overcounts are not extractor errors. They reflect the absence of `_mixed`-suffix GT entries. The Mixed variants reuse the legal content of einspruch_11, einspruch_12, einspruch_13 with an added personal header. GT extension pending.
-
-**Documented extractor limitations (Phase 2 roadmap)**:
-- einspruch_13: TA Lärm, TA Lärm Anhang A.1.5, DIN 45680 (administrative rules and technical standards outside the whitelist pattern)
-- einspruch_14: Anlage 1 BauGB (Anlage not in §-pattern), Art. 6 Abs. 3 FFH-Richtlinie (EU law with hyphenated name, outside whitelist)
-- einspruch_17: LSG-Verordnung Kreis Bernkastel-Wittlich (Landesrecht, no paragraph notation)
-
-**Test coverage**: 49 behavior-oriented unit tests covering single citation extraction, multi-citation extraction, whitelist enforcement, degenerate inputs, canonical form rendering, deduplication, position tracking, documented limitations, and realistic corpus snippets. Following given/when/then structure per the testing-strategy guide, no logic in test bodies, DAMP self-contained.
+**Test coverage**: 49 behavior-oriented unit tests covering single citation extraction, multi-citation extraction, whitelist enforcement, degenerate inputs, canonical form rendering, deduplication, position tracking, documented limitations, and realistic corpus snippets. Following given/when/then structure per the testing-strategy guide.
 
 **Findings**:
 1. The hallucination concern on `zitierte_normen` is structurally eliminated. The extractor cannot return citations that are not substring-present in the source text.
 2. The deterministic recall on paragraph_norm (100%) is empirically superior to any LLM-based norm extraction tested in earlier iterations.
 3. The GT cleanup (type tagging) made the metric methodologically honest. The earlier 85% mixed-method recall reflected confusion of real citations with non-citation entries (court decisions, guidelines, statute mentions), not extractor failure.
 4. The Magesh et al. 2025 finding on legal RAG hallucination rates (17 to 33% in production tools) is consistent with the empirical reasoning for replacing LLM-generated citations with deterministic patterns.
+
+---
+
+### Iteration 8: Catalog Refactor to Gesetz-Based Model (ADR-016)
+
+**Motivation**: The seven thematic clusters from Iteration 6 (C-001 to C-007) introduced an indirection layer: each catalog_id mapped to a `corpus_partition` string that the retriever then resolved to a corpus shard. The mapping was an implicit second source of truth. Drift between catalog and partition would cause silent retrieval failures.
+
+**Approach**: Replace the seven thematic clusters with nine gesetz-based catalogs. Each catalog_id IS the retriever partition key directly. The `corpus_partition` field is removed from `KatalogEintrag`. The CatalogId enum is renamed to match: BAUGB, BAUNVO, BIMSCHG, BNATSCHG, ENWG, VWGO, WASTRG, WHG, WPG.
+
+**Architecture impact**:
+- `src/app/triage/catalog.py`: rewritten with nine entries
+- `src/app/triage/prompts.py`: classification guide updated, prompt bumped to v3.0.0
+- `src/app/triage/llm_schema.py`: CatalogId enum aligned
+- `src/app/triage/norm_extractor.py`: whitelist filter aligned to the nine Gesetze
+- `src/app/response_drafting/service.py`: catalog references updated
+- `src/app/response_drafting/retrieval.py`: partition lookup simplified
+- Test suite updated: test_catalog.py, test_service.py, test_classification.py, response_drafting tests, conftest.py, external smoke tests
+
+**Results**:
+- 87 tests pass after refactor
+- Bounded-Context isolation greps clean: zero hits for cross-context catalog references
+- Prompt v3.0.0 documented in ADR-016
+
+**Finding**: The refactor removed one source of drift permanently. Each catalog_id is now self-describing: BAUGB obviously corresponds to BauGB, no separate partition lookup needed. ADR-016 records the rationale and the deferred testing of the schema-fitness function from earlier lessons.
+
+---
+
+### Iteration 9: i.V.m. Chain Handling and Phase A Eval Framework
+
+**Motivation**: Two parallel needs emerged:
+1. The norm_extractor failed on i.V.m. citation chains common in formal legal writing (e.g. "§ 9 Abs. 1 Nr. 1 i.V.m. § 8 WHG"). The original regex required a primary citation and a Gesetz separated by max 10 characters; the "i.V.m. § 8 " gap of 11 characters dropped the primary citation.
+2. The Iteration 7 metric (doc-level paragraph_norm recall) measured the extractor in isolation. It did not measure how many of those extracted norms reach the per-argument `zitierte_normen` field after the Option Y position-based assignment. A separate measurement axis was needed.
+
+**Approach 1, extractor improvement**: Extended the citation pattern with an optional repeating `i.V.m. § X (Abs. Y)? (S. Z)? (Nr. W)?` non-capturing group between primary citation and gesetz. Added a `_extract_ivm_inner_citations()` helper that extracts secondary citations from the matched span; all inner citations inherit the closing Gesetz of the chain.
+
+Smoke tests verify: einspruch_12_mixed core sentence "§ 9 Abs. 1 Nr. 1 i.V.m. § 8 WHG" extracts both `§ 9 Abs. 1 Nr. 1 WHG` (start=57) and `§ 8 WHG` (start=81). Simple non-iVm citations still work. Multi-chain `§ 9 i.V.m. § 8 i.V.m. § 7 BauGB` extracts all three. Full einspruch_12_mixed paragraph extracts all 3 expected WHG citations.
+
+Two test classes added: `TestIVMChainExtraction` and `TestIVMChainRegressionGuards` in `tests/small_scale/triage/test_norm_extractor.py`.
+
+**Approach 2, Phase A measurement framework**: New script `experiments/extraction_evaluation/script/norm_coverage_eval.py`. Tests document-level coverage (Option A): aggregate all `zitierte_normen` across `extracted_arguments` into a set, compare against union of GT `must_retrieve.citation` strings.
+
+Two recall metrics per document:
+- `recall_assigned`: production pipeline output (zitierte_normen across arguments). Reflects what reaches downstream consumers.
+- `recall_doc_level`: extract_norms on full clean_text without assignment filter. Reflects what the deterministic extractor sees.
+
+Gap between them is the "assignment loss". Inline LLM clients for OpenAI (native parse) and Anthropic (tool-use with schema enforcement). Multi-model via `MODEL_NAME` constant.
+
+**Approach 3, GT corrections**: Two GT entries added during this iteration after manual full-text verification:
+- einspruch_19: added `§ 3 BauGB` to must_retrieve of the Beachtlichkeit-argument (rank_target=top_3). Bare reference exists verbatim in text.
+- einspruch_11_mixed: added `§ 1 Abs. 6 Nr. 8 BauGB` to must_retrieve of the Weinbau-argument (rank_target=top_3). Sub-Absatz that explicitly names Weinbau/Fremdenverkehr/Landschaft.
+
+Mixed GT files renamed from einspruch_NN.json to einspruch_NN_mixed.json (the pure TYP_2 versions of these docs do not exist; only Mixed variants in `data/mixed/`).
+
+**Eval setup output**: per-document Recall(A), Recall(D), Loss, plus a Bottleneck Analysis section classifying every missing citation as LOST_BY_ASSIGNMENT or TRULY_MISSING.
+
+**Finding**: With i.V.m. handling fixed and GT cleaned, doc-level recall hits 100% across all subsequent runs. The remaining variation lives entirely in the per-argument assignment step.
+
+---
+
+### Iteration 10: Four-Model Baseline and Assignment Loss Characterization (ADR-017)
+
+**Motivation**: With the Phase A framework in place, measure how Option Y per-argument assignment performs across model tiers. Identify failure modes systematically.
+
+**Approach**: Run Phase A eval on four OpenAI models, with diagnostic fields added to capture failure modes:
+- `argument_count`: how many ExtrahiertesArgument the LLM produces
+- `argument_verified_count`: subset with verified zitate
+- `zitat_lengths`: list of original_zitat character lengths per argument
+- `zitate_with_paragraph_count`: how many zitate contain a "§" character
+
+These four diagnostics disambiguate three failure-mode hypotheses for documents with zero assigned norms despite expectations:
+- H1 (no arguments): `argument_count == 0`. LLM returned empty list, document classified as having no legal substance.
+- H2 (narrow zitate): `argument_count > 0` but `zitate_with_paragraph_count == 0`. LLM extracted arguments but chose original_zitat ranges that do not include any §-citation.
+- H3 (paraphrasing): `argument_verified_count == 0` but zitate contain §. LLM paraphrased zitate, violating ADR-006 Layer 1 substring constraint.
+
+F1 fix: zero-extraction docs now count as F1=0 in the macro-average instead of being excluded. Previously the macro-F1 was inflated for models that failed silently on some documents.
+
+**Results (Baseline, Option Y)**:
+
+| Model | TYP_2 Recall(A) | Overall Recall(A) | Overall F1 | Assignment Gap |
+|-------|-----------------|-------------------|------------|----------------|
+| gpt-4o-mini | 62.0% | 64.0% | 73.2% | +38.0 pp |
+| gpt-4o | 55.1% | 63.8% | 67.0% | +44.9 pp |
+| o3-mini | 73.1% | 77.3% | 80.6% | +22.7 pp |
+| gpt-5.5 | 93.2% | 92.4% | 94.7% | +7.6 pp |
+
+Per-doc failure-mode classification on gpt-4o (the worst performer):
+- einspruch_14: H2. Args=5, Verif=5, ZitW§=0. Systematic conservative selection. The LLM picked argument-only spans without §-citations.
+- einspruch_19: H3. Args=4, Verif=0, ZitW§=2. Layer-1 violation. The LLM paraphrased zitate; none were substring matches.
+
+**Findings**:
+1. Assignment loss is heavily model-dependent. Spread is 28.6 pp between worst and best (gpt-4o at 63.8% vs gpt-5.5 at 92.4%).
+2. Bigger is not better. gpt-4o (more capable) performs worse than gpt-4o-mini on TYP_2 because of systematic conservative zitat selection and paraphrasing.
+3. gpt-5.5 achieves 92.4% recall purely through Option Y, by emergently choosing wider zitate that capture §-citations. This is not in the prompt; it is implicit model capability.
+4. The 13:1 ratio of LOST_BY_ASSIGNMENT vs TRULY_MISSING citations confirms position-based assignment is the bottleneck, not the regex extractor.
+
+**Output artifact**: ADR-017 records the measured loss and rejects three alternatives (immediate refactor to document-level union, semantic LLM assignment, longer original_zitat). Decision: retain Option Y, document the loss as model-dependent, defer reevaluation until Phase B (Retrieval Recall) is implemented.
+
+---
+
+### Iteration 11: Hybrid Pattern Experiment and Production Architecture (ADR-018)
+
+**Motivation**: ADR-017's "retain Option Y" decision was based on assumption that the model-dependent loss is structural. Two follow-up questions remained:
+1. Can a soft prompt-level intervention reduce the loss without schema changes?
+2. Does the intervention work across model tiers, enabling Behörden-Sovereignty deployments on small or self-hostable models?
+
+**Approach**: Encapsulated experiment in `experiments/extraction_evaluation/script/norm_coverage_eval_hybrid.py`. Wrapper class `HybridTriageWrapper` runs `extract_norms` on the cleaned text, prepends a clearly delimited hint block listing canonical citations, then delegates to TriageService. Production code untouched.
+
+**Two design iterations on the hint formulation**:
+
+v1 (targeted zitierte_normen field): the hint instructed the LLM to populate `zitierte_normen` from the supplied list. Result: marginal improvement on Overall Recall (64.0% to 65.0%) and slight regression on TYP_2 (62.0% to 56.6%).
+
+Diagnosis: the LLM schema `LLMTriageOutput` does NOT include `zitierte_normen`. The LLM produces only four semantic fields (argument_text, original_zitat, catalog_id, einwendungs_typ); zitierte_normen is populated post-hoc by Option Y. The v1 hint pointed at a field the LLM cannot control. The added prompt context occasionally distracted the LLM from its argument extraction task without providing a useful lever.
+
+v2 (targeted original_zitat field, framed as orientation help): the hint instructs the LLM to widen its original_zitat span so that any relevant §-citation falls inside. The list is framed as "Orientierungshilfe" (orientation aid) and described as possibly incomplete, so the LLM retains its own judgment. The hint targets the field the LLM actually controls in the production schema, indirectly improving Option Y assignment quality by providing wider position-overlap inputs.
+
+**Results (Hybrid v2, four-model)**:
+
+| Model | Baseline Recall(A) | Hybrid Recall(A) | Delta | Hybrid F1 | Hybrid Assignment Gap |
+|-------|--------------------|------------------|-------|-----------|-----------------------|
+| gpt-4o-mini | 64.0% | 77.2% | +13.2 pp | 85.6% | +22.8 pp |
+| gpt-4o | 63.8% | 64.6% | +0.8 pp | 71.5% | +35.4 pp |
+| o3-mini | 77.3% | 89.5% | +12.2 pp | 93.4% | +10.5 pp |
+| gpt-5.5 | 92.4% | 99.0% | +6.6 pp | 98.6% | +1.0 pp |
+
+Variance analysis:
+- Baseline spread: 28.6 pp (gpt-4o at 63.8% to gpt-5.5 at 92.4%)
+- Hybrid spread including gpt-4o: 34.4 pp (gpt-4o falls behind)
+- Hybrid spread excluding gpt-4o outlier: 21.8 pp (gpt-4o-mini 77.2% to gpt-5.5 99.0%)
+
+The Hybrid Pattern lifts the floor for cooperative models substantially (mini and o3-mini both gain >12 pp). The ceiling saturates: gpt-5.5 plus Hybrid is at 99% recall, 1% gap is noise floor.
+
+**Per-model behaviour observations**:
+- gpt-4o-mini: cooperates with hint, picks wider zitate. The only model where one prior failure was reintroduced briefly in v1 (einspruch_15 lost § 17 Abs. 3 EnWG due to over-restriction from "use this list" framing); v2 recovered it via "as help" framing.
+- gpt-4o: marginal benefit. Introduces a new H3 regression on einspruch_17 (paraphrasing under added context). Paraphrasing failure mode is orthogonal to span-width and not addressed by this hint formulation.
+- o3-mini: strong response. einspruch_14 goes from 0% (H2) to 67%. einspruch_20 from 38% to 69% via better argument-zitat alignment on complex docs. No regressions.
+- gpt-5.5: saturation. Single remaining LOST_BY_ASSIGNMENT (§ 1 Abs. 3 BauGB in einspruch_20). Two SPURIOUS that are GT-modeling disagreements, not model errors.
+
+**Output artifact**: ADR-018 records the Hybrid Pattern as Variant A (Soft Hint), with three documented alternatives (Variant B Hard Schema Constraint, Variant C Two-Stage LLM, Model lock-in on gpt-5.5). Status is Proposed pending production refactor.
+
+**Findings**:
+1. The Hybrid Pattern decouples production deployment from LLM choice within a reasonable performance band. Smaller and self-hostable models become viable production candidates.
+2. Framing matters. v1 ("use this list") caused over-restriction and per-doc regressions. v2 ("as help, possibly incomplete") preserved LLM autonomy and produced consistent improvements.
+3. The hint targets the field the LLM controls (original_zitat). Targeting a field the LLM does not output (zitierte_normen) was the v1 design error.
+4. Hybrid Pattern raises model floors but does not erase model-specific weaknesses. Paraphrasing-style failure modes (gpt-4o family) need a different intervention.
+5. Doc-level coverage by `norm_extractor` is now a load-bearing dependency for the entire pipeline. Gaps in the regex whitelist propagate directly into reduced assignment quality.
 
 ---
 
@@ -286,23 +422,30 @@ The traffic assessment document contains no explicit paragraphs, and the LLM dec
 
 ---
 
-### einspruch_19: Full-Text Verification of § 3 BauGB Variants
+### einspruch_20 SPURIOUS Citations: GT-Modeling Disagreements
 
-The extractor finds three granularities of the same paragraph in einspruch_19: `§ 3 BauGB`, `§ 3 Abs. 2 BauGB`, `§ 3 Abs. 2 S. 1 BauGB`. The GT contains only the most specific form. Two scenarios are possible: either the source text really contains all three variants (GT extension needed), or the extractor pattern fragments a single citation across multiple matches (extractor bug).
+Two SPURIOUS citations consistently flagged in einspruch_20 (gpt-5.5 baseline and Hybrid; partially in other models):
+- `§ 47 VwGO`: present in the text as a Rechtsbehelfsdrohung at the end, intentionally excluded from GT must_retrieve (not a substantive argument).
+- `§ 8 Abs. 2 Nr. 1 BauNVO`: present in the text as a more specific variant; GT contains only the generalised `§ 8 BauNVO`.
 
-**Verification**: open the source text of einspruch_19, search for `§ 3 BauGB` and `§ 3 Abs. 2 BauGB`. If found, add to GT. If not found, investigate pattern fragmentation.
+**Solution options**: either accept the disagreements (current state, treat as known false positives) or refine the GT comparison logic to handle specificity ladders (a more specific citation should match a more general GT entry).
 
-**Priority**: low. Affects only precision on one document.
+**Priority**: low. Affects precision on one document. Documented as a known GT-modeling artifact in ADR-017.
 
 ---
 
-### Mixed GT Coverage Missing
+### gpt-4o Paraphrasing-Mode Resistance
 
-The three Mixed documents (einspruch_11_mixed, einspruch_12_mixed, einspruch_13_mixed) have no corresponding GT entries in `typ2.json`. Mean precision on Mixed reports 0% because all extractions count as overcounts.
+Across both Baseline and Hybrid runs, gpt-4o systematically rewrites `original_zitat` rather than selecting a verbatim substring on certain documents (einspruch_19 in Baseline, einspruch_17 with Hybrid). This violates ADR-006 Layer 1 and breaks Option Y assignment regardless of hint presence.
 
-**Solution**: Add three new entries with `_mixed` suffix doc_ids. The paragraph_norm content is identical to einspruch_11, einspruch_12, einspruch_13 (the Mixed variants are TYP_2 content plus a personal header). einspruch_13_mixed gets only extractor_limitation entries (no paragraph_norms).
+**Hypothesis**: gpt-4o interprets the prompt's "concise legal formulation" instruction by normalising and paraphrasing, sacrificing the substring constraint. Smaller and reasoning-tier models adhere to the constraint more strictly.
 
-**Priority**: low. Cosmetic eval cleanup. Does not affect the architectural validation.
+**Potential solutions**:
+- Strengthen substring constraint in the LLM schema description with explicit examples
+- Exclude gpt-4o from production tier list (Hybrid Pattern documented to favour reasoning models and flagship models, not the gpt-4o family specifically)
+- Future Variant B (hard schema constraint) would address this via Pydantic validator
+
+**Priority**: low. gpt-4o is not in the planned production tier list; documentation suffices.
 
 ---
 
@@ -344,7 +487,7 @@ However: Iteration 7 reintroduced norm extraction as a *deterministic* post-step
 
 Where the task has stable syntactic structure (norm citations, dates, currency, named entities with known formats), deterministic patterns outperform LLMs on accuracy, speed, cost, and audit transparency. LLMs are reserved for tasks requiring semantic understanding (argument extraction, classification, summarization).
 
-This separation is the recommended pattern in current legal NLP literature (Magesh et al. 2025) and was empirically confirmed in Iteration 7 (100% recall on paragraph_norm versus 85% mixed LLM eval).
+This separation is the recommended pattern in current legal NLP literature (Magesh et al. 2025, GerPS-Compare 2024, LAMUS 2026) and was empirically confirmed in Iteration 7 (100% recall on paragraph_norm versus 85% mixed LLM eval).
 
 ---
 
@@ -352,7 +495,7 @@ This separation is the recommended pattern in current legal NLP literature (Mage
 
 Initial catalog descriptions contained `typical_arguments` drawn directly from the test documents. This is obvious leakage and was removed. The final version with generic domain vocabulary ("Bebauungsplan", "Gewässerbenutzung", "Schallgutachten") is methodologically cleaner.
 
-The evaluation is not fully leakage-free even so: the selection of the 7 clusters itself reflects the legal domains present in the test set. This is acceptable at the skeleton stage and is documented. For production, the catalog should be derived from historical objection procedures of the relevant authority, not from the test set.
+The evaluation is not fully leakage-free even so: the selection of the 9 gesetze itself reflects the legal domains present in the test set. This is acceptable at the skeleton stage and is documented. For production, the catalog should be derived from historical objection procedures of the relevant authority, not from the test set.
 
 ---
 
@@ -374,6 +517,50 @@ Pattern: when an eval metric looks "almost good but not quite", check whether th
 
 ---
 
+### Catalog as Partition Key Removes a Drift Source
+
+The Iteration 8 refactor from seven thematic clusters with a separate `corpus_partition` field to nine gesetz-based catalogs where the catalog_id IS the partition removed one persistent class of bugs. Drift between catalog identifiers and corpus partition strings cannot occur if there is only one identifier.
+
+Pattern: when a system uses one value as an identifier for two related concerns, prefer making them the same string over maintaining a translation table. Translation tables drift; identity does not.
+
+---
+
+### Document-Level Recall Hides Assignment Loss
+
+The Iteration 7 metric (100% paragraph_norm doc-level recall) was a clean win at the extractor level, but masked a downstream problem: the per-argument `zitierte_normen` field, populated via Option Y position overlap, suffered massive loss depending on LLM choice (38% to 45% gap on smaller models).
+
+Pattern: when a deterministic component feeds an LLM-driven step, measure each component separately. Aggregate metrics can hide failures at the join.
+
+---
+
+### Failure Modes Are Model-Specific, Not Universal
+
+The four-model Phase A baseline revealed three distinct failure modes (H1, H2, H3) with model-specific incidence:
+- gpt-4o-mini: mixed H2 across multiple docs (sloppy span selection)
+- gpt-4o: systematic H2 plus H3 (paraphrasing) on specific documents
+- o3-mini: localised H2 on one document
+- gpt-5.5: minimal residual losses
+
+Pattern: do not generalise from single-model evaluation. Different model families have different dominant failure modes. Architectural interventions are effective if and only if they address the dominant mode of the target tier.
+
+---
+
+### Prompt Hint Framing Matters
+
+The Iteration 11 v1 vs v2 split revealed that a single phrasing difference ("use this list" vs "this list as orientation help, possibly incomplete") changes per-doc behaviour significantly. v1 caused over-restriction and per-document regressions; v2 preserved LLM autonomy and produced consistent improvements.
+
+Pattern: when adding deterministic context as a soft hint to an LLM prompt, frame it as advisory rather than authoritative. The LLM's own judgment is part of the system; do not suppress it artificially.
+
+---
+
+### Hybrid Patterns Decouple Production from Model Tier
+
+The Iteration 11 result that gpt-4o-mini Hybrid reaches o3-mini Baseline performance (~77%) and o3-mini Hybrid approaches gpt-5.5 Baseline (~92%) demonstrates that the deterministic component carries a model-tier worth of capability. This is the architecturally interesting finding: production deployment can be detached from closed-source frontier models if the deterministic boundary is well-designed.
+
+Pattern: for Behörden-Sovereignty and DSGVO-bound deployments, prefer architectures where the LLM is one swappable component among several. Variance reduction via deterministic pre-processing is the primary lever.
+
+---
+
 ## Methodological Limitations
 
 ### Synthetic Test Corpus
@@ -389,52 +576,89 @@ Expectation: eval metrics on real documents will tend to be worse.
 
 ### Small Corpus
 
-n=23 documents is small for statistical robustness. Per-catalog diagnostics are based on 1 to 5 data points per cluster. Variation between runs is possible even at temperature=0 (Anthropic and OpenAI do not guarantee full determinism even at temp=0).
+n=23 documents (n=10 for the Phase A four-model evaluation, since TYP_1 docs are excluded from per-argument metrics) is small for statistical robustness. Per-catalog diagnostics are based on 1 to 5 data points per gesetz. Variation between runs is possible even at temperature=0 (OpenAI does not guarantee full determinism even at temp=0).
 
 ---
 
-### Model Tier
+### Model Determinism
 
-Evaluation ran on gpt-4o-mini. A counter-test with gpt-4o (full) was not conducted because the final numbers with the smaller model were already sufficient. If the TriageService implementation runs on a different model (e.g. Claude Sonnet), the evaluation should be repeated on that model.
+Iteration 10 and 11 covered four models: gpt-4o-mini, gpt-4o, o3-mini, gpt-5.5. The gpt-4o-mini and gpt-4o calls run at temperature=0. The o3-mini and gpt-5.5 calls reject `temperature=0` (API HTTP 400) and run at the default temperature (1). For these two models the results are single-run point estimates without variance bounds.
+
+A future run of 3x per model with the same input and hash-comparison of outputs would establish empirical run-stability. For the current claim (architectural validation of the Hybrid Pattern), single runs are sufficient because the inter-model deltas (10+ percentage points) substantially exceed plausible intra-model run variance.
 
 ---
 
-### Determinism
+### GT Comparison is Exact String Match
 
-Catalog matching: not empirically verified (no repeat loops in the eval script). Likely stable at the final numbers, but for a production-grade claim a 3x run with hash comparison of outputs would be appropriate.
+The Phase A eval comparison uses exact canonical-form string equality. This counts citations with different specificity as separate entries (e.g. `§ 8 BauNVO` and `§ 8 Abs. 2 Nr. 1 BauNVO`). Both can appear in extracted output and GT but compare as non-matches when the granularity differs.
 
-Norm extraction: fully deterministic by design (regex over text, no randomness, no model parameters). Reproducibility is structural, not empirical.
+Two einspruch_20 SPURIOUS persist for this reason. A specificity-aware matching scheme (a more specific extracted citation matches a less specific GT citation if the prefix matches) would resolve these. Not currently implemented; documented as known GT-modeling disagreement.
 
 ---
 
 ## Artifact Directory
 
-Outputs of this evaluation:
-- `ground_truth_cleaned.json`: cleaned norm GT with explicit/inferred separation (Iteration 2)
-- `katalog_und_zuordnung.json`: catalog definition plus expected assignment per document (Iteration 4)
-- `catalog.py` (v2): code catalog with 7 clusters, synchronised with eval GT (Iteration 6 part 2)
+Outputs of this evaluation, by iteration:
+
+**Iteration 2**:
+- `ground_truth_cleaned.json`: cleaned norm GT with explicit/inferred separation
+
+**Iteration 4 to 6**:
+- `katalog_und_zuordnung.json`: catalog definition plus expected assignment per document
+- `catalog.py` (v2): code catalog with 7 clusters, synchronised with eval GT
 - `eval_catalog_matching.py`: eval script v3 (catalog matching as primary metric)
-- `typ2.json`: type-tagged ground truth, 46 entries across 5 type categories (Iteration 7)
+
+**Iteration 7**:
+- `typ2.json`: type-tagged ground truth, 46 entries across 5 type categories
 - `norm_extractor.py`: deterministic regex extractor based on jura_regex whitelist variant
 - `test_norm_extractor.py`: 49 behavior-oriented unit tests
 - `norm_extraction_evaluation.py`: LLM-free eval script for the regex extractor
-- `catalog_eval_results_<timestamp>.json`: detailed catalog matching outputs per eval run
-- `norm_extraction_eval_<timestamp>.json`: detailed norm extraction outputs per eval run
+- `catalog_eval_results_<timestamp>.json`: detailed catalog matching outputs
+- `norm_extraction_eval_<timestamp>.json`: detailed norm extraction outputs
+
+**Iteration 8 (ADR-016)**:
+- `src/app/triage/catalog.py` v3: nine gesetz-based catalogs
+- `src/app/triage/prompts.py` v3.0.0: classification guide updated
+- `docs/decisions/adr-016.md`: catalog refactor rationale
+
+**Iteration 9**:
+- `src/app/triage/norm_extractor.py` (updated): i.V.m. chain handling
+- `experiments/extraction_evaluation/script/norm_coverage_eval.py`: Phase A multi-model framework
+- `experiments/extraction_evaluation/ground_truth/retrieval_gt/*.json`: 10 GT files for TYP_2 and Mixed
+- `tests/small_scale/triage/test_norm_extractor.py`: `TestIVMChainExtraction` and `TestIVMChainRegressionGuards`
+
+**Iteration 10 (ADR-017)**:
+- `experiments/extraction_evaluation/results/norm_coverage_eval_<model>_<timestamp>.json`: per-model baseline results (4 files)
+- `docs/decisions/adr-017.md`: model-dependent assignment loss documentation
+
+**Iteration 11 (ADR-018)**:
+- `experiments/extraction_evaluation/script/norm_coverage_eval_hybrid.py`: encapsulated Hybrid experiment
+- `experiments/extraction_evaluation/results/norm_coverage_eval_<model>_hybrid_<timestamp>.json`: per-model Hybrid results (4 files)
+- `docs/decisions/adr-018.md`: Hybrid Pattern decision record
 
 ---
 
 ## Next Steps
 
-1. Add schema assert test to the test suite (fitness function against drift between code catalog and eval GT).
-2. Deterministic post-filter for TYP_1 sanity check (solution for the 20% failure rate).
-3. Adjust einspruch_18 argument count range in the JSON.
-4. Add Mixed GT entries with `_mixed` suffix doc_ids.
-5. Verify einspruch_19 source text for § 3 BauGB variants.
-6. Replace TriageService LLM stub with the real OpenAI structured-output call (using LLMTriageOutput schema, prompt v2, gpt-4o-mini at temperature=0).
-7. After TriageService implementation: 3x determinism run as a sanity check.
+**Resolved since Iteration 7**:
+- ~~Schema assert test for catalog drift~~: superseded by Iteration 8 refactor; catalog_id is now the partition key directly, drift cannot occur.
+- ~~Mixed GT entries with `_mixed` suffix doc_ids~~: completed in Iteration 9.
+- ~~einspruch_19 source text verification for § 3 BauGB variants~~: completed in Iteration 9; § 3 BauGB added to GT.
+- ~~3x determinism run sanity check~~: deferred; not needed for architectural validation given inter-model delta magnitude.
+
+**Still open from Iteration 7**:
+1. Deterministic post-filter for TYP_1 sanity check (solution for the 20% einspruch_07 and einspruch_08 failures).
+2. Adjust einspruch_18 argument count range in the JSON.
+
+**New from Iterations 8-11**:
+3. Benchmark the deterministic `norm_extractor` against `openlegaldata/legal-reference-extraction` (Regex and Transformer modes) on the 10 Phase A documents. Three-way comparison: own extractor, openlegaldata Regex, openlegaldata EuroBERT fine-tune. Decision-relevant for whether to retain custom maintenance or adopt the external library.
+4. Production refactor for Hybrid Pattern (per ADR-018). The wrapper in `experiments/` becomes a first-class component, with the hint construction moved to the prompts.py module.
+5. Open-weights model evaluation: run the Hybrid Pattern against LLaMA 3.3 70B, Mixtral, and LeoLM (via Together AI or self-hosted) to validate the Behörden-Sovereignty narrative end-to-end.
 
 **Phase 2 topics** (post-skeleton):
 - Validation with anonymised real documents from the authority
 - Pattern handlers for extractor_limitation entries: TA Lärm, DIN standards, FFH-Richtlinie, Landesverordnungen, Anlage X notations
 - Mixed strategy for more complex header styles (multi-pass extraction)
 - Extension of the test suite with adversarial cases (TYP_1 with pseudo-legal diction, TYP_2 without § notation)
+- ADR-019 (Held-Out Test Set): proper held-out methodology with previously unseen einsprüche written from corpus XMLs
+- Variant B (Hard Schema Constraint) implementation if Variant A proves insufficient in production

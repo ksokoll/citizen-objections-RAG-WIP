@@ -1,0 +1,50 @@
+{
+  "doc_id": "einspruch_18",
+  "einwendungs_typ": "TYP_2",
+  "expected_argument_count_range": [
+    2,
+    3
+  ],
+  "expected_arguments": [
+    {
+      "argument_id": "arg1",
+      "argument_summary": "Unterschätzung und Mängel des Verkehrsgutachtens (Baustellen-, Knoten-, Tourismus-, Schwerlastverkehr)",
+      "argument_anchor": "Aus dem Bericht des Bundesverbandes der Deutschen Zementindustrie zu Rechenzentrum-Neubauten in vergleichbarer Dimension",
+      "expected_catalog_ids": [],
+      "expected_norms": {
+        "must_retrieve": [],
+        "should_retrieve": [],
+        "not_retrievable_via_xml": []
+      }
+    },
+    {
+      "argument_id": "arg2",
+      "argument_summary": "Ungeklärte Erschließungskosten und Straßenschäden durch Schwerlastverkehr",
+      "argument_anchor": "Wer trägt die Kosten des Ausbaus der Erschließungsstraße und der Ertüchtigung des Knotenpunkts",
+      "expected_catalog_ids": [
+        "baugb"
+      ],
+      "expected_norms": {
+        "must_retrieve": [],
+        "should_retrieve": [
+          {
+            "paragraph_id": "baugb_§30",
+            "citation": "§ 30 Abs. 1 BauGB",
+            "source": "inferred_applicable",
+            "rank_target": "top_10",
+            "rationale": "Erschließungssicherung als planungsrechtliche Voraussetzung (implizit)."
+          },
+          {
+            "paragraph_id": "baugb_§12",
+            "citation": "§ 12 BauGB",
+            "source": "inferred_applicable",
+            "rank_target": "top_10",
+            "rationale": "Durchführungsvertrag als Instrument zur Regelung von Kostenfragen (implizit)."
+          }
+        ],
+        "not_retrievable_via_xml": []
+      }
+    }
+  ],
+  "notes": "Schwerpunkt: Verkehr, Erschließung, Infrastrukturkosten. Einreicher: Bürgerinitiative Mosel bleibt Mosel, Erika Feldmann. Edge Case: null explizite § Normen, alle Bezüge inferiert. Erklärt 0%-Recall-Resultat aus alter Eval. Relevant für Architektur: solche TYP_2-Dokumente existieren in der Praxis."
+}
