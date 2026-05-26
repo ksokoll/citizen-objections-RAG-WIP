@@ -22,8 +22,8 @@ class LLMArgument(BaseModel):
         argument_text: Concise legal formulation, max two sentences.
         original_zitat: Verbatim substring from the source text. Must be
             exactly reproducible from the source; verified downstream.
-        catalog_id: Catalog cluster, or None if argument is TYP_1 or
-            cannot be mapped to a known cluster.
+        catalog_id: Catalog entry (one per Gesetz), or None if argument
+            is TYP_1 or cannot be mapped to a known law.
         einwendungs_typ: TYP_1 (informal citizen) or TYP_2 (formal legal).
     """
 
@@ -41,8 +41,8 @@ class LLMArgument(BaseModel):
     catalog_id: CatalogId | None = Field(
         ...,
         description=(
-            "Catalog cluster, or null if argument is TYP_1 or cannot be "
-            "mapped to a known cluster."
+            "Catalog entry (one per Gesetz), or null if argument is TYP_1 "
+            "or cannot be mapped to a known law."
         ),
     )
     einwendungs_typ: EinwendungsTyp = Field(

@@ -34,7 +34,7 @@ class FakeRetriever:
 
 
 def make_argument(
-    catalog_id: str | None = "C-005",
+    catalog_id: str | None = "enwg",
     argument_verified: bool = True,
     einwendungs_typ: EinwendungsTyp = EinwendungsTyp.TYP_2,
 ) -> ExtrahiertesArgument:

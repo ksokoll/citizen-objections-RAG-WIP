@@ -79,7 +79,7 @@ class FakeRetriever:
 _DEFAULT_TRIAGE_OUTPUT = LLMTriageOutput(
     argumente=[
         LLMArgument(
-            catalog_id="C-001",
+            catalog_id="baugb",
             einwendungs_typ=EinwendungsTyp.TYP_2,
             argument_text="Widerspruch zum Flächennutzungsplan",
             original_zitat=(

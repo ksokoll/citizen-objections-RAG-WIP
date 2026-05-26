@@ -75,7 +75,8 @@ class HybridRetrievalService:
 
         Args:
             query: Argument text from ExtrahiertesArgument.argument_text.
-            partition: Corpus partition (from KatalogEintrag.corpus_partition).
+            partition: Corpus partition key. Equals
+                ExtrahiertesArgument.catalog_id (ADR-016).
             top_k: Override the configured rerank_top_k.
 
         Returns:

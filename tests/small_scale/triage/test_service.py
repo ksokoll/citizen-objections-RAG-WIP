@@ -33,13 +33,13 @@ class TestArgumentExtraction:
             parse_response=LLMTriageOutput(
                 argumente=[
                     LLMArgument(
-                        catalog_id="C-001",
+                        catalog_id="baugb",
                         einwendungs_typ=EinwendungsTyp.TYP_2,
                         argument_text="Widerspruch zum Flächennutzungsplan",
                         original_zitat=quote_one,
                     ),
                     LLMArgument(
-                        catalog_id="C-007",
+                        catalog_id="baugb",
                         einwendungs_typ=EinwendungsTyp.TYP_2,
                         argument_text="Fehlende frühzeitige Beteiligung",
                         original_zitat=quote_two,
@@ -65,7 +65,7 @@ class TestArgumentExtraction:
             parse_response=LLMTriageOutput(
                 argumente=[
                     LLMArgument(
-                        catalog_id="C-001",
+                        catalog_id="baugb",
                         einwendungs_typ=EinwendungsTyp.TYP_2,
                         argument_text="Widerspruch zum Flächennutzungsplan",
                         original_zitat=quote,
@@ -96,7 +96,7 @@ class TestArgumentVerification:
             parse_response=LLMTriageOutput(
                 argumente=[
                     LLMArgument(
-                        catalog_id="C-001",
+                        catalog_id="baugb",
                         einwendungs_typ=EinwendungsTyp.TYP_2,
                         argument_text="Widerspruch zum Flächennutzungsplan",
                         original_zitat=quote,
@@ -121,7 +121,7 @@ class TestArgumentVerification:
             parse_response=LLMTriageOutput(
                 argumente=[
                     LLMArgument(
-                        catalog_id="C-001",
+                        catalog_id="baugb",
                         einwendungs_typ=EinwendungsTyp.TYP_2,
                         argument_text="Widerspruch zum Flächennutzungsplan",
                         original_zitat="Ein vom LLM erfundenes Zitat",

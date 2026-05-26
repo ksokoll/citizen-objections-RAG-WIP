@@ -5,10 +5,9 @@ Both the Pydantic extraction schema (Triage) and the corpus routing
 (ResponseDrafting) consume from this module. Drift is prevented by
 colocation: adding an entry requires updating both KATALOG and CatalogId.
 
-v2 (2026-05-23): Restructured from 5 thematic clusters to 7 clusters
-aligned with the legal domains found in the 10-document test corpus.
-Cluster selection derived from empirical analysis of the test set;
-see RAG_RETRIEVAL_DECISIONS.md for the leakage-methodology note.
+v3 (2026-05-26): Restructured from 7 thematic clusters (v2) to 9
+gesetz-based entries, one per law in the corpus. catalog_id IS the
+retriever partition key; no separate mapping. See ADR-016.
 """
 
 from dataclasses import dataclass
@@ -20,108 +19,113 @@ class KatalogEintrag:
     """A single predefined objection pattern with routing metadata.
 
     Attributes:
-        catalog_id: Unique identifier, matches CatalogId enum value.
+        catalog_id: Unique identifier, matches CatalogId enum value. Also
+            serves directly as the retriever partition key (ADR-016).
         beschreibung: Human-readable description used in LLM extraction schema.
             Generic domain vocabulary, no leakage of specific test arguments.
         rechtsgebiet: Primary legal domain (e.g. BauGB, WHG, BNatSchG).
-        corpus_partition: Index partition key for domain-routed retrieval (ADR-005).
     """
 
     catalog_id: str
     beschreibung: str
     rechtsgebiet: str
-    corpus_partition: str
 
 
 KATALOG: dict[str, KatalogEintrag] = {
-    "C-001": KatalogEintrag(
-        catalog_id="C-001",
+    "baugb": KatalogEintrag(
+        catalog_id="baugb",
         beschreibung=(
-            "Materielles Bauplanungsrecht nach BauGB und BauNVO. "
-            "Umfasst Aufstellung und Festsetzungen von Bauleitplänen, "
-            "Verhältnis Flächennutzungsplan zu Bebauungsplan, "
-            "Gebietsausweisung nach BauNVO (Gewerbegebiet, Sondergebiet etc.), "
-            "Abwägungsgebot, städtebauliche Erforderlichkeit und "
-            "Erschließungssicherung (§§ 1, 8, 12, 30 BauGB)."
+            "Baugesetzbuch (BauGB). Materielles und formelles Bauplanungsrecht: "
+            "Bauleitplanung (Flächennutzungsplan, Bebauungsplan), Aufstellung "
+            "und Festsetzungen, Verhältnis FNP zu Bebauungsplan, "
+            "Abwägungsgebot, städtebauliche Erforderlichkeit, "
+            "Erschließungssicherung, Öffentlichkeits- und Trägerbeteiligung, "
+            "Auslegungspflichten, Beachtlichkeit von Verfahrensfehlern, "
+            "Umweltbericht (§§ 1, 2a, 3, 4, 8, 12, 30, 214 BauGB)."
         ),
         rechtsgebiet="BauGB",
-        corpus_partition="baugb",
     ),
-    "C-002": KatalogEintrag(
-        catalog_id="C-002",
+    "baunvo": KatalogEintrag(
+        catalog_id="baunvo",
         beschreibung=(
-            "Wasserrechtliche Anforderungen nach WHG und WaStrG. "
-            "Umfasst Gewässerbenutzung und Erlaubnispflichten, Wasserentnahme, "
-            "thermische und stoffliche Gewässerbelastung, "
-            "Trinkwasserschutzgebiete sowie Bundeswasserstraßen "
-            "(§§ 8, 9, 57 WHG; WaStrG)."
+            "Baunutzungsverordnung (BauNVO). Gebietsausweisung und "
+            "Nutzungsarten in Bebauungsplänen: Wohngebiete, Gewerbegebiete, "
+            "Industriegebiete, Sondergebiete, zulässige und unzulässige "
+            "Nutzungen, Anlagen für technische Infrastruktur."
         ),
-        rechtsgebiet="WHG",
-        corpus_partition="whg",
+        rechtsgebiet="BauNVO",
     ),
-    "C-003": KatalogEintrag(
-        catalog_id="C-003",
+    "bimschg": KatalogEintrag(
+        catalog_id="bimschg",
         beschreibung=(
-            "Immissionsschutzrechtliche Lärmanforderungen. "
-            "Umfasst Schallimmissionen aus gewerblichen und industriellen "
-            "Anlagen, schallschutzrechtliche Beurteilung von Bauleitplänen, "
-            "Schallgutachten, Lärmrichtwerte für Wohn- und Mischgebiete, "
-            "Bewertung tieffrequenter Geräusche "
-            "(TA Lärm, BImSchG, DIN 45680)."
+            "Bundes-Immissionsschutzgesetz (BImSchG). Immissionsschutzrechtliche "
+            "Anforderungen aus genehmigungsbedürftigen Anlagen: "
+            "Anlagengenehmigung, Schutz vor schädlichen Umwelteinwirkungen "
+            "(Geräusche, Erschütterungen, Luftverunreinigungen), "
+            "Betreiberpflichten, Stand der Technik."
         ),
         rechtsgebiet="BImSchG",
-        corpus_partition="bimschg_ta_laerm",
     ),
-    "C-004": KatalogEintrag(
-        catalog_id="C-004",
+    "bnatschg": KatalogEintrag(
+        catalog_id="bnatschg",
         beschreibung=(
-            "Naturschutzrecht nach BNatSchG und europarechtlichen Vorgaben. "
-            "Umfasst artenschutzrechtliche Zugriffsverbote, "
-            "FFH-Verträglichkeitsprüfung für Schutzgebiete, "
-            "Umweltbericht-Anforderungen der Bauleitplanung, "
-            "Landschaftsschutzgebiete und naturschutzrechtliche Befreiungen "
-            "(§§ 34, 44, 63, 67 BNatSchG; § 2a BauGB; FFH-Richtlinie 92/43/EWG)."
+            "Bundesnaturschutzgesetz (BNatSchG). Naturschutzrecht: "
+            "artenschutzrechtliche Zugriffsverbote, FFH-Verträglichkeit für "
+            "Schutzgebiete, Landschaftsschutzgebiete, naturschutzrechtliche "
+            "Befreiungen, Umweltbericht-Anforderungen der Bauleitplanung "
+            "(§§ 34, 44, 63, 67 BNatSchG)."
         ),
         rechtsgebiet="BNatSchG",
-        corpus_partition="bnatschg",
     ),
-    "C-005": KatalogEintrag(
-        catalog_id="C-005",
+    "enwg": KatalogEintrag(
+        catalog_id="enwg",
         beschreibung=(
-            "Energierechtliche Anforderungen nach EnWG. "
-            "Umfasst Netzanschluss an Hoch- oder Mittelspannungsnetze, "
-            "Netzanschlussbestätigungen für Großverbraucher, "
-            "Kostentragung für Netzausbau und Energieerschließung als "
-            "Voraussetzung der planungsrechtlichen Zulässigkeit "
-            "(§ 17 EnWG)."
+            "Energiewirtschaftsgesetz (EnWG). Energiewirtschaftsrechtliche "
+            "Anforderungen: Netzanschluss an Hoch- oder Mittelspannungsnetze, "
+            "Versorgungspflichten, Kostentragung für Netzausbau und "
+            "Energieerschließung als Voraussetzung der planungsrechtlichen "
+            "Zulässigkeit (§ 17 EnWG)."
         ),
         rechtsgebiet="EnWG",
-        corpus_partition="enwg",
     ),
-    "C-006": KatalogEintrag(
-        catalog_id="C-006",
+    "vwgo": KatalogEintrag(
+        catalog_id="vwgo",
         beschreibung=(
-            "Kommunales Wärmeplanungsrecht nach WPG. "
-            "Umfasst kommunale Wärmeplanung, Berücksichtigung industrieller "
-            "Abwärmequellen, Verpflichtungen zur Abwärmeauskopplung in "
-            "Durchführungsverträgen und Wärmenetz-Integration "
-            "(§ 7 WPG)."
+            "Verwaltungsgerichtsordnung (VwGO). Verwaltungsgerichtliche "
+            "Verfahren: Normenkontrollverfahren gegen Bebauungspläne, "
+            "Klagearten, Klagebefugnis, Fristen und Antragsvoraussetzungen "
+            "(§ 47 VwGO)."
+        ),
+        rechtsgebiet="VwGO",
+    ),
+    "wastrg": KatalogEintrag(
+        catalog_id="wastrg",
+        beschreibung=(
+            "Bundeswasserstraßengesetz (WaStrG). Bundeswasserstraßen-Recht: "
+            "Schifffahrt, Wasserstraßen-Verwaltung, Strom- und Schifffahrtspolizei, "
+            "Anlagen an Bundeswasserstraßen."
+        ),
+        rechtsgebiet="WaStrG",
+    ),
+    "whg": KatalogEintrag(
+        catalog_id="whg",
+        beschreibung=(
+            "Wasserhaushaltsgesetz (WHG). Wasserrecht: Gewässerbenutzung und "
+            "Erlaubnispflichten, Wasserentnahme, thermische und stoffliche "
+            "Gewässerbelastung, Trinkwasserschutzgebiete "
+            "(§§ 8, 9, 57 WHG)."
+        ),
+        rechtsgebiet="WHG",
+    ),
+    "wpg": KatalogEintrag(
+        catalog_id="wpg",
+        beschreibung=(
+            "Wärmeplanungsgesetz (WPG). Kommunale Wärmeplanung und "
+            "Abwärmenutzung: Berücksichtigung industrieller Abwärmequellen, "
+            "Verpflichtungen zur Abwärmeauskopplung in Durchführungsverträgen, "
+            "Wärmenetz-Integration (§ 7 WPG)."
         ),
         rechtsgebiet="WPG",
-        corpus_partition="wpg",
-    ),
-    "C-007": KatalogEintrag(
-        catalog_id="C-007",
-        beschreibung=(
-            "Verfahrensrecht der Bauleitplanung sowie verwaltungsgerichtliche "
-            "Kontrolle. Umfasst Öffentlichkeitsbeteiligung (frühzeitig und "
-            "förmlich), Auslegung von Planunterlagen, Trägerbeteiligung, "
-            "Bekanntmachungspflichten, Beachtlichkeit von Verfahrensfehlern "
-            "und Normenkontrollverfahren "
-            "(§§ 3, 4, 214 BauGB; § 47 VwGO)."
-        ),
-        rechtsgebiet="BauGB",
-        corpus_partition="baugb",
     ),
 }
 
@@ -131,15 +135,19 @@ class CatalogId(str, Enum):
 
     Each value must have a corresponding entry in KATALOG.
     Enforced by test_catalog_completeness in the test suite.
+
+    The enum value is also the retriever partition key (ADR-016).
     """
 
-    C_001 = "C-001"
-    C_002 = "C-002"
-    C_003 = "C-003"
-    C_004 = "C-004"
-    C_005 = "C-005"
-    C_006 = "C-006"
-    C_007 = "C-007"
+    BAUGB = "baugb"
+    BAUNVO = "baunvo"
+    BIMSCHG = "bimschg"
+    BNATSCHG = "bnatschg"
+    ENWG = "enwg"
+    VWGO = "vwgo"
+    WASTRG = "wastrg"
+    WHG = "whg"
+    WPG = "wpg"
 
 
 def get_eintrag(catalog_id: CatalogId) -> KatalogEintrag:

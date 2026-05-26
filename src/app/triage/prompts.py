@@ -6,14 +6,14 @@ from app.core.prompts import PromptTemplate
 
 ARGUMENT_EXTRACTION_PROMPT = PromptTemplate(
     name="triage_argument_extraction",
-    version="2.0.0",
-    last_modified=datetime(2026, 5, 23),
+    version="3.0.0",
+    last_modified=datetime(2026, 5, 26),
     tested_models=("gpt-4o-mini",),
     description=(
         "Extracts discrete legal arguments from a German Einwendung document "
-        "and classifies each against the predefined catalog. v2 adds explicit "
-        "TYP_1 pre-check, classification guidance with domain anchors, and "
-        "aligns the example schema with the Pydantic ExtractionResult wrapper."
+        "and classifies each against the predefined catalog. v3 wechselt von "
+        "7 thematischen Clustern zu 9 gesetz-basierten catalog_ids. "
+        "catalog_id ist jetzt direkt der Retriever-Partition-Key (ADR-016)."
     ),
     prompt="""\
 Du bist ein juristischer Analyse-Assistent für deutsche Behörden im Bereich \
@@ -45,29 +45,34 @@ Du darfst ausschließlich die folgenden catalog_id-Werte verwenden:
 {catalog_entries}
 
 ## Klassifikations-Leitfaden
-Wähle den catalog_id anhand der Rechtsmaterie des Arguments:
+Wähle den catalog_id anhand des primär adressierten Gesetzes. Ein Argument \
+hat genau eine catalog_id, auch wenn es mehrere Gesetze touchiert; nimm dann \
+das dominante.
 
-- Bebauungsplan-Aufstellung, Flächennutzungsplan, Gebietsfestsetzung, \
-Abwägungsgebot, städtebauliche Erforderlichkeit, Erschließungssicherung \
-→ Bauplanungsrecht-Cluster (BauGB, BauNVO)
-- Gewässerbenutzung, Wasserentnahme, Trinkwasserschutz, thermische \
-Gewässerbelastung, Bundeswasserstraßen → Wasserrecht-Cluster (WHG, WaStrG)
-- Lärmschutz, Schallgutachten, Geräuschimmissionen, Immissionsrichtwerte, \
-Tieffrequenz → Immissionsschutz-Cluster (TA Lärm, BImSchG, DIN 45680)
-- Artenschutz, FFH-Verträglichkeit, Umweltbericht, Landschaftsschutzgebiete, \
-naturschutzrechtliche Befreiungen → Naturschutz-Cluster (BNatSchG, \
-FFH-Richtlinie)
-- Netzanschluss, Stromversorgung, Energieerschließungs-Kosten \
-→ Energierecht-Cluster (EnWG)
-- Kommunale Wärmeplanung, Abwärmenutzung, Wärmenetz-Integration \
-→ Wärmeplanungsrecht-Cluster (WPG)
-- Auslegungsverfahren, Bürgerbeteiligung (frühzeitig und förmlich), \
-Bekanntmachungspflichten, Verfahrensfehler-Beachtlichkeit, \
-verwaltungsgerichtliche Normenkontrolle \
-→ Verfahrensrecht-Cluster (BauGB §§ 3, 4, 214; VwGO § 47)
+- Bauplanungsrechtliche Anforderungen (Bauleitplanung, FNP, B-Plan, \
+Abwägung, Auslegung, Beteiligung, Verfahrensfehler-Beachtlichkeit) → baugb
+- Gebietsfestsetzung und Nutzungsarten (Gewerbegebiet, Sondergebiet, \
+zulässige Nutzungen) → baunvo
+- Immissionsschutzrechtliche Anforderungen aus genehmigungsbedürftigen \
+Anlagen (Schutz vor Geräuschen, Erschütterungen, Luftverunreinigungen, \
+Betreiberpflichten) → bimschg
+- Naturschutzrecht (Artenschutz, FFH-Verträglichkeit, Landschaftsschutz, \
+Befreiungen, Umweltbericht-Anforderungen) → bnatschg
+- Energiewirtschaftsrechtliche Anforderungen (Netzanschluss, \
+Versorgungspflichten, Netzausbau-Kosten) → enwg
+- Verwaltungsgerichtliche Verfahren (Normenkontrolle, Klagearten, \
+Klagebefugnis) → vwgo
+- Bundeswasserstraßen-Recht (Schifffahrt, Wasserstraßen-Verwaltung, \
+Anlagen an Bundeswasserstraßen) → wastrg
+- Wasserrecht (Gewässerbenutzung, Erlaubnispflichten, thermische und \
+stoffliche Belastung, Trinkwasserschutz) → whg
+- Kommunale Wärmeplanung und Abwärmenutzung (Wärmenetz-Integration, \
+Abwärmeauskopplung) → wpg
 
-Wenn das Argument juristische Substanz hat aber keinem Cluster eindeutig \
-zuzuordnen ist, setze catalog_id auf null. Erfinde keine catalog_id.
+Wenn das Argument juristische Substanz hat aber keinem Gesetz im Korpus \
+eindeutig zuzuordnen ist (z.B. reines Landesrecht, Verwaltungsvorschrift, \
+EU-Recht ohne Bundesumsetzung), setze catalog_id auf null. Erfinde keine \
+catalog_id.
 
 ## Regeln für die Extraktion
 1. Extrahiere jedes eigenständige juristische Argument als separaten Eintrag. \
@@ -96,7 +101,7 @@ Kein erklärender Text vor oder nach dem JSON.
       "original_zitat": "Ein vorhabenbezogener Bebauungsplan, der von dieser  \
       Darstellung des Flächennutzungsplans abweicht, ist nach § 8 Abs. 2 BauGB \
       grundsätzlich nur zulässig...",
-      "catalog_id": "C-001",
+      "catalog_id": "baugb",
       "einwendungs_typ": "TYP_2"
     }}
   ]

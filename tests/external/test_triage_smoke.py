@@ -43,10 +43,10 @@ class TestTriageSmokeAgainstRealLLM:
         result = triage_service.triage(text)
         arguments = result.extracted_arguments
 
-        # Then at least one C-004 argument is extracted with valid norms
+        # Then at least one bnatschg argument is extracted with valid norms
         assert len(arguments) >= 1
         catalog_ids = {arg.catalog_id for arg in arguments}
-        assert "C-004" in catalog_ids
+        assert "bnatschg" in catalog_ids
         all_norms = [n for arg in arguments for n in arg.zitierte_normen]
         assert any("BNatSchG" in n for n in all_norms)
 

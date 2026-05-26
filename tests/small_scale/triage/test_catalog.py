@@ -33,13 +33,13 @@ def _build_two_argument_output() -> LLMTriageOutput:
     return LLMTriageOutput(
         argumente=[
             LLMArgument(
-                catalog_id="C-001",
+                catalog_id="baugb",
                 einwendungs_typ=EinwendungsTyp.TYP_2,
                 argument_text="Widerspruch zum Flächennutzungsplan",
                 original_zitat=QUOTE_FLAECHENNUTZUNGSPLAN,
             ),
             LLMArgument(
-                catalog_id="C-007",
+                catalog_id="baugb",
                 einwendungs_typ=EinwendungsTyp.TYP_2,
                 argument_text="Fehlende frühzeitige Beteiligung",
                 original_zitat=QUOTE_OEFFENTLICHKEIT,
@@ -83,7 +83,7 @@ class TestArgumentVerification:
             parse_response=LLMTriageOutput(
                 argumente=[
                     LLMArgument(
-                        catalog_id="C-001",
+                        catalog_id="baugb",
                         einwendungs_typ=EinwendungsTyp.TYP_2,
                         argument_text="Widerspruch zum Flächennutzungsplan",
                         original_zitat=QUOTE_FLAECHENNUTZUNGSPLAN,

@@ -23,7 +23,7 @@ class TestClassifyEinwendungsTyp:
                 argument_id=str(uuid.uuid4()),
                 argument_text="Informeller Einwand ohne Rechtsbezug.",
                 original_zitat="Einwand",
-                catalog_id="C-001",
+                catalog_id="baugb",
                 einwendungs_typ=EinwendungsTyp.TYP_1,
             )
         ]
@@ -41,14 +41,14 @@ class TestClassifyEinwendungsTyp:
                 argument_id=str(uuid.uuid4()),
                 argument_text="Informeller Einwand.",
                 original_zitat="Einwand",
-                catalog_id="C-001",
+                catalog_id="baugb",
                 einwendungs_typ=EinwendungsTyp.TYP_1,
             ),
             ExtrahiertesArgument(
                 argument_id=str(uuid.uuid4()),
                 argument_text="Juristischer Einwand mit § 8 BauGB.",
                 original_zitat="§ 8 BauGB",
-                catalog_id="C-005",
+                catalog_id="enwg",
                 einwendungs_typ=EinwendungsTyp.TYP_2,
             ),
         ]

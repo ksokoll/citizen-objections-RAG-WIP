@@ -41,9 +41,9 @@ from enum import Enum
 class Gesetz(str, Enum):
     """Whitelist of laws indexed in the corpus.
 
-    Each entry must have a corresponding XML file in data/XML/ and appear
-    in at least one KatalogEintrag.corpus_partition. Adding a law requires
-    updating both this enum and catalog.py.
+    Each entry must have a corresponding XML file in data/XML/ and a
+    matching catalog_id in KATALOG (ADR-016: catalog_id IS the partition
+    key). Adding a law requires updating both this enum and catalog.py.
 
     Order in the Enum is irrelevant for matching: the regex builds an
     alternation that matches the longest applicable abbreviation, with the

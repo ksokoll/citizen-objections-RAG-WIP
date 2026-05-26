@@ -126,10 +126,16 @@ class ResponseDraftingService:
         Raises:
             RetrievalError: If the retriever fails.
         """
+        if argument.catalog_id is None:
+            raise RetrievalError(
+                f"Cannot retrieve for argument {argument.argument_id} without "
+                "catalog_id. Arguments with catalog_id=None should be filtered "
+                "upstream."
+            )
         try:
             return self._retriever.retrieve(
                 query=argument.argument_text,
-                partition="",  # TODO(feat/retrieval): derive from catalog_id
+                partition=argument.catalog_id,
                 top_k=5,
             )
         except Exception as e:
