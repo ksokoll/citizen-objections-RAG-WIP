@@ -638,27 +638,72 @@ Outputs of this evaluation, by iteration:
 
 ---
 
-## Next Steps
+### Iteration 12: Custom vs OpenLegalData Library Benchmark (ADR-019)
 
-**Resolved since Iteration 7**:
-- ~~Schema assert test for catalog drift~~: superseded by Iteration 8 refactor; catalog_id is now the partition key directly, drift cannot occur.
-- ~~Mixed GT entries with `_mixed` suffix doc_ids~~: completed in Iteration 9.
-- ~~einspruch_19 source text verification for § 3 BauGB variants~~: completed in Iteration 9; § 3 BauGB added to GT.
-- ~~3x determinism run sanity check~~: deferred; not needed for architectural validation given inter-model delta magnitude.
+**Motivation**: The custom `norm_extractor` carries a non-trivial maintenance burden: 49 unit tests, the recent i.V.m. chain handling extension, and ownership of all pattern edge cases. The OpenLegalData ecosystem provides `legal-reference-extraction` (PyPI; imports as `refex`), used in production at de.openlegaldata.io. A direct head-to-head benchmark was needed to decide whether to retain the custom extractor or migrate to the external library.
 
-**Still open from Iteration 7**:
-1. Deterministic post-filter for TYP_1 sanity check (solution for the 20% einspruch_07 and einspruch_08 failures).
-2. Adjust einspruch_18 argument count range in the JSON.
+**Approach**: New encapsulated experiment script `experiments/extraction_evaluation/script/norm_extractor_benchmark.py`. Three extractor adapters behind a common `Extractor` protocol:
+- **A**: Custom (existing `norm_extractor`)
+- **B**: OpenLegalData Regex (`refex.orchestrator.CitationExtractor`)
+- **C**: OpenLegalData Transformer (EuroBERT-210m fine-tune at `openlegaldata/legal-reference-extraction-base-de`)
 
-**New from Iterations 8-11**:
-3. Benchmark the deterministic `norm_extractor` against `openlegaldata/legal-reference-extraction` (Regex and Transformer modes) on the 10 Phase A documents. Three-way comparison: own extractor, openlegaldata Regex, openlegaldata EuroBERT fine-tune. Decision-relevant for whether to retain custom maintenance or adopt the external library.
-4. Production refactor for Hybrid Pattern (per ADR-018). The wrapper in `experiments/` becomes a first-class component, with the hint construction moved to the prompts.py module.
-5. Open-weights model evaluation: run the Hybrid Pattern against LLaMA 3.3 70B, Mixtral, and LeoLM (via Together AI or self-hosted) to validate the Behörden-Sovereignty narrative end-to-end.
+Two evaluation regimes:
+- Phase A: 7 TYP_2 plus 3 Mixed documents. Primary recall and precision against the must_retrieve subset of the Phase A ground truth.
+- TYP_1: 10 informal citizen letters. False-positive resilience. Expected extraction count is zero; any non-empty output signals hallucination.
 
-**Phase 2 topics** (post-skeleton):
-- Validation with anonymised real documents from the authority
-- Pattern handlers for extractor_limitation entries: TA Lärm, DIN standards, FFH-Richtlinie, Landesverordnungen, Anlage X notations
-- Mixed strategy for more complex header styles (multi-pass extraction)
-- Extension of the test suite with adversarial cases (TYP_1 with pseudo-legal diction, TYP_2 without § notation)
-- ADR-019 (Held-Out Test Set): proper held-out methodology with previously unseen einsprüche written from corpus XMLs
-- Variant B (Hard Schema Constraint) implementation if Variant A proves insufficient in production
+Two comparison modes per extractor:
+- Raw: every citation the extractor emits.
+- Whitelisted to 9 Gesetz: post-filtered to the project's nine indexed Gesetze for fair apples-to-apples comparison.
+
+**Setup notes**:
+- The PyPI package is `legal-reference-extraction` but imports as `refex`. The adapter parses the library's `span.text` output (e.g. "§ 42 VwGO") into the project's canonical form via shared regex.
+- The Transformer model is a gated HuggingFace repository; access approval is pending. The benchmark ran with `RUN_TRANSFORMER = False`. The Transformer-mode results are deferred to a follow-up run.
+- The Transformer model is licensed CC BY-NC 4.0. Non-commercial research use is fine for benchmark purposes, but production deployment in a commercial Behörden context would require a different licensing path.
+
+**Results (Phase A Overall, Macro-Average over 8 docs with GT)**:
+
+| Extractor | Precision | Recall | F1 | Mean Time | Median Time |
+|-----------|-----------|--------|-----|-----------|-------------|
+| Custom | 90.8% | 100.0% | 94.6% | 0.2 ms | 0.2 ms |
+| OLD-Regex | 90.8% | 95.8% | 92.1% | 40.2 ms | 0.9 ms |
+
+**Results (TYP_1 False-Positive Resilience)**:
+
+| Extractor | Total FP (Raw) | Total FP (Whitelisted) |
+|-----------|----------------|------------------------|
+| Custom | 0 / 10 | 0 / 10 |
+| OLD-Regex | 0 / 10 | 0 / 10 |
+
+Both extractors are perfectly resilient against informal citizen letters; neither hallucinates §-citations where none are present.
+
+**Decisive edge case (einspruch_12_mixed)**:
+
+The Mixed document contains the i.V.m. chain `§ 9 Abs. 1 Nr. 1 i.V.m. § 8 WHG`. Custom recovers both `§ 9 Abs. 1 Nr. 1 WHG` and `§ 8 WHG`. OLD-Regex recovers only `§ 8 WHG` and `§ 57 WHG`, dropping the inner citation. The library logs the failure explicitly:
+
+```
+Marker could not be assign to book: [<RefMarker({'text': '§ 9 Abs. 1 Nr. 1 i.V.m.', ...
+references: [<Ref(law: None/9)>]
+```
+
+This is exactly the Iteration 9 i.V.m. handling investment, now empirically validated as a measurable recall advantage.
+
+**Performance characterisation**:
+
+The mean-median gap for OLD-Regex (40.2 ms vs 0.9 ms) signals expensive outliers. Two documents dominate: einspruch_14 at 260 ms, einspruch_20 at 41 ms. Both are content-rich documents with multiple citations and complex structure. Custom shows no such outlier behaviour (mean equals median at 0.2 ms), suggesting linear scaling with document size.
+
+For batch processing of 1000 documents, the projected difference is approximately 200 ms total for Custom versus 40 seconds for OLD-Regex. At larger scales (10,000+ docs typical for a major Behörde infrastructure case), this becomes a meaningful operational concern.
+
+**Extractor-Limitation Coverage**:
+
+Both extractors produced zero citations outside the 9-Gesetz whitelist on the three known-limitation documents (einspruch_14 with FFH-Richtlinie and Anlage 1 BauGB; einspruch_17 with LSG-Verordnung; einspruch_13_mixed with TA Lärm and DIN 45680). Adopting OLD-Regex would not have expanded coverage for the documented edge cases. These cases require either dedicated pattern handlers (Phase 2 roadmap) or a Transformer-based approach (Phase 2, pending access approval).
+
+**Findings**:
+
+1. Custom dominates on every measured axis. The maintenance burden is justified by 4.2 pp recall advantage, 200x speed advantage, and identical precision and FP resilience.
+2. The i.V.m. handling extension (Iteration 9) was the right architectural investment. It produces the only meaningful recall difference between the two extractors.
+3. The OpenLegalData broader-domain coverage (BGB, StGB, EU law, case law) is real but irrelevant to this project's 9-Gesetz scope. Coverage outside the scope is not citation we want to retrieve.
+4. Neither extractor handles administrative rules, EU directives by hyphenated name, or Landesverordnungen. This is a regex-based methodology limitation across both approaches. Future Phase 2 work on extractor_limitation cases will need either dedicated pattern handlers per category or a Transformer-based approach. Adopting OLD-Regex would not have advanced this.
+
+**Output artifact**: ADR-019 records the decision to retain Custom. Status is Accepted (not Proposed) because the decision applies immediately to the existing production code path; no refactor pending.
+
+---
