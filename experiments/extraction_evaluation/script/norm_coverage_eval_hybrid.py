@@ -87,7 +87,7 @@ from datetime import datetime  # noqa: E402
 # model. Useful for sanity-checking the wrapper plumbing before assigning
 # results to the hint vs. baseline comparison.
 USE_HYBRID = True
-MODEL_NAME = "gpt-5.5"
+MODEL_NAME = "mistral-large-2512"
 
 
 # ---------------------------------------------------------------------------

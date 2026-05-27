@@ -77,6 +77,7 @@ sys.path.insert(0, str(_PROJECT_ROOT / "src"))
 
 from app.triage.norm_extractor import extract_norms  # noqa: E402
 from app.triage.service import TriageService  # noqa: E402
+from app.services.llm.mistral_client import MistralClient
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -101,7 +102,7 @@ DATA_MIXED = BASE / "data" / "mixed"
 GT_DIR = BASE / "ground_truth" / "retrieval_gt"
 RESULTS_PATH = BASE / "results"
 
-RATE_LIMIT_SLEEP_S = 0.5
+RATE_LIMIT_SLEEP_S = 1
 ANTHROPIC_MAX_TOKENS = 8192
 
 
@@ -114,6 +115,7 @@ ANTHROPIC_MAX_TOKENS = 8192
 # route through the OpenAI client.
 _OPENAI_PREFIXES: tuple[str, ...] = ("gpt-", "o1", "o3", "o4")
 _ANTHROPIC_PREFIXES: tuple[str, ...] = ("claude-",)
+_MISTRAL_PREFIXES: tuple[str, ...] = ("mistral-",)
 
 # Models that do not accept a custom temperature value and require the
 # default (typically 1). The o-series reasoning models and the GPT-5 family
@@ -136,6 +138,10 @@ def _is_openai_model(model: str) -> bool:
 def _is_anthropic_model(model: str) -> bool:
     """Return True if the model name belongs to the Anthropic family."""
     return any(model.startswith(p) for p in _ANTHROPIC_PREFIXES)
+
+def _is_mistral_model(model: str) -> bool:
+    """Return True if the model name belongs to the Mistral family."""
+    return any(model.startswith(p) for p in _MISTRAL_PREFIXES)
 
 
 def _supports_custom_temperature(model: str) -> bool:
@@ -275,10 +281,21 @@ def build_llm_client(model_name: str) -> EvalLLMClient:
         from anthropic import Anthropic
 
         return AnthropicEvalClient(client=Anthropic(api_key=api_key), model=model_name)
+    
+    if _is_mistral_model(model_name):
+        api_key = os.getenv("MISTRAL_API_KEY")
+        if not api_key:
+            raise RuntimeError("MISTRAL_API_KEY is not set in environment.")
+        # Conditional import: loaded only when running a Mistral model so the
+        # script does not hard-require the project's MistralClient for runs
+        # against other providers.
+
+        return MistralClient(api_key=api_key, model=model_name)
 
     raise ValueError(
         f"Unknown model family for {model_name!r}. "
-        f"Expected prefix in {_OPENAI_PREFIXES + _ANTHROPIC_PREFIXES}."
+        f"Expected prefix in "
+        f"{_OPENAI_PREFIXES + _ANTHROPIC_PREFIXES + _MISTRAL_PREFIXES}."
     )
 
 

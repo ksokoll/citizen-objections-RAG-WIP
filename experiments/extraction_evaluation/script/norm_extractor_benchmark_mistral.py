@@ -91,7 +91,9 @@ from app.triage.service import TriageService  # noqa: E402
 #   "gpt-4o-mini"
 #   "gpt-4o"
 #   "claude-sonnet-4-6"
-MODEL_NAME = "mistral-large-latest"
+#   "mistral-large-2411"
+
+MODEL_NAME = "mistral-large-2512"
 
 BASE = Path("experiments/extraction_evaluation")
 DATA_TYP2 = BASE / "data" / "typ2"
@@ -99,7 +101,7 @@ DATA_MIXED = BASE / "data" / "mixed"
 GT_DIR = BASE / "ground_truth" / "retrieval_gt"
 RESULTS_PATH = BASE / "results"
 
-RATE_LIMIT_SLEEP_S = 0.5
+RATE_LIMIT_SLEEP_S = 3
 ANTHROPIC_MAX_TOKENS = 8192
 
 

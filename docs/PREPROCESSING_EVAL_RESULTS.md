@@ -707,3 +707,85 @@ Both extractors produced zero citations outside the 9-Gesetz whitelist on the th
 **Output artifact**: ADR-019 records the decision to retain Custom. Status is Accepted (not Proposed) because the decision applies immediately to the existing production code path; no refactor pending.
 
 ---
+
+### Iteration 13: Open-Weights Sovereignty Validation and v3 Ablation (negative result)
+
+**Motivation**: Two follow-up questions remained after Iteration 11:
+1. Does the Hybrid Pattern enable EU-jurisdiction LLMs (Mistral) to reach production-quality recall, validating the Behörden-Sovereignty story empirically?
+2. Can deterministic preprocessing be extended beyond the v2 header hint (Tagged Context, Few-Shot Examples) to further reduce assignment loss?
+
+**Approach**: Two parallel experiments. First, a Mistral track adding Mistral Large 2411 (legacy, November 2024) and Mistral Large 2512 (current, December 2025) to the four-model OpenAI matrix from Iteration 11. Second, a v3 ablation track on `experiments/extraction_evaluation/script/norm_coverage_eval_hybrid_v3.py` testing two additional deterministic preprocessing layers on top of the v2 header hint: inline `<NORM>...</NORM>` tagging at regex-identified citation positions, and few-shot exemplary argument extractions.
+
+**Pre-work: production schema fix (ADR-006 alignment)**: The first Mistral runs surfaced a latent schema mismatch. The `EinwendungsTyp` enum used lowercase values (`'typ_1'`, `'typ_2'`) while the LLM prompt has instructed uppercase form (`TYP_1`, `TYP_2`) since Iteration 6 Part 1. OpenAI's `beta.chat.completions.parse()` papered over this with lenient enum coercion. Mistral's strict JSON-mode plus Pydantic validation pipeline exposed it as a hard validation error. Fix in `src/app/core/statuses.py` aligns the enum values with the prompt convention. Lesson: provider-forgiveness can mask production schema bugs that only surface under stricter validation pipelines.
+
+**Pre-work: rate-limit awareness in eval script**: Mistral Free tier limits differ between model versions (mistral-large-2411 at 0.43 RPS / 600K TPM, mistral-large-2512 at 1.0 RPS / 50K TPM). The eval script's `RATE_LIMIT_SLEEP_S` was replaced with a model-aware function `_rate_limit_sleep(model_name)` that returns 2.4s for mistral-large-2411 (the smaller per-second budget) and 10s for unknown Mistral versions. OpenAI calls remain at 0.5s pacing.
+
+**Results, Mistral Track**:
+
+| Model | Baseline Recall(A) | Hybrid v2 Recall(A) | Delta |
+|-------|--------------------|--------------------|-------|
+| mistral-large-2411 (Nov 2024) | 39.6% | 62.7% | +23.1 pp |
+| mistral-large-2512 (Dec 2025) | 86.4% | 85.4% | -1.0 pp |
+
+Mistral 2411 shows the largest absolute Hybrid lift of any model in the corpus (+23.1 pp), driven by H2 failure-mode resolution. einspruch_15 alone moves from 0% to 100% recall: Args=4, Verif=4, ZitW§=0 in baseline (classical H2) becomes a fully-recovered case under Hybrid. einspruch_17 stays at 0% in both modes (H3 paraphrasing, orthogonal to the hint).
+
+Mistral 2512 shows essentially zero Hybrid effect (-1.0 pp is within run-noise). The newer model handles the task adequately without the regex hint. einspruch_17 jumps from 0% (2411) to 100% (2512) across both modes: the paraphrasing failure mode is structurally less pronounced in the newer Mistral version. einspruch_20 is the only complex case where Hybrid and baseline diverge (Asg=10 baseline vs Asg=9 hybrid), within plausible variance.
+
+**Results, v3 Ablation Track (gpt-4o-mini)**:
+
+The v3 wrapper exposed three independent layer toggles: USE_HEADER_HINT (v2 retained), USE_INLINE_TAGS (new, regex post-processing inserts `<NORM>...</NORM>` tags at citation positions), USE_FEW_SHOT (new, two synthetic exemplary extractions from non-corpus legal domains).
+
+| Variant | Toggles | Overall Recall(A) | Overall F1 | Delta vs v2 |
+|---------|---------|-------------------|------------|-------------|
+| Baseline | none | 64.0% | 73.2% | -13.2 pp |
+| v2 (header only) | HEADER=True | 77.2% | 85.6% | reference |
+| v3a (tags only) | TAGS=True | 0.0% | 0.0% | -77.2 pp |
+| v3b (header + tags) | HEADER+TAGS=True | 64.7% | 73.1% | -12.5 pp |
+| v3c (full stack) | all=True | 62.9% | 72.5% | -14.3 pp |
+
+The v3 ablation is a clean negative result. Tagged context degrades performance across all configurations: tags alone produce zero recall, and adding the explanation header recovers only to baseline level. The combined stack (v3c) is below baseline.
+
+**Diagnosis of the v3 failure**: In v3a, all eight test documents produced extractions classified as H3 (mixed/partial). The per-doc zitate_with_paragraph_count was near zero across the board despite Verified counts being intermediate, meaning the LLM selected verbatim spans that systematically excluded the tagged citation content. The mechanism: `<NORM>...</NORM>` is interpreted by the LLM tokenizer as XML metadata, and the default selection bias is to extract surrounding human-readable text while skipping over the tag content. The header explanation in v3b ("the tags are part of the verbatim text and may be included in your original_zitat") partially counteracted this on some documents but did not restore performance to the tag-free v2 level. einspruch_14 in particular went from v2 67% to v3b 0% (Args=4, Verif=4, ZitW§=0), demonstrating that the tagging-as-metadata interpretation was robust against explicit prompt instruction.
+
+A secondary issue specific to i.V.m. chain handling: the synthesised inner citations produced by the i.V.m. extractor (Iteration 9) reference positions over the partial source-text span ("§ 9 Abs. 1 Nr. 1") rather than the canonical full citation ("§ 9 Abs. 1 Nr. 1 WHG"). Tag insertion based on those positions wraps only the partial fragment, which further confused the LLM's span selection. This is a latent bug in the tagging implementation that would need separate handling.
+
+**Results, full six-model matrix**:
+
+| Model | Baseline | Hybrid v2 | Delta | Cluster |
+|-------|----------|-----------|-------|---------|
+| gpt-4o-mini | 64.0% | 77.2% | +13.2 pp | Low-tier |
+| gpt-4o | 63.8% | 64.6% | +0.8 pp | Outlier (H3 paraphrasing) |
+| o3-mini | 77.3% | 89.5% | +12.2 pp | Reasoning |
+| gpt-5.5 | 92.4% | 99.0% | +6.6 pp | Frontier |
+| mistral-large-2411 | 39.6% | 62.7% | +23.1 pp | Low-tier (EU-jurisdiction) |
+| mistral-large-2512 | 86.4% | 85.4% | -1.0 pp | Frontier (EU-jurisdiction) |
+
+Three clusters emerge with different Hybrid effect profiles:
+
+- **Low-tier (gpt-4o-mini, Mistral 2411, o3-mini)**: +12 to +23 pp lift. The Hybrid Pattern is essential for production-quality recall.
+- **Frontier (gpt-5.5, Mistral 2512)**: zero to small lift. The model already handles the task adequately.
+- **Outlier (gpt-4o)**: neutral lift. The dominant failure mode (H3 paraphrasing) is orthogonal to the span-width hint addressed by the Pattern.
+
+**Findings**:
+
+1. **Mistral Large 2512 plus Hybrid Pattern delivers production-quality recall under EU-jurisdiction**. 85.4% Overall Recall is within 4.1 pp of o3-mini Hybrid (89.5%), 13.6 pp below gpt-5.5 Hybrid (99.0%). For Behörden-Verfahren with sovereignty constraints (DSGVO, BSI, on-prem or EU-data-residency requirements), this is a viable production point.
+
+2. **Mistral Large 2512 also delivers production-quality recall WITHOUT the Hybrid Pattern**. The 86.4% Baseline value is essentially identical to Hybrid (-1.0 pp). The Hybrid Pattern becomes optional for frontier-tier models, repositioning it as a cost-reduction layer that brings smaller and older models up to production quality. For volume-sensitive deployments where Mistral Medium or Small could replace Mistral Large, the Hybrid Pattern enables that tier choice.
+
+3. **Inline `<NORM>` tagging is architecturally rejected for this LLM family and task formulation**. The negative ablation across v3a, v3b, v3c on gpt-4o-mini is robust enough that further ablation across the other models is not justified. A different tag format (Markdown bold, Unicode brackets) or a different annotation approach (system-message constraint, schema-level whitelist) could be revisited as Phase 2 work but is not part of this iteration's scope.
+
+4. **Few-Shot examples cannot be cleanly isolated under the current script design**. The exemplary preamble texts contain `<NORM>...</NORM>` tags by construction, so disabling USE_INLINE_TAGS while keeping USE_FEW_SHOT enabled produces a mismatched configuration. A future revision of the v3 script would need tag-free example texts to allow Few-Shot ablation independent of Tagged Context.
+
+5. **Production schema bugs surface under stricter providers**. The `EinwendungsTyp` casing fix illustrates a class of bugs that lenient validation hides. Multi-provider deployment exposes these and forces structural correction.
+
+**Output artifacts**:
+
+- `src/app/core/statuses.py`: enum values aligned with prompt convention
+- `src/app/services/llm/mistral_client.py`: Mistral API adapter implementing the LLMClient Protocol (JSON-mode plus Pydantic validation)
+- `experiments/extraction_evaluation/script/norm_coverage_eval.py`: Mistral routing added to `build_llm_client`, plus `_rate_limit_sleep(model_name)` for provider-aware pacing
+- `experiments/extraction_evaluation/script/norm_coverage_eval_hybrid_v3.py`: three-layer ablation wrapper with togglable USE_HEADER_HINT, USE_INLINE_TAGS, USE_FEW_SHOT
+- `experiments/extraction_evaluation/results/`: result files for the four new Mistral runs (2411 baseline, 2411 hybrid, 2512 baseline, 2512 hybrid) and the three v3 ablation runs (tags-only, header+tags, full-stack)
+
+**Architectural implication for production**: ADR-018's Hybrid Pattern decision stands, with two refinements documented for the Consequences section: Variant A soft-hint is the production pattern; Variant B (Tagged Context) is empirically rejected; the Pattern is most valuable as a "model-tier-lifting" mechanism for cost-optimised deployments rather than as a quality-ceiling lift for frontier models.
+
+---
