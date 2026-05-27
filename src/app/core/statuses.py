@@ -22,7 +22,5 @@ class AbwaegungsStatus(StrEnum):
 
 
 class EinwendungsTyp(StrEnum):
-    """Classification of objection type."""
-
-    TYP_1 = "typ_1"
-    TYP_2 = "typ_2"
+    TYP_1 = "TYP_1"
+    TYP_2 = "TYP_2"
