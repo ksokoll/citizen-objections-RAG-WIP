@@ -17,22 +17,22 @@
 │  - Protocol dependency injection             │
 │  - AuditEvent emission after each step       │
 │  - Failure routing and status mapping        │
-└──┬───────────────┬──────────────┬────────────┘
-   │               │              │
-   ▼               ▼              ▼
-┌──────────┐  ┌─────────┐  ┌──────────────┐
-│ Document │  │  Triage │  │   Response   │
-│Ingestion │  │         │  │   Drafting   │
-└──────────┘  └─────────┘  └──────────────┘
-                                    │
-                    ┌───────────────┘
-                    ▼
-              ┌──────────┐
-              │ AuditLog │
-              └──────────┘
+└──┬───────────┬───────────┬───────────┬────────┘
+   │           │           │           │
+   ▼           ▼           ▼           ▼
+┌────────┐ ┌────────┐ ┌──────────┐ ┌──────────┐
+│Document│ │ Triage │ │Retrieval │ │ Response │
+│Ingest. │ │        │ │          │ │ Drafting │
+└────────┘ └────────┘ └──────────┘ └──────────┘
+                                         │
+                         ┌───────────────┘
+                         ▼
+                   ┌──────────┐
+                   │ AuditLog │
+                   └──────────┘
 ```
 
-**Dependency rule:** Coordinator imports from all four BCs. No BC imports from another BC. AuditLog has no imports from any other BC. All external I/O (LLM, FAISS, file system) sits behind Protocols defined in `core/protocols.py`.
+**Dependency rule:** Coordinator imports from all five BCs. No BC imports from another BC. AuditLog has no imports from any other BC. All external I/O (LLM, FAISS, embedding model, file system) sits behind Protocols defined in `core/protocols.py`.
 
 ---
 
@@ -162,6 +162,7 @@ class ExtrahiertesArgument:
     argument_text: str       # normalized for vector search
     original_zitat: str      # verbatim quote for ADR-006 verification
     catalog_id: str | None   # from predefined enum; None triggers NoMatchEvent
+    zitierte_normen: list[str]  # canonical norm citations for Retrieval
 ```
 
 ### 5. Business Rules
@@ -183,7 +184,7 @@ class ExtrahiertesArgument:
 ### 7. Dependencies
 
 **Skeleton:** `anthropic` (stubbed), stdlib.
-**feat/triage:** `anthropic` (real LLM call with structured output schema).
+**feat/triage:** `openai` or `mistralai` (real LLM call with structured output schema).
 
 ### 8. Test Scenarios
 
@@ -197,39 +198,131 @@ class ExtrahiertesArgument:
 
 ---
 
-## Context 3: ResponseDrafting
+## Context 3: Retrieval
 
 ### 1. Responsibility
-For each verified extracted argument, retrieve relevant legal norms from the domain-specific corpus, generate a Würdigung, verify all §-references, and aggregate into a single Abwägungsstellungnahme draft.
+For each canonical norm citation produced by Triage, resolve the citation to its source Gesetzestext passage. Hybrid resolution: exact-match lookup on the paragraph-level key first, vector-similarity fallback over the statute corpus for granularity-drift cases.
 
 ### 2. Why It's Separate
-ResponseDrafting owns the RAG pipeline: per-argument retrieval, LLM generation, and §-reference verification. Its failure modes (retrieval failure, generation failure, verification failure) are independent of argument extraction. The retrieval logic changes at a different rate from classification logic. This is the primary learning context for the portfolio.
+Resolving a citation to its source law has a distinct change axis from both argument extraction and generation. The statute corpus, the retrieval strategy, and the embedding model change at a different rate from classification logic (Triage) or generation logic (ResponseDrafting). A failed resolution is a `RetrievalError`, distinct from `TriageError` and `GenerationError`. Keeping retrieval separate lets Triage and ResponseDrafting mock the `Retriever` Protocol in their unit tests, so neither acquires a dependency on the vector index, the embedding model, or the statute XML. The retrieval strategy can be swapped without touching the contexts on either side. See ADR-020.
+
+### 3. Interface Contract
+
+```python
+def resolve(citations: list[str]) -> list[NormWithSource]:
+    """Resolve canonical norm citations to their source Gesetzestext.
+
+    For each citation, attempt exact-match lookup on the paragraph-level
+    key, then fall back to vector similarity with Gesetz-suffix filtering.
+
+    Assumes:
+        The statute index is loaded and non-empty.
+        Citations are canonical strings from Triage
+        (e.g. "§ 9 Abs. 1 Nr. 1 WHG").
+
+    Does NOT check:
+        Whether the citation is legally meaningful.
+        Whether the cited paragraph is the correct one for the argument.
+
+    Raises:
+        RetrievalError: If the index is not loaded or the vector
+            query fails.
+    """
+```
+
+### 4. Input / Output
+
+```python
+# Input
+citations: list[str]  # canonical norm strings from Triage's zitierte_normen
+
+# Output
+list[NormWithSource]
+
+@dataclass(frozen=True)
+class NormWithSource:
+    canonical_citation: str    # "§ 9 Abs. 1 Nr. 1 WHG" (as cited)
+    paragraph_key: str         # "§ 9 WHG" (resolved paragraph level)
+    source_text: str           # full Gesetzestext of the paragraph
+    method: str                # "exact" | "vector"
+    confidence: float | None   # cosine score for vector, None for exact
+    resolved: bool             # False if neither method found a match
+```
+
+### 5. Business Rules
+
+1. **Hybrid resolution order is fixed.** Exact-match on the paragraph-level key is attempted first. Vector-similarity fallback runs only on an exact-match miss. Exact wins because it is unambiguous and sub-millisecond.
+2. **Exact-match normalises the citation to paragraph level.** "§ 9 Abs. 1 Nr. 1 WHG" is reduced to the key "§ 9 WHG" for lookup. A citation more specific than a paragraph still resolves to the full paragraph text. Resolution granularity is the paragraph, not the Absatz or Nummer.
+3. **Vector fallback filters by Gesetz suffix.** The top-k candidates are restricted to the cited statute, preventing a § 9 from one law matching a § 9 query for another.
+4. **The corpus is the nine local XML files.** They represent the current Behörde state. One loader, one index, single source of truth for legal text. No external fetch at resolution time.
+5. **An unresolved citation is a valid outcome.** A citation that matches neither exactly nor by vector returns `NormWithSource(resolved=False)`. This is not a `RetrievalError`. Downstream decides how to handle an unresolved norm.
+6. **Resolution is deterministic.** Exact-match is dictionary lookup. Vector embedding runs at temperature-free inference. The same citation against the same corpus resolves identically across runs.
+
+*Note: In the skeleton, the index can be built from a small fixture corpus. The full nine-statute index builds at startup from the XML directory.*
+
+### 6. Error Strategy
+
+- Index not loaded or empty at resolve time: raise `RetrievalError`.
+- Embedding model load failure (startup): raise `RetrievalError`.
+- Vector query failure: raise `RetrievalError`.
+- Unresolved citation: return `NormWithSource(resolved=False)`. Valid outcome, not an error.
+- Empty citation list: return `[]`.
+
+### 7. Dependencies
+
+**This iteration:** `faiss-cpu`, `numpy`, `sentence-transformers` (multilingual-e5-large), stdlib (`xml.etree`, `pathlib`, `re`).
+
+### 8. Test Scenarios
+
+| Scenario | Input | Expected Output |
+|---|---|---|
+| Exact-match hit | `["§ 9 WHG"]` | `NormWithSource(method="exact", resolved=True)` |
+| Sub-paragraph citation | `["§ 9 Abs. 1 Nr. 1 WHG"]` | Resolves to `§ 9 WHG` paragraph text, `method="exact"` |
+| Vector fallback (i.V.m. inner) | citation not keyed in index | `method="vector"`, `confidence` set, `resolved=True` |
+| Gesetz-suffix isolation | `["§ 9 WHG"]` with a § 9 BauGB in corpus | Resolves to WHG, never the BauGB § 9 |
+| Unresolved citation | citation for a paragraph absent from corpus | `NormWithSource(resolved=False)` |
+| Empty input | `[]` | `[]` |
+| Index not loaded | resolve called before build | `RetrievalError` raised |
+
+---
+
+## Context 4: ResponseDrafting
+
+### 1. Responsibility
+For each verified extracted argument, generate a Würdigung grounded in the resolved Gesetzestext supplied by Retrieval, verify all §-references, and aggregate into a single Abwägungsstellungnahme draft. Optionally retrieve additional semantic context chunks for generation, distinct from the deterministic citation resolution performed by the Retrieval context.
+
+### 2. Why It's Separate
+ResponseDrafting owns generation and §-reference verification. Its failure modes (generation failure, verification failure) are independent of citation resolution (Retrieval) and argument extraction (Triage). The generation logic and prompt strategy change at a different rate from the retrieval strategy. This is the primary generation context for the portfolio.
+
+The deterministic resolution of cited norms to their source text was extracted into the Retrieval context (ADR-020). ResponseDrafting consumes the resolved norms rather than performing that resolution itself. Any semantic context retrieval that ResponseDrafting still performs is generation-support retrieval (finding related passages to ground the LLM), conceptually distinct from the citation-to-text resolution that Retrieval owns.
 
 ### 3. Interface Contract
 
 ```python
 def draft(
     triage_result: TriageResult,
+    resolved_norms: list[NormWithSource],
     clean_text: str,
     document_id: str,
 ) -> Abwaegungsstellungnahme:
-    """Retrieve and generate per argument, aggregate into one draft.
+    """Generate per argument grounded in resolved norms, aggregate into one draft.
 
     For each ExtrahiertesArgument with a valid catalog_id:
-    - Retrieve top-k chunks from the domain-specific corpus
-    - Generate a Würdigung grounded in retrieved context
-    - Verify all §-references against retrieved chunk_ids
+    - Take the resolved Gesetzestext for the argument's cited norms
+      from resolved_norms (produced by the Retrieval context)
+    - Generate a Würdigung grounded in that source text
+    - Verify all §-references against the resolved norms
 
     Assumes:
         triage_result.extracted_arguments is non-empty.
-        The norm index is loaded and non-empty.
+        resolved_norms covers the citations of the processed arguments.
 
     Does NOT check:
         Whether arguments were correctly extracted.
+        Whether citations were correctly resolved.
         Whether the Sachbearbeiter will approve the draft.
 
     Raises:
-        RetrievalError: If the FAISS index query fails.
         GenerationError: If the LLM call fails after retries.
     """
 ```
@@ -239,6 +332,7 @@ def draft(
 ```python
 # Input
 triage_result: TriageResult
+resolved_norms: list[NormWithSource]  # from the Retrieval context
 clean_text: str
 document_id: str
 
@@ -253,37 +347,96 @@ Abwaegungsstellungnahme  # Always DRAFT. Never APPROVED.
 ### 5. Business Rules
 
 1. **ResponseDrafting never produces APPROVED status.**
-2. **Processing is per argument.** Each `ExtrahiertesArgument` with a valid `catalog_id` gets its own retrieval call scoped to its domain corpus partition.
+2. **Processing is per argument.** Each `ExtrahiertesArgument` with a valid `catalog_id` is generated using the resolved Gesetzestext for its cited norms.
 3. **Arguments with `catalog_id=None` are skipped.** They were already handled by `NoMatchEvent` in Triage.
-4. **§-reference verification per ADR-006.** Any unverified reference sets `wuerdigungs_status=UNTERDRUECKT_UNVERIFIED` for the entire draft.
+4. **§-reference verification per ADR-006.** Any unverified reference sets `wuerdigungs_status=UNTERDRUECKT_UNVERIFIED` for the entire draft. Verification is against the resolved norms from Retrieval.
 5. **Reproducibility fields are mandatory.** `model_version`, `prompt_version`, `retrieval_config_hash` must be set on every returned object.
-6. **Generation strategy differs by `EinwendungsTyp`.** TYP_1: concise plain-language Würdigung. TYP_2: precise legal Würdigung with explicit norm references. Same retrieval depth, different prompt.
+6. **Generation strategy differs by `EinwendungsTyp`.** TYP_1: concise plain-language Würdigung. TYP_2: precise legal Würdigung with explicit norm references. Same source depth, different prompt.
+7. **An unresolved norm degrades its argument.** If an argument's cited norm came back with `resolved=False` from Retrieval, the argument cannot be grounded and its §-reference verification fails, setting the draft status accordingly.
 
-*Note: In the skeleton, LLM is stubbed and returns a fixed string. Verification always passes. Hybrid retrieval (BM25 + RRF) introduced in `feat/hybrid-retrieval`.*
+*Note: In the skeleton, LLM is stubbed and returns a fixed string. Verification always passes.*
 
 ### 6. Error Strategy
 
-- FAISS query failure: raise `RetrievalError`.
 - LLM call failure after retries: raise `GenerationError`.
 - Unverified §-reference: set `wuerdigungs_status=UNTERDRUECKT_UNVERIFIED`, return object. Valid outcome.
+- Unresolved norm for an argument: the argument's verification fails, draft status reflects it. Not a `GenerationError`.
 - All arguments skipped (all `catalog_id=None`): return draft with `wuerdigungs_status=KEIN_TREFFER`.
 
 ### 7. Dependencies
 
-**Skeleton:** `faiss-cpu`, `numpy`, `openai` (embeddings), `anthropic` (stubbed).
-**feat/hybrid-retrieval:** `rank-bm25`.
-**feat/verification:** `re` (stdlib).
+**Skeleton:** `anthropic` (stubbed).
+**feat/generation:** `openai` or `mistralai` (real LLM call), `re` (stdlib, §-reference verification).
 
 ### 8. Test Scenarios
 
 | Scenario | Input | Expected Output |
 |---|---|---|
-| Happy path (skeleton stub) | Valid `TriageResult` with one argument | `Abwaegungsstellungnahme` with `status=DRAFT`, all reproducibility fields set |
-| Two arguments, different domains | BauGB + BauNVO arguments | Two retrieval calls, results aggregated |
+| Happy path (skeleton stub) | Valid `TriageResult` + resolved norms for one argument | `Abwaegungsstellungnahme` with `status=DRAFT`, all reproducibility fields set |
+| Two arguments, different norms | BauGB + BauNVO arguments with resolved norms | Two generations, results aggregated |
 | TYP_1 input | `einwendungs_typ=TYP_1` | Plain-language tone in generated Würdigung |
 | TYP_2 input | `einwendungs_typ=TYP_2` | Legal precision tone, explicit norm references |
 | Unverified §-reference | LLM output with hallucinated paragraph | `wuerdigungs_status=UNTERDRUECKT_UNVERIFIED` |
+| Unresolved norm input | argument whose norm has `resolved=False` | argument's verification fails, draft status reflects it |
 | All arguments catalog_id=None | Triage returned only unmatched arguments | `wuerdigungs_status=KEIN_TREFFER` |
+
+---
+
+## Context 5: AuditLog
+
+### 1. Responsibility
+Record an append-only trace of the pipeline. After each BC step the Coordinator emits an `AuditEvent`; AuditLog persists it. The log must remain writable even when other contexts fail, so that failures are themselves recorded.
+
+### 2. Why It's Separate
+AuditLog has a different failure mode from the domain contexts: a write failure must not suppress the domain result. It has a different persistence contract (append-only, no updates or deletes) and a different lifecycle (it must be writable precisely when other BCs fail). These three independent Disintegrators justify the boundary rather than folding audit into the Coordinator.
+
+### 3. Interface Contract
+
+```python
+def append(event: AuditEvent) -> None:
+    """Append a single audit event to the store.
+
+    Append-only: an event_id may be written at most once.
+
+    Assumes:
+        The audit store is writable.
+
+    Raises:
+        AuditLogError: If the store write fails or the event_id
+            already exists.
+    """
+
+def query(
+    einwendungs_id: str | None = None,
+    wuerdigungs_status: str | None = None,
+) -> list[AuditEvent]:
+    """Return events matching the given filters, in write order."""
+```
+
+### 4. Input / Output
+
+```python
+# Input (append)
+event: AuditEvent
+
+# Output (query)
+list[AuditEvent]  # in write order
+```
+
+### 5. Business Rules
+
+1. **Append-only.** Events are never updated or deleted. An `event_id` is unique; a second write of the same ID is an error.
+2. **Write failure does not suppress domain results.** An `AuditLogError` is logged at ERROR level; the pipeline result is returned to the caller regardless.
+3. **Writable on failure.** AuditLog must accept events that record the failure of other contexts. It cannot depend on any domain context succeeding.
+
+### 6. Error Strategy
+
+- Store write failure: raise `AuditLogError`. The Coordinator logs it at ERROR and returns the pipeline result regardless.
+- Duplicate `event_id`: raise `AuditLogError` on the second write.
+
+### 7. Dependencies
+
+**Skeleton:** stdlib (`json`, `pathlib`). No external services.
 
 ### 8. Test Scenarios
 
@@ -305,16 +458,18 @@ Abwaegungsstellungnahme  # Always DRAFT. Never APPROVED.
 ```
 pipeline.py (Coordinator)  →  DocumentIngestion   ✅
 pipeline.py (Coordinator)  →  Triage              ✅
+pipeline.py (Coordinator)  →  Retrieval           ✅
 pipeline.py (Coordinator)  →  ResponseDrafting    ✅
 pipeline.py (Coordinator)  →  AuditLog            ✅
 DocumentIngestion          →  Triage              ❌
-Triage                     →  ResponseDrafting    ❌
+Triage                     →  Retrieval           ❌
+Retrieval                  →  ResponseDrafting    ❌
 Any BC                     →  pipeline.py         ❌
 ```
 
 ### Data Flow
 
-BCs communicate only through input arguments and return values passed through the Coordinator. No shared state. No global singletons. The Coordinator owns the flow; the BCs own the logic.
+BCs communicate only through input arguments and return values passed through the Coordinator. No shared state. No global singletons. The Coordinator owns the flow; the BCs own the logic. The Coordinator calls Triage, collects the canonical citations from the extracted arguments, passes them to Retrieval, then passes the resolved norms to ResponseDrafting.
 
 ### Error Propagation
 
@@ -326,6 +481,8 @@ RetrievalError    →  Pipeline aborted, AuditEvent(RETRIEVAL_FAILED) emitted
 GenerationError   →  Pipeline aborted, AuditEvent(GENERATION_FAILED) emitted
 AuditLogError     →  Logged at ERROR, pipeline result returned regardless
 ```
+
+Note: `RetrievalError` originates from the Retrieval context (citation resolution). An unresolved citation is not a `RetrievalError`; it is a valid `NormWithSource(resolved=False)` that degrades the downstream argument in ResponseDrafting.
 
 ### Testing Strategy
 
@@ -340,8 +497,11 @@ E2E smoke test:     Full pipeline with LLM stub. One test. Asserts DRAFT returne
 
 ## Design Decisions
 
-**Why four BCs and not three?**
+**Why is AuditLog a separate BC and not a Coordinator service?**
 AuditLog could be a service layer within the Coordinator rather than a separate BC. Separation was chosen because AuditLog has a different failure mode (write failure must not suppress domain results), a different persistence contract (append-only), and a different lifecycle (it must be writable when other BCs fail). These are three independent Disintegrators that justify the boundary.
+
+**Why is Retrieval separate from ResponseDrafting?**
+Citation resolution (norm to source text) and generation-context retrieval are two different steps with two different change axes. Resolution is deterministic (exact-match plus vector fallback over a fixed statute corpus). Generation is stochastic (LLM call with a prompt strategy). Binding them would couple the statute corpus and embedding model to the generation prompt logic. Separating them lets ResponseDrafting mock the resolved norms in its tests and lets the retrieval strategy evolve independently. See ADR-020.
 
 **Why is the Coordinator synchronous?**
 The Sachbearbeiter does not wait on a queue: they submit a document and expect a draft. The end-to-end pipeline is fast enough for synchronous execution (LLM call dominates latency). Async would add complexity without reducing wait time for the user. ADR candidate if throughput requirements change.
