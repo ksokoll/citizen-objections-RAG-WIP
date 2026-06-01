@@ -27,22 +27,6 @@ class ExtrahiertesArgument:
 
 
 @dataclass(frozen=True)
-class RetrievedChunk:
-    """A single document chunk returned by the RAG retriever.
-
-    paragraph_id is the canonical form used for §-reference verification
-    (e.g. baugb_§3_abs1). Score is the relevance score from the retriever,
-    normalised to [0, 1] via L2-normalised inner product (ADR-003).
-    """
-
-    chunk_id: str
-    paragraph_id: str
-    gesetz: str
-    text: str
-    score: float
-
-
-@dataclass(frozen=True)
 class Einwendung:
     """Raw citizen objection as received at the system boundary.
 

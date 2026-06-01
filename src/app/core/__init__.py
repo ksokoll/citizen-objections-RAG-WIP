@@ -3,7 +3,6 @@
 from .entities import (
     Einwendung,
     ExtrahiertesArgument,
-    RetrievedChunk,
 )
 from .events import AuditEvent, AuditEventType
 from .failures import (
@@ -16,10 +15,8 @@ from .failures import (
 # from .prompts import PromptTemplate
 from .protocols import (
     AuditEventPublisherProtocol,
-    EmbedderProtocol,
     LLMClientProtocol,
     Retriever,
-    RetrieverProtocol,
 )
 from .results import IngestionResult, TriageResult
 from .statuses import AbwaegungsStatus, EinwendungsTyp, WuerdigungsStatus
@@ -32,7 +29,6 @@ __all__ = [
     # Entities
     "Einwendung",
     "ExtrahiertesArgument",
-    "RetrievedChunk",
     # Results
     "IngestionResult",
     "TriageResult",
@@ -46,8 +42,6 @@ __all__ = [
     "AuditEventType",
     # Protocols
     "AuditEventPublisherProtocol",
-    "EmbedderProtocol",
     "LLMClientProtocol",
     "Retriever",
-    "RetrieverProtocol",
 ]

@@ -5,7 +5,6 @@ from pydantic import BaseModel
 
 from app.retrieval.entities import NormWithSource
 
-from .entities import RetrievedChunk
 from .events import AuditEvent, AuditEventType
 
 T = TypeVar("T", bound=BaseModel)
@@ -41,33 +40,6 @@ class Retriever(Protocol):
     def resolve(self, citations: list[str]) -> list[NormWithSource]:
         """Resolve canonical norm citations to their source Gesetzestext."""
         ...
-
-
-class EmbedderProtocol(Protocol):
-    """Text embedding generation.
-
-    Returns a normalized embedding vector for the given text. Embedding
-    dimension is implementation-dependent and should be documented by
-    the concrete implementation (typically 384, 768, or 1536).
-    """
-
-    def embed(self, text: str) -> list[float]: ...
-
-
-class RetrieverProtocol(Protocol):
-    """Per-corpus retrieval for legal norm chunks.
-
-    Implementations are responsible for any internal embedding step.
-    The query string is passed verbatim to allow both sparse (BM25)
-    and dense (FAISS) ranking inside the implementation.
-    """
-
-    def retrieve(
-        self,
-        query: str,
-        partition: str,
-        top_k: int = 5,
-    ) -> list[RetrievedChunk]: ...
 
 
 class AuditEventPublisherProtocol(Protocol):
