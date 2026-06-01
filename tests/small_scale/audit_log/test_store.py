@@ -130,7 +130,7 @@ def test_event_survives_roundtrip(tmp_path: Path) -> None:
     ts = datetime(2024, 6, 15, 12, 0, 0, tzinfo=UTC)
     original = _make_event(
         einwendungs_id="EW-042",
-        event_type=AuditEventType.ENTWURF_GENERIERT,
+        event_type=AuditEventType.BRIEFING_ERSTELLT,
         timestamp=ts,
         payload={"confidence": 0.95, "model": "claude-3"},
     )

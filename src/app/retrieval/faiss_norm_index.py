@@ -17,7 +17,7 @@ from __future__ import annotations
 import faiss
 import numpy as np
 
-from app.retrieval.domain.entities import GesetzParagraph
+from app.retrieval.entities import GesetzParagraph
 
 
 class FaissNormIndex:

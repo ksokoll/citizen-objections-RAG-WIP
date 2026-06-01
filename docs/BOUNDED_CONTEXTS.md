@@ -1,4 +1,4 @@
-# Bounded Contexts — citizen-objections-RAG
+# Bounded Contexts: citizen-objections-RAG
 
 ---
 
@@ -21,8 +21,8 @@
    │           │           │           │
    ▼           ▼           ▼           ▼
 ┌────────┐ ┌────────┐ ┌──────────┐ ┌──────────┐
-│Document│ │ Triage │ │Retrieval │ │ Response │
-│Ingest. │ │        │ │          │ │ Drafting │
+│Document│ │ Triage │ │Retrieval │ │ Briefing │
+│Ingest. │ │        │ │          │ │          │
 └────────┘ └────────┘ └──────────┘ └──────────┘
                                          │
                          ┌───────────────┘
@@ -118,7 +118,7 @@ class IngestionResult:
 Extract all discrete legal arguments from the clean text, classify each against the predefined catalog, and return a structured argument list for per-argument retrieval and generation.
 
 ### 2. Why It's Separate
-Argument extraction requires its own LLM call with a domain-specific schema and catalog constraint. The extraction logic, catalog definition, and failure modes are distinct from retrieval and generation. A failed extraction is a `TriageError`; a failed generation is a `GenerationError`. Catalog updates happen here without touching ResponseDrafting.
+Argument extraction requires its own LLM call with a domain-specific schema and catalog constraint. The extraction logic, catalog definition, and failure modes are distinct from retrieval and generation. A failed extraction is a `TriageError`, distinct from the failure modes of the downstream contexts. Catalog updates happen here without touching Briefing.
 
 ### 3. Interface Contract
 
@@ -201,10 +201,10 @@ class ExtrahiertesArgument:
 ## Context 3: Retrieval
 
 ### 1. Responsibility
-For each canonical norm citation produced by Triage, resolve the citation to its source Gesetzestext passage. Hybrid resolution: exact-match lookup on the paragraph-level key first, vector-similarity fallback over the statute corpus for granularity-drift cases.
+For each canonical norm citation produced by Triage, resolve the citation to its source Gesetzestext passage. Resolution is exact-match only (ADR-021): a dictionary lookup on the paragraph-level key over the statute corpus. The paragraph-level normalisation absorbs sub-paragraph granularity drift, so no vector fallback is needed in production.
 
 ### 2. Why It's Separate
-Resolving a citation to its source law has a distinct change axis from both argument extraction and generation. The statute corpus, the retrieval strategy, and the embedding model change at a different rate from classification logic (Triage) or generation logic (ResponseDrafting). A failed resolution is a `RetrievalError`, distinct from `TriageError` and `GenerationError`. Keeping retrieval separate lets Triage and ResponseDrafting mock the `Retriever` Protocol in their unit tests, so neither acquires a dependency on the vector index, the embedding model, or the statute XML. The retrieval strategy can be swapped without touching the contexts on either side. See ADR-020.
+Resolving a citation to its source law has a distinct change axis from both argument extraction and briefing assembly. The statute corpus and the resolution strategy change at a different rate from classification logic (Triage) or the deterministic assembly logic (Briefing). A failed resolution is a `RetrievalError`, distinct from `TriageError`. Keeping retrieval separate lets the contexts on either side mock the `Retriever` Protocol in their unit tests, so neither acquires a dependency on the statute XML or the experimental embedding code. The resolution strategy can be swapped without touching the contexts on either side. See ADR-020 and ADR-021.
 
 ### 3. Interface Contract
 
@@ -212,11 +212,11 @@ Resolving a citation to its source law has a distinct change axis from both argu
 def resolve(citations: list[str]) -> list[NormWithSource]:
     """Resolve canonical norm citations to their source Gesetzestext.
 
-    For each citation, attempt exact-match lookup on the paragraph-level
-    key, then fall back to vector similarity with Gesetz-suffix filtering.
+    For each citation, perform an exact-match lookup on the
+    paragraph-level key over the loaded statute corpus.
 
     Assumes:
-        The statute index is loaded and non-empty.
+        The statute corpus is loaded and non-empty.
         Citations are canonical strings from Triage
         (e.g. "§ 9 Abs. 1 Nr. 1 WHG").
 
@@ -225,8 +225,7 @@ def resolve(citations: list[str]) -> list[NormWithSource]:
         Whether the cited paragraph is the correct one for the argument.
 
     Raises:
-        RetrievalError: If the index is not loaded or the vector
-            query fails.
+        RetrievalError: If the corpus is not loaded.
     """
 ```
 
@@ -244,33 +243,32 @@ class NormWithSource:
     canonical_citation: str    # "§ 9 Abs. 1 Nr. 1 WHG" (as cited)
     paragraph_key: str         # "§ 9 WHG" (resolved paragraph level)
     source_text: str           # full Gesetzestext of the paragraph
-    method: str                # "exact" | "vector"
-    confidence: float | None   # cosine score for vector, None for exact
-    resolved: bool             # False if neither method found a match
+    method: str                # "exact" | "none"
+    confidence: float | None   # None for exact-match resolution
+    resolved: bool             # False if the key was not in the corpus
 ```
 
 ### 5. Business Rules
 
-1. **Hybrid resolution order is fixed.** Exact-match on the paragraph-level key is attempted first. Vector-similarity fallback runs only on an exact-match miss. Exact wins because it is unambiguous and sub-millisecond.
-2. **Exact-match normalises the citation to paragraph level.** "§ 9 Abs. 1 Nr. 1 WHG" is reduced to the key "§ 9 WHG" for lookup. A citation more specific than a paragraph still resolves to the full paragraph text. Resolution granularity is the paragraph, not the Absatz or Nummer.
-3. **Vector fallback filters by Gesetz suffix.** The top-k candidates are restricted to the cited statute, preventing a § 9 from one law matching a § 9 query for another.
-4. **The corpus is the nine local XML files.** They represent the current Behörde state. One loader, one index, single source of truth for legal text. No external fetch at resolution time.
-5. **An unresolved citation is a valid outcome.** A citation that matches neither exactly nor by vector returns `NormWithSource(resolved=False)`. This is not a `RetrievalError`. Downstream decides how to handle an unresolved norm.
-6. **Resolution is deterministic.** Exact-match is dictionary lookup. Vector embedding runs at temperature-free inference. The same citation against the same corpus resolves identically across runs.
+1. **Resolution is exact-match only (ADR-021).** The paragraph-level canonical key is looked up in the corpus dictionary. There is no vector fallback in the production path: the measured exact-match recall was 25/25 on the Phase A ground truth, and the vector fallback both resolved zero real citations and produced a confident-wrong match on an out-of-corpus probe.
+2. **Exact-match normalises the citation to paragraph level.** "§ 9 Abs. 1 Nr. 1 WHG" is reduced to the key "§ 9 WHG" for lookup. A citation more specific than a paragraph still resolves to the full paragraph text. Resolution granularity is the paragraph, not the Absatz or Nummer. This normalisation absorbs the granularity drift a vector fallback was designed to catch.
+3. **The key includes the Gesetz suffix.** "§ 9 WHG" and "§ 9 BauGB" are distinct keys, so a section number in one statute never matches a query for another.
+4. **The corpus is the nine local XML files.** They represent the current Behörde state. One loader, one exact-match dictionary, single source of truth for legal text. No external fetch at resolution time.
+5. **An unresolved citation is a valid outcome.** A citation whose paragraph-level key is absent from the corpus returns `NormWithSource(resolved=False)` with `method="none"`. This is not a `RetrievalError`. Downstream decides how to handle an unresolved norm.
+6. **Resolution is deterministic.** Exact-match is a dictionary lookup. The same citation against the same corpus resolves identically across runs.
 
-*Note: In the skeleton, the index can be built from a small fixture corpus. The full nine-statute index builds at startup from the XML directory.*
+*Note: In the skeleton, the dictionary can be built from a small fixture corpus. The full nine-statute corpus builds at startup from the XML directory. The E5Embedder and FaissNormIndex are retained under `experiments/` as reversible experimental reference only; they are not loaded by the production service.*
 
 ### 6. Error Strategy
 
-- Index not loaded or empty at resolve time: raise `RetrievalError`.
-- Embedding model load failure (startup): raise `RetrievalError`.
-- Vector query failure: raise `RetrievalError`.
+- Corpus not loaded or empty at resolve time: raise `RetrievalError`.
 - Unresolved citation: return `NormWithSource(resolved=False)`. Valid outcome, not an error.
 - Empty citation list: return `[]`.
 
 ### 7. Dependencies
 
-**This iteration:** `faiss-cpu`, `numpy`, `sentence-transformers` (multilingual-e5-large), stdlib (`xml.etree`, `pathlib`, `re`).
+**Production:** stdlib only (`xml.etree`, `pathlib`, `re`). Exact-match resolution needs no embedding model or vector index.
+**Experimental reference (not in the production path):** `faiss-cpu`, `numpy`, `sentence-transformers` (multilingual-e5-large), retained under `experiments/` per ADR-021.
 
 ### 8. Test Scenarios
 
@@ -278,52 +276,57 @@ class NormWithSource:
 |---|---|---|
 | Exact-match hit | `["§ 9 WHG"]` | `NormWithSource(method="exact", resolved=True)` |
 | Sub-paragraph citation | `["§ 9 Abs. 1 Nr. 1 WHG"]` | Resolves to `§ 9 WHG` paragraph text, `method="exact"` |
-| Vector fallback (i.V.m. inner) | citation not keyed in index | `method="vector"`, `confidence` set, `resolved=True` |
 | Gesetz-suffix isolation | `["§ 9 WHG"]` with a § 9 BauGB in corpus | Resolves to WHG, never the BauGB § 9 |
-| Unresolved citation | citation for a paragraph absent from corpus | `NormWithSource(resolved=False)` |
+| Unresolved citation | citation for a paragraph absent from corpus | `NormWithSource(resolved=False, method="none")` |
 | Empty input | `[]` | `[]` |
-| Index not loaded | resolve called before build | `RetrievalError` raised |
+| Corpus not loaded | resolve called before build | `RetrievalError` raised |
 
 ---
 
-## Context 4: ResponseDrafting
+## Context 4: Briefing
 
 ### 1. Responsibility
-For each verified extracted argument, generate a Würdigung grounded in the resolved Gesetzestext supplied by Retrieval, verify all §-references, and aggregate into a single Abwägungsstellungnahme draft. Optionally retrieve additional semantic context chunks for generation, distinct from the deterministic citation resolution performed by the Retrieval context.
+Assemble a per-argument briefing for the Sachbearbeiter. For each extracted argument, pair the argument with the source Gesetzestext of its resolved norms and derive a status, then aggregate the per-argument entries into a single `WuerdigungsBriefing`. This is a deterministic assembly: no LLM call, no generation, no §-reference verification gate. The briefing supports the human assessment; it does not perform it.
 
 ### 2. Why It's Separate
-ResponseDrafting owns generation and §-reference verification. Its failure modes (generation failure, verification failure) are independent of citation resolution (Retrieval) and argument extraction (Triage). The generation logic and prompt strategy change at a different rate from the retrieval strategy. This is the primary generation context for the portfolio.
+Briefing owns the deterministic assembly of arguments and their resolved norm text into a Sachbearbeiter-facing artifact. Its concern (presentation and status derivation) has a distinct change axis from citation resolution (Retrieval) and argument extraction (Triage). It can evolve the briefing shape and the status rules without touching either neighbour.
 
-The deterministic resolution of cited norms to their source text was extracted into the Retrieval context (ADR-020). ResponseDrafting consumes the resolved norms rather than performing that resolution itself. Any semantic context retrieval that ResponseDrafting still performs is generation-support retrieval (finding related passages to ground the LLM), conceptually distinct from the citation-to-text resolution that Retrieval owns.
+The resolution of cited norms to their source text is owned by the Retrieval context (ADR-020). Briefing consumes the resolved norms supplied by the Coordinator rather than performing that resolution itself. Per ADR-022, the final stage produces a deterministic briefing rather than an LLM-generated Würdigung, because the case facts (the Akte) are outside this system's boundary.
 
 ### 3. Interface Contract
 
 ```python
-def draft(
-    triage_result: TriageResult,
-    resolved_norms: list[NormWithSource],
-    clean_text: str,
+def assemble(
     document_id: str,
-) -> Abwaegungsstellungnahme:
-    """Generate per argument grounded in resolved norms, aggregate into one draft.
+    einwendungs_typ: str,
+    arguments: list[dict],
+    norms_by_argument: dict[str, list[ResolvedNormEntry]],
+) -> WuerdigungsBriefing:
+    """Assemble a per-argument briefing from arguments and resolved norms.
 
-    For each ExtrahiertesArgument with a valid catalog_id:
-    - Take the resolved Gesetzestext for the argument's cited norms
-      from resolved_norms (produced by the Retrieval context)
-    - Generate a Würdigung grounded in that source text
-    - Verify all §-references against the resolved norms
+    For each argument:
+    - Pair it with the resolved norm entries for its argument_id
+      from norms_by_argument (mapped by the Coordinator from the
+      Retrieval context's NormWithSource into ResolvedNormEntry)
+    - Derive a BriefingStatus from the catalog match and the
+      resolution state of the cited norms
+    - Set requires_case_context for entries the Sachbearbeiter must
+      still weigh against the Akte
 
     Assumes:
-        triage_result.extracted_arguments is non-empty.
-        resolved_norms covers the citations of the processed arguments.
+        arguments is a list of plain dicts with keys argument_id,
+        argument_text, original_zitat, einwendungs_typ, catalog_id.
+        norms_by_argument maps each argument_id to its resolved norms.
 
     Does NOT check:
         Whether arguments were correctly extracted.
         Whether citations were correctly resolved.
-        Whether the Sachbearbeiter will approve the draft.
+        Whether the cited norm is the legally correct one.
 
-    Raises:
-        GenerationError: If the LLM call fails after retries.
+    Returns:
+        A WuerdigungsBriefing. Assembly does not fail with a
+        generation error; an unresolved norm is a valid status,
+        not an exception.
     """
 ```
 
@@ -331,54 +334,71 @@ def draft(
 
 ```python
 # Input
-triage_result: TriageResult
-resolved_norms: list[NormWithSource]  # from the Retrieval context
-clean_text: str
 document_id: str
+einwendungs_typ: str                                  # document-level classification
+arguments: list[dict]                                 # plain dicts: argument_id,
+                                                      # argument_text, original_zitat,
+                                                      # einwendungs_typ, catalog_id
+norms_by_argument: dict[str, list[ResolvedNormEntry]]  # resolved norms per argument,
+                                                      # supplied by the Coordinator
+                                                      # (mapped from Retrieval's
+                                                      # NormWithSource)
 
 # Output
-Abwaegungsstellungnahme  # Always DRAFT. Never APPROVED.
-                         # wuerdigungs_status reflects worst-case
-                         # across all arguments: if any argument
-                         # has an unverified §-reference, the full
-                         # Würdigung is UNTERDRUECKT_UNVERIFIED.
+@dataclass
+class WuerdigungsBriefing:
+    document_id: str
+    einwendungs_typ: str
+    entries: list[BriefingEntry]
+    limitation_note: str            # states the Akte is outside the boundary
+
+@dataclass
+class BriefingEntry:
+    argument_id: str
+    argument_text: str
+    original_zitat: str
+    einwendungs_typ: str
+    catalog_id: str | None
+    norms: list[ResolvedNormEntry]
+    status: BriefingStatus
+    requires_case_context: bool     # True for every BRIEFING_READY entry
+
+# BriefingStatus values:
+#   BRIEFING_READY   catalog match and all cited norms resolved
+#   NORM_UNRESOLVED  catalog match but one or more cited norms unresolved
+#   KEIN_TREFFER     no catalog match
 ```
 
 ### 5. Business Rules
 
-1. **ResponseDrafting never produces APPROVED status.**
-2. **Processing is per argument.** Each `ExtrahiertesArgument` with a valid `catalog_id` is generated using the resolved Gesetzestext for its cited norms.
-3. **Arguments with `catalog_id=None` are skipped.** They were already handled by `NoMatchEvent` in Triage.
-4. **§-reference verification per ADR-006.** Any unverified reference sets `wuerdigungs_status=UNTERDRUECKT_UNVERIFIED` for the entire draft. Verification is against the resolved norms from Retrieval.
-5. **Reproducibility fields are mandatory.** `model_version`, `prompt_version`, `retrieval_config_hash` must be set on every returned object.
-6. **Generation strategy differs by `EinwendungsTyp`.** TYP_1: concise plain-language Würdigung. TYP_2: precise legal Würdigung with explicit norm references. Same source depth, different prompt.
-7. **An unresolved norm degrades its argument.** If an argument's cited norm came back with `resolved=False` from Retrieval, the argument cannot be grounded and its §-reference verification fails, setting the draft status accordingly.
-
-*Note: In the skeleton, LLM is stubbed and returns a fixed string. Verification always passes.*
+1. **Assembly is deterministic.** Given the same arguments and resolved norms, Briefing produces the same `WuerdigungsBriefing` every time. There is no LLM call and no stochastic step.
+2. **Status is derived, not generated.** For each argument: `KEIN_TREFFER` if there is no catalog match (`catalog_id` is None), else `NORM_UNRESOLVED` if any cited norm came back unresolved from Retrieval, else `BRIEFING_READY`.
+3. **`requires_case_context` is always True for a `BRIEFING_READY` entry.** A ready entry pairs the argument with its source law, but the binding assessment still requires the Sachbearbeiter to weigh it against the Akte. The flag signals that the Abwägung is not performed by this system.
+4. **No §-reference verification gate.** Briefing does not verify or reject references. It surfaces the resolved norm text alongside the argument and lets the status reflect whether resolution succeeded.
+5. **No binding Würdigung is produced (ADR-022).** The case facts (Planunterlagen, Gutachten, Festsetzungen) are outside the system boundary, so the system assembles a briefing rather than a binding Abwägung. The `limitation_note` records this scope decision.
+6. **`einwendungs_typ` is document-level context.** It is carried onto the briefing for classification, not used to select a generation strategy.
 
 ### 6. Error Strategy
 
-- LLM call failure after retries: raise `GenerationError`.
-- Unverified §-reference: set `wuerdigungs_status=UNTERDRUECKT_UNVERIFIED`, return object. Valid outcome.
-- Unresolved norm for an argument: the argument's verification fails, draft status reflects it. Not a `GenerationError`.
-- All arguments skipped (all `catalog_id=None`): return draft with `wuerdigungs_status=KEIN_TREFFER`.
+- Briefing assembly is pure: it does not raise a generation error.
+- Unresolved norm for an argument: the entry takes `status=NORM_UNRESOLVED`. Valid outcome, not an error.
+- Argument with no catalog match (`catalog_id=None`): the entry takes `status=KEIN_TREFFER`. Valid outcome.
+- Empty argument list: the Coordinator does not call Briefing for a document with no extracted arguments; it terminates with `KEIN_TREFFER` at the pipeline level.
 
 ### 7. Dependencies
 
-**Skeleton:** `anthropic` (stubbed).
-**feat/generation:** `openai` or `mistralai` (real LLM call), `re` (stdlib, §-reference verification).
+**All branches:** stdlib only. No LLM, no embedding model, no vector index. The context defines its own `ResolvedNormEntry` in `app/briefing/entities.py` and imports nothing from Triage or Retrieval.
 
 ### 8. Test Scenarios
 
 | Scenario | Input | Expected Output |
 |---|---|---|
-| Happy path (skeleton stub) | Valid `TriageResult` + resolved norms for one argument | `Abwaegungsstellungnahme` with `status=DRAFT`, all reproducibility fields set |
-| Two arguments, different norms | BauGB + BauNVO arguments with resolved norms | Two generations, results aggregated |
-| TYP_1 input | `einwendungs_typ=TYP_1` | Plain-language tone in generated Würdigung |
-| TYP_2 input | `einwendungs_typ=TYP_2` | Legal precision tone, explicit norm references |
-| Unverified §-reference | LLM output with hallucinated paragraph | `wuerdigungs_status=UNTERDRUECKT_UNVERIFIED` |
-| Unresolved norm input | argument whose norm has `resolved=False` | argument's verification fails, draft status reflects it |
-| All arguments catalog_id=None | Triage returned only unmatched arguments | `wuerdigungs_status=KEIN_TREFFER` |
+| Happy path | One argument with catalog_id and all norms resolved | One `BriefingEntry`, `status=BRIEFING_READY`, `requires_case_context=True` |
+| Two arguments, different norms | BauGB + BauNVO arguments, all norms resolved | Two entries, both `BRIEFING_READY` |
+| Unresolved norm | argument with catalog_id but a norm `resolved=False` | entry `status=NORM_UNRESOLVED` |
+| No catalog match | argument with `catalog_id=None` | entry `status=KEIN_TREFFER` |
+| Limitation note present | any non-empty briefing | `limitation_note` set, stating the Akte is outside the boundary |
+| Determinism | same inputs assembled twice | identical `WuerdigungsBriefing` both times |
 
 ---
 
@@ -459,17 +479,17 @@ list[AuditEvent]  # in write order
 pipeline.py (Coordinator)  →  DocumentIngestion   ✅
 pipeline.py (Coordinator)  →  Triage              ✅
 pipeline.py (Coordinator)  →  Retrieval           ✅
-pipeline.py (Coordinator)  →  ResponseDrafting    ✅
+pipeline.py (Coordinator)  →  Briefing            ✅
 pipeline.py (Coordinator)  →  AuditLog            ✅
 DocumentIngestion          →  Triage              ❌
 Triage                     →  Retrieval           ❌
-Retrieval                  →  ResponseDrafting    ❌
+Retrieval                  →  Briefing            ❌
 Any BC                     →  pipeline.py         ❌
 ```
 
 ### Data Flow
 
-BCs communicate only through input arguments and return values passed through the Coordinator. No shared state. No global singletons. The Coordinator owns the flow; the BCs own the logic. The Coordinator calls Triage, collects the canonical citations from the extracted arguments, passes them to Retrieval, then passes the resolved norms to ResponseDrafting.
+BCs communicate only through input arguments and return values passed through the Coordinator. No shared state. No global singletons. The Coordinator owns the flow; the BCs own the logic. The Coordinator calls Triage, collects the canonical citations from the extracted arguments, passes them to Retrieval, then maps Retrieval's `NormWithSource` into the Briefing context's `ResolvedNormEntry` and passes the per-argument arguments and resolved norms to Briefing.
 
 ### Error Propagation
 
@@ -478,11 +498,10 @@ IngestionError    →  Pipeline aborted, AuditEvent(INGESTION_FAILED) emitted
 TriageError       →  Pipeline aborted, AuditEvent(TRIAGE_FAILED) emitted
 NoMatchEvent      →  Pipeline terminated (valid), AuditEvent(NO_MATCH) emitted
 RetrievalError    →  Pipeline aborted, AuditEvent(RETRIEVAL_FAILED) emitted
-GenerationError   →  Pipeline aborted, AuditEvent(GENERATION_FAILED) emitted
 AuditLogError     →  Logged at ERROR, pipeline result returned regardless
 ```
 
-Note: `RetrievalError` originates from the Retrieval context (citation resolution). An unresolved citation is not a `RetrievalError`; it is a valid `NormWithSource(resolved=False)` that degrades the downstream argument in ResponseDrafting.
+Note: `RetrievalError` originates from the Retrieval context (citation resolution). An unresolved citation is not a `RetrievalError`; it is a valid `NormWithSource(resolved=False)` that produces a `NORM_UNRESOLVED` entry in Briefing. Briefing has no generation error: assembly is deterministic and cannot fail with a generation failure.
 
 ### Testing Strategy
 
@@ -490,7 +509,9 @@ Note: `RetrievalError` originates from the Retrieval context (citation resolutio
 Unit tests:         Each BC in isolation. All Protocols replaced with Fakes.
                     No network, no file system (use tmp_path fixture for AuditLog).
 Integration tests:  Coordinator with real BC implementations and Fake Protocols.
-E2E smoke test:     Full pipeline with LLM stub. One test. Asserts DRAFT returned.
+E2E smoke test:     Full pipeline with LLM stub. One test. Asserts a
+                    WuerdigungsBriefing is returned, with one entry in
+                    BRIEFING_READY for the default single-argument case.
 ```
 
 ---
@@ -500,11 +521,11 @@ E2E smoke test:     Full pipeline with LLM stub. One test. Asserts DRAFT returne
 **Why is AuditLog a separate BC and not a Coordinator service?**
 AuditLog could be a service layer within the Coordinator rather than a separate BC. Separation was chosen because AuditLog has a different failure mode (write failure must not suppress domain results), a different persistence contract (append-only), and a different lifecycle (it must be writable when other BCs fail). These are three independent Disintegrators that justify the boundary.
 
-**Why is Retrieval separate from ResponseDrafting?**
-Citation resolution (norm to source text) and generation-context retrieval are two different steps with two different change axes. Resolution is deterministic (exact-match plus vector fallback over a fixed statute corpus). Generation is stochastic (LLM call with a prompt strategy). Binding them would couple the statute corpus and embedding model to the generation prompt logic. Separating them lets ResponseDrafting mock the resolved norms in its tests and lets the retrieval strategy evolve independently. See ADR-020.
+**Why is Retrieval separate from Briefing?**
+Citation resolution (norm to source text) and briefing assembly are two different steps with two different change axes. Resolution is exact-match lookup over a fixed statute corpus (ADR-021). Briefing is deterministic presentation and status derivation. Binding them would couple the statute corpus to the briefing shape and status rules. Separating them lets Briefing consume already-resolved norms in its tests and lets the resolution strategy evolve independently. See ADR-020.
 
 **Why is the Coordinator synchronous?**
-The Sachbearbeiter does not wait on a queue: they submit a document and expect a draft. The end-to-end pipeline is fast enough for synchronous execution (LLM call dominates latency). Async would add complexity without reducing wait time for the user. ADR candidate if throughput requirements change.
+The Sachbearbeiter does not wait on a queue: they submit a document and expect a briefing. The end-to-end pipeline is fast enough for synchronous execution. Async would add complexity without reducing wait time for the user. ADR candidate if throughput requirements change.
 
-**Why does ResponseDrafting receive `TriageResult` rather than just `CatalogMatch`?**
-`ResponseDrafting` needs `einwendungs_typ` to select the generation strategy (TYP_1 vs. TYP_2 prompt). Passing the full `TriageResult` avoids a second parameter and keeps the contract stable if Triage later adds fields that ResponseDrafting needs. The alternative (passing only `CatalogMatch` and `EinwendungsTyp` separately) creates two parameters that always travel together, which is a sign they belong in one object.
+**Why does Briefing receive the arguments and resolved norms from the Coordinator?**
+Briefing assembles a per-argument artifact, so it needs the extracted arguments (as plain dicts) and the resolved norms mapped by the Coordinator into `ResolvedNormEntry`. It also receives `einwendungs_typ` to carry the document-level classification onto the briefing, not to select an LLM prompt strategy (there is no LLM in this context). The Coordinator owns the cross-context mapping so that Briefing imports nothing from Triage or Retrieval.

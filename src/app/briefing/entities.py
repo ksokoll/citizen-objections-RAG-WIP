@@ -1,6 +1,6 @@
-"""Domain entities for the ResponseDrafting bounded context.
+"""Domain entities for the Briefing bounded context.
 
-ResponseDrafting assembles a per-argument briefing for the Sachbearbeiter.
+The Briefing context assembles a per-argument briefing for the Sachbearbeiter.
 It does not generate a finished Würdigung: the case-specific facts of the
 building project (the Akte) are outside the system boundary, so a binding
 legal assessment cannot be produced here. Instead each argument is paired
@@ -47,7 +47,7 @@ class ResolvedNormEntry:
     """One cited norm paired with its resolved source text.
 
     Mirrors the relevant fields of the Retrieval context's NormWithSource
-    in the ResponseDrafting domain, so this context does not import the
+    in the Briefing domain, so this context does not import the
     Retrieval domain model directly. The Coordinator maps across the
     boundary.
 

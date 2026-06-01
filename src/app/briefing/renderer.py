@@ -1,4 +1,4 @@
-"""Markdown renderer for the ResponseDrafting briefing.
+"""Markdown renderer for the Briefing context.
 
 Infrastructure-layer concern: turns a WuerdigungsBriefing domain object
 into a human-readable Markdown document for the Sachbearbeiter. Kept
@@ -8,7 +8,7 @@ independently and the assembly logic stays free of formatting concerns.
 
 from __future__ import annotations
 
-from app.response_drafting.domain.entities import (
+from app.briefing.entities import (
     BriefingStatus,
     WuerdigungsBriefing,
 )

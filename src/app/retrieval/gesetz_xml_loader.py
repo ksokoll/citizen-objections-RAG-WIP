@@ -33,7 +33,7 @@ import re
 from pathlib import Path
 from xml.etree import ElementTree
 
-from app.retrieval.domain.entities import GesetzParagraph
+from app.retrieval.entities import GesetzParagraph
 
 # Matches a paragraph enbez such as "§ 9", "§ 9a", "§ 135a". The section
 # sign may be followed by variable whitespace in the source.

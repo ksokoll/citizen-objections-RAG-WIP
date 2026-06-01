@@ -3,18 +3,14 @@
 Run from the repository root:
     python eval_retrieval_recall.py <xml-dir> <ground-truth-dir>
 
-Builds the real index over all nine statutes, then runs every
-must_retrieve citation from the Phase A ground truth through the
-resolver. Reports the resolution-method distribution (exact / vector /
-unresolved), overall and per Gesetz, plus the confidence scores of any
-vector-fallback hits so the confidence floor can be calibrated against
-real data.
+Loads all nine statutes, then runs every must_retrieve citation from the
+Phase A ground truth through the resolver. Reports the resolution-method
+distribution (exact / unresolved), overall and per Gesetz.
 
-This answers the open question from the smoke test: do real citations
-ever need the vector fallback, or does the exact-match path with
-paragraph-level normalisation already resolve everything valid? The
-answer decides whether the vector fallback stays (and at what floor) or
-is removed as unnecessary complexity.
+This answered the open question that motivated the original experiment:
+the exact-match path with paragraph-level normalisation resolves every
+valid citation (25/25 on the Phase A ground truth), so the vector
+fallback was removed as unnecessary complexity (ADR-021).
 
 Ground truth format assumed (per the Phase A retrieval_gt files):
     {
@@ -34,15 +30,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
 
-from app.retrieval.application.norm_retrieval_service import (  # noqa: E402
+from app.retrieval.service import (  # noqa: E402
     NormRetrievalService,
 )
-from app.retrieval.domain.entities import NormWithSource  # noqa: E402
-from app.retrieval.infrastructure.e5_embedder import E5Embedder  # noqa: E402
-from app.retrieval.infrastructure.faiss_norm_index import (  # noqa: E402
-    FaissNormIndex,
-)
-from app.retrieval.infrastructure.gesetz_xml_loader import (  # noqa: E402
+from app.retrieval.entities import NormWithSource  # noqa: E402
+from app.retrieval.gesetz_xml_loader import (  # noqa: E402
     load_all_gesetze,
 )
 
@@ -84,14 +76,10 @@ def main() -> None:
             print(f"Path not found: {path}")
             sys.exit(1)
 
-    print("Building index...")
+    print("Loading corpus...")
     paragraphs = load_all_gesetze(xml_dir)
-    embedder = E5Embedder()
-    passages = [f"{p.title}. {p.text}" if p.title else p.text for p in paragraphs]
-    embeddings = embedder.embed_passages(passages)
-    index = FaissNormIndex(paragraphs, embeddings)
-    service = NormRetrievalService(index, embedder, paragraphs)
-    print(f"  index size={index.size()}\n")
+    service = NormRetrievalService(paragraphs)
+    print(f"  corpus size={len(paragraphs)}\n")
 
     citations = collect_citations(gt_dir)
     print(f"Resolving {len(citations)} unique must_retrieve citations...\n")
@@ -106,7 +94,7 @@ def main() -> None:
     print("=" * 70)
     print("Resolution method distribution")
     print("=" * 70)
-    for method in ("exact", "vector", "none"):
+    for method in ("exact", "none"):
         count = method_counts.get(method, 0)
         pct = (count / total * 100) if total else 0
         print(f"  {method:<8} {count:>4} / {total}  ({pct:.1f}%)")
@@ -121,20 +109,8 @@ def main() -> None:
         by_gesetz.setdefault(gesetz, Counter())[result.method] += 1
     for gesetz in sorted(by_gesetz):
         counts = by_gesetz[gesetz]
-        line = "  ".join(f"{m}={counts.get(m, 0)}" for m in ("exact", "vector", "none"))
+        line = "  ".join(f"{m}={counts.get(m, 0)}" for m in ("exact", "none"))
         print(f"  {gesetz:<10} {line}")
-
-    # Vector-fallback hits: show scores for floor calibration.
-    vector_hits = [(c, r) for c, r in results if r.method == "vector"]
-    if vector_hits:
-        print("\n" + "=" * 70)
-        print("Vector-fallback hits (for confidence floor calibration)")
-        print("=" * 70)
-        for citation, result in sorted(vector_hits, key=lambda x: x[1].confidence or 0):
-            print(
-                f"  {citation:<28} -> {result.paragraph_key:<14} "
-                f"conf={result.confidence:.3f}"
-            )
 
     # Unresolved citations: these are the misses.
     unresolved = [(c, r) for c, r in results if not r.resolved]

@@ -4,18 +4,16 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-
-# tests/external/conftest.py
 from dotenv import load_dotenv
 from pydantic import BaseModel
 
 from app.audit_log.service import AuditLogService
 from app.audit_log.store import JsonLinesAuditStore
-from app.core.entities import RetrievedChunk
+from app.briefing.service import BriefingService
 from app.core.statuses import EinwendungsTyp
 from app.document_ingestion.service import DocumentIngestionService
 from app.pipeline import Pipeline
-from app.response_drafting.briefing_service import ResponseDraftingService
+from app.retrieval.entities import NormWithSource
 from app.triage.llm_schema import LLMArgument, LLMTriageOutput
 from app.triage.service import TriageService
 
@@ -64,12 +62,43 @@ class FakeLLMClient:
 
 
 class FakeRetriever:
-    """Fake Retriever returning an empty chunk list."""
+    """Fake Retriever implementing the resolve() contract.
 
-    def retrieve(
-        self, query: str, partition: str, top_k: int = 5
-    ) -> list[RetrievedChunk]:
-        return []
+    Resolves every citation to a fixed source text, so pipeline
+    orchestration tests exercise the resolved path without a vector index
+    or embedding model. Tests that need an unresolved citation can set
+    resolve_all to False.
+    """
+
+    def __init__(self, resolve_all: bool = True) -> None:
+        self.resolve_all = resolve_all
+
+    def resolve(self, citations: list[str]) -> list[NormWithSource]:
+        results: list[NormWithSource] = []
+        for citation in citations:
+            if self.resolve_all:
+                results.append(
+                    NormWithSource(
+                        canonical_citation=citation,
+                        paragraph_key=citation,
+                        source_text=f"Gesetzestext zu {citation}.",
+                        method="exact",
+                        confidence=None,
+                        resolved=True,
+                    )
+                )
+            else:
+                results.append(
+                    NormWithSource(
+                        canonical_citation=citation,
+                        paragraph_key="",
+                        source_text="",
+                        method="none",
+                        confidence=None,
+                        resolved=False,
+                    )
+                )
+        return results
 
 
 # Default LLMTriageOutput for pipeline-level fixtures: a single TYP_2 argument
@@ -93,24 +122,20 @@ _DEFAULT_TRIAGE_OUTPUT = LLMTriageOutput(
 
 @pytest.fixture()
 def pipeline_and_audit(tmp_path: Path) -> tuple[Pipeline, JsonLinesAuditStore]:
-    """Fully wired pipeline with stubbed LLM and retriever.
+    """Fully wired pipeline with a stubbed triage LLM and a fake retriever.
 
     The triage FakeLLMClient is preloaded with a single-argument
     LLMTriageOutput whose original_zitat matches the smoke-test sample
-    text; the drafting FakeLLMClient returns an empty string from
-    generate(), which is sufficient for the orchestration smoke tests.
+    text. The Briefing context uses no LLM, so no drafting double is
+    needed; the FakeRetriever supplies resolved norm text deterministically.
     """
     audit_store = JsonLinesAuditStore(tmp_path / "audit.jsonl")
     triage_llm = FakeLLMClient(parse_response=_DEFAULT_TRIAGE_OUTPUT)
-    drafting_llm = FakeLLMClient(generate_response="Skeleton-Würdigung.")
     pipeline = Pipeline(
         ingestion=DocumentIngestionService(raw_store_path=tmp_path / "raw"),
         triage=TriageService(llm=triage_llm),
-        drafting=ResponseDraftingService(
-            llm=drafting_llm,
-            retriever=FakeRetriever(),
-            model_version="skeleton-v0.1",
-        ),
+        retrieval=FakeRetriever(),
+        briefing=BriefingService(),
         audit=AuditLogService(store=audit_store),
     )
     return pipeline, audit_store

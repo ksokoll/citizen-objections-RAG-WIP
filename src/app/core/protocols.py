@@ -3,6 +3,8 @@ from typing import Protocol, TypeVar
 
 from pydantic import BaseModel
 
+from app.retrieval.entities import NormWithSource
+
 from .entities import RetrievedChunk
 from .events import AuditEvent, AuditEventType
 
@@ -26,6 +28,19 @@ class LLMClientProtocol(Protocol):
         response_format: type[T],
         system_prompt: str = "",
     ) -> T: ...
+
+
+class Retriever(Protocol):
+    """Resolves canonical norm citations to their source Gesetzestext.
+
+    Implemented by the Retrieval context's NormRetrievalService. The
+    Coordinator depends on this Protocol rather than the concrete service,
+    so tests can substitute a fake without a statute corpus.
+    """
+
+    def resolve(self, citations: list[str]) -> list[NormWithSource]:
+        """Resolve canonical norm citations to their source Gesetzestext."""
+        ...
 
 
 class EmbedderProtocol(Protocol):

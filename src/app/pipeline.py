@@ -1,11 +1,18 @@
 """Pipeline coordinator for the citizen objections RAG system.
 
-Orchestrates the four bounded contexts sequentially:
-DocumentIngestion → Triage → ResponseDrafting → AuditLog.
+Orchestrates the five bounded contexts sequentially:
+DocumentIngestion -> Triage -> Retrieval -> Briefing -> AuditLog.
 
-No BC calls another BC directly. All dependencies are injected
-at construction time. The Pipeline uses concrete BC service classes,
-not Protocols, because the Coordinator is the composition root.
+No BC calls another BC directly. All dependencies are injected at
+construction time. The Coordinator is the composition root: it depends on
+the concrete Ingestion, Triage, Briefing, and AuditLog services, and on
+the Retriever Protocol for norm resolution (so a fake retriever can be
+substituted in tests without a vector index or embedding model).
+
+The Coordinator owns the cross-context mapping: it collects the canonical
+citations from each Triage argument, resolves them via Retrieval, and maps
+the resulting NormWithSource values into the Briefing context's
+ResolvedNormEntry, so neither context imports the other's domain model.
 """
 
 from __future__ import annotations
@@ -15,26 +22,27 @@ import uuid
 from typing import Any
 
 from app.audit_log.service import AuditLogService
-from app.core.entities import Abwaegungsstellungnahme
+from app.briefing.entities import ResolvedNormEntry, WuerdigungsBriefing
+from app.briefing.service import BriefingService
 from app.core.events import AuditEvent, AuditEventType
 from app.core.failures import (
-    GenerationError,
     IngestionError,
     RetrievalError,
     TriageError,
 )
+from app.core.protocols import Retriever
 from app.document_ingestion.service import DocumentIngestionService
-from app.response_drafting.briefing_service import ResponseDraftingService
 from app.triage.service import TriageService
 
 
 class Pipeline:
-    """Coordinates the four BCs for end-to-end objection processing.
+    """Coordinates the five BCs for end-to-end objection processing.
 
     Attributes:
         _ingestion: DocumentIngestion BC.
         _triage: Triage BC.
-        _drafting: ResponseDrafting BC.
+        _retrieval: Retrieval BC (via the Retriever Protocol).
+        _briefing: Briefing BC.
         _audit: AuditLog BC.
     """
 
@@ -42,28 +50,29 @@ class Pipeline:
         self,
         ingestion: DocumentIngestionService,
         triage: TriageService,
-        drafting: ResponseDraftingService,
+        retrieval: Retriever,
+        briefing: BriefingService,
         audit: AuditLogService,
     ) -> None:
         self._ingestion = ingestion
         self._triage = triage
-        self._drafting = drafting
+        self._retrieval = retrieval
+        self._briefing = briefing
         self._audit = audit
 
-    def run(self, raw_text: str) -> Abwaegungsstellungnahme:
+    def run(self, raw_text: str) -> WuerdigungsBriefing:
         """Process a raw Einwendung through the full pipeline.
 
         Args:
             raw_text: Raw Einwendung text as received at system boundary.
 
         Returns:
-            Abwaegungsstellungnahme in DRAFT status.
+            The assembled WuerdigungsBriefing for the Sachbearbeiter.
 
         Raises:
             IngestionError: If ingestion fails.
             TriageError: If argument extraction fails.
             RetrievalError: If norm retrieval fails.
-            GenerationError: If LLM generation fails.
         """
         einwendungs_id: str | None = None
 
@@ -73,51 +82,103 @@ class Pipeline:
             self._emit(
                 einwendungs_id,
                 AuditEventType.EINGANG,
-                {
-                    "document_id": ingestion_result.document_id,
-                },
+                {"document_id": ingestion_result.document_id},
             )
 
             triage_result = self._triage.triage(ingestion_result.clean_text)
             self._emit(
                 einwendungs_id,
                 AuditEventType.TRIAGE,
-                {
-                    "argument_count": len(triage_result.extracted_arguments),
-                },
+                {"argument_count": len(triage_result.extracted_arguments)},
             )
 
-            stellungnahme = self._drafting.draft(
-                triage_result,
-                ingestion_result.clean_text,
+            arguments, norms_by_argument = self._resolve_norms(
+                triage_result.extracted_arguments
+            )
+            resolved_total = sum(
+                sum(1 for n in norms if n.resolved)
+                for norms in norms_by_argument.values()
+            )
+            self._emit(
                 einwendungs_id,
+                AuditEventType.RETRIEVAL,
+                {"resolved_norm_count": resolved_total},
+            )
+
+            briefing = self._briefing.assemble(
+                document_id=einwendungs_id,
+                einwendungs_typ=triage_result.einwendungs_typ.value,
+                arguments=arguments,
+                norms_by_argument=norms_by_argument,
             )
 
             event_type = (
                 AuditEventType.KEIN_TREFFER
                 if not triage_result.extracted_arguments
-                else AuditEventType.ENTWURF_GENERIERT
+                else AuditEventType.BRIEFING_ERSTELLT
             )
             self._emit(
                 einwendungs_id,
                 event_type,
-                {
-                    "wuerdigungs_status": stellungnahme.wuerdigungs_status.value,
-                },
+                {"entry_count": len(briefing.entries)},
             )
 
-            return stellungnahme
+            return briefing
 
-        except (IngestionError, TriageError, RetrievalError, GenerationError):
+        except (IngestionError, TriageError, RetrievalError):
             if einwendungs_id:
                 self._emit(
                     einwendungs_id,
                     AuditEventType.PIPELINE_FEHLER,
-                    {
-                        "reason": "pipeline error",
-                    },
+                    {"reason": "pipeline error"},
                 )
             raise
+
+    def _resolve_norms(
+        self,
+        extracted_arguments: list,
+    ) -> tuple[list[dict[str, Any]], dict[str, list[ResolvedNormEntry]]]:
+        """Resolve each argument's citations and map across the BC boundary.
+
+        For each extracted argument, resolves its canonical citations via
+        the Retrieval context and maps the returned NormWithSource values
+        into Briefing-context ResolvedNormEntry objects. Also builds the
+        plain-dict argument representation the Briefing service consumes,
+        so the Briefing context does not depend on the Triage domain model.
+
+        Args:
+            extracted_arguments: The Triage ExtrahiertesArgument objects.
+
+        Returns:
+            A tuple of (arguments_as_dicts, norms_by_argument), where
+            norms_by_argument maps each argument_id to its resolved norms.
+        """
+        arguments: list[dict[str, Any]] = []
+        norms_by_argument: dict[str, list[ResolvedNormEntry]] = {}
+
+        for arg in extracted_arguments:
+            arguments.append(
+                {
+                    "argument_id": arg.argument_id,
+                    "argument_text": arg.argument_text,
+                    "original_zitat": arg.original_zitat,
+                    "einwendungs_typ": arg.einwendungs_typ.value,
+                    "catalog_id": arg.catalog_id,
+                }
+            )
+
+            resolved = self._retrieval.resolve(arg.zitierte_normen)
+            norms_by_argument[arg.argument_id] = [
+                ResolvedNormEntry(
+                    canonical_citation=n.canonical_citation,
+                    paragraph_key=n.paragraph_key,
+                    source_text=n.source_text,
+                    resolved=n.resolved,
+                )
+                for n in resolved
+            ]
+
+        return arguments, norms_by_argument
 
     def _emit(
         self,

@@ -10,11 +10,7 @@ class TriageError(Exception):
 
 
 class RetrievalError(Exception):
-    """Raised by ResponseDrafting on FAISS index query failure."""
-
-
-class GenerationError(Exception):
-    """Raised by ResponseDrafting on LLM call failure after retries."""
+    """Raised by Retrieval on norm-resolution failure."""
 
 
 class AuditLogError(Exception):

@@ -17,7 +17,7 @@ from pathlib import Path
 # Make the src-layout package importable when run as a script.
 sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
 
-from app.retrieval.infrastructure.gesetz_xml_loader import (  # noqa: E402
+from app.retrieval.gesetz_xml_loader import (  # noqa: E402
     load_all_gesetze,
     load_gesetz,
 )

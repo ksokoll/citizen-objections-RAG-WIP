@@ -1,4 +1,4 @@
-"""End-to-end smoke test for the walking skeleton pipeline."""
+"""End-to-end smoke test for the wired pipeline."""
 
 import re
 from pathlib import Path
@@ -6,10 +6,11 @@ from pathlib import Path
 import pytest
 
 from app.audit_log.store import JsonLinesAuditStore
+from app.briefing.entities import BriefingStatus
 from app.core.events import AuditEventType
 from app.core.failures import IngestionError
 from app.core.results import TriageResult
-from app.core.statuses import AbwaegungsStatus, EinwendungsTyp, WuerdigungsStatus
+from app.core.statuses import EinwendungsTyp
 from app.pipeline import Pipeline
 
 SAMPLE_EINWENDUNG = (
@@ -21,7 +22,7 @@ SAMPLE_EINWENDUNG = (
 
 
 class TestPipelineSmoke:
-    def test_should_return_draft_with_all_reproducibility_fields(
+    def test_should_return_briefing_with_one_ready_entry(
         self,
         pipeline_and_audit: tuple[Pipeline, JsonLinesAuditStore],
     ) -> None:
@@ -31,14 +32,14 @@ class TestPipelineSmoke:
         # When the pipeline runs
         result = pipeline.run(SAMPLE_EINWENDUNG)
 
-        # Then status is DRAFT with all reproducibility fields set
-        assert result.status == AbwaegungsStatus.DRAFT
-        assert re.match(r"^[0-9a-f-]{36}$", result.einwendungs_id)
-        assert result.model_version == "skeleton-v0.1"
-        assert result.prompt_version.startswith("1.")
-        assert len(result.retrieval_config_hash) >= 4
+        # Then a briefing is returned with one BRIEFING_READY entry
+        assert re.match(r"^[0-9a-f-]{36}$", result.document_id)
+        assert result.einwendungs_typ == EinwendungsTyp.TYP_2.value
+        assert len(result.entries) == 1
+        assert result.entries[0].status == BriefingStatus.BRIEFING_READY
+        assert result.entries[0].requires_case_context is True
 
-    def test_should_emit_three_audit_events_in_order(
+    def test_should_emit_four_audit_events_in_order(
         self,
         pipeline_and_audit: tuple[Pipeline, JsonLinesAuditStore],
     ) -> None:
@@ -48,32 +49,26 @@ class TestPipelineSmoke:
         # When the pipeline runs
         pipeline.run(SAMPLE_EINWENDUNG)
 
-        # Then three audit events are emitted in correct order
+        # Then the four pipeline-stage events are emitted in order
         events = audit_store.query()
-        assert len(events) == 3
         event_types = [e.event_type for e in events]
-        assert event_types[0] == AuditEventType.EINGANG
-        assert event_types[1] == AuditEventType.TRIAGE
-        assert event_types[2] in {
-            AuditEventType.ENTWURF_GENERIERT,
-            AuditEventType.KEIN_TREFFER,
-        }
+        assert event_types == [
+            AuditEventType.EINGANG,
+            AuditEventType.TRIAGE,
+            AuditEventType.RETRIEVAL,
+            AuditEventType.BRIEFING_ERSTELLT,
+        ]
 
-    def test_should_return_kein_treffer_when_triage_returns_no_arguments(
+    def test_should_emit_kein_treffer_when_triage_returns_no_arguments(
         self,
         tmp_path: Path,
     ) -> None:
-        # Given a pipeline where triage produces no arguments (empty text)
+        # Given a pipeline where triage produces no arguments
         from tests.conftest import FakeLLMClient, FakeRetriever
 
         from app.audit_log.service import AuditLogService
-        from app.audit_log.store import JsonLinesAuditStore
-        from app.document_ingestion.service import (
-            DocumentIngestionService,
-        )
-        from app.response_drafting.briefing_service import (
-            ResponseDraftingService,
-        )
+        from app.briefing.service import BriefingService
+        from app.document_ingestion.service import DocumentIngestionService
         from app.triage.service import TriageService
 
         class EmptyTriageService(TriageService):
@@ -83,22 +78,21 @@ class TestPipelineSmoke:
                     extracted_arguments=[],
                 )
 
+        audit_store = JsonLinesAuditStore(tmp_path / "audit.jsonl")
         pipeline = Pipeline(
             ingestion=DocumentIngestionService(raw_store_path=tmp_path / "raw"),
             triage=EmptyTriageService(llm=FakeLLMClient()),
-            drafting=ResponseDraftingService(
-                llm=FakeLLMClient(),
-                retriever=FakeRetriever(),
-                model_version="skeleton-v0.1",
-            ),
-            audit=AuditLogService(store=JsonLinesAuditStore(tmp_path / "audit.jsonl")),
+            retrieval=FakeRetriever(),
+            briefing=BriefingService(),
+            audit=AuditLogService(store=audit_store),
         )
 
         # When the pipeline runs with text that yields no arguments
         result = pipeline.run("Kurzer Text.")
 
-        # Then wuerdigungs_status is KEIN_TREFFER
-        assert result.wuerdigungs_status == WuerdigungsStatus.KEIN_TREFFER
+        # Then the briefing has no entries and KEIN_TREFFER is emitted
+        assert result.entries == []
+        assert audit_store.query()[-1].event_type == AuditEventType.KEIN_TREFFER
 
     def test_should_raise_ingestion_error_for_empty_input(
         self,

@@ -1,18 +1,13 @@
 """Core domain models and protocols."""
 
 from .entities import (
-    Abwaegungsstellungnahme,
     Einwendung,
     ExtrahiertesArgument,
-    Freigabe,
-    Rechtsgrundlage,
-    RetrievalMetadata,
     RetrievedChunk,
 )
 from .events import AuditEvent, AuditEventType
 from .failures import (
     AuditLogError,
-    GenerationError,
     IngestionError,
     RetrievalError,
     TriageError,
@@ -23,6 +18,7 @@ from .protocols import (
     AuditEventPublisherProtocol,
     EmbedderProtocol,
     LLMClientProtocol,
+    Retriever,
     RetrieverProtocol,
 )
 from .results import IngestionResult, TriageResult
@@ -34,19 +30,14 @@ __all__ = [
     "EinwendungsTyp",
     "WuerdigungsStatus",
     # Entities
-    "Abwaegungsstellungnahme",
     "Einwendung",
     "ExtrahiertesArgument",
-    "Freigabe",
-    "Rechtsgrundlage",
-    "RetrievalMetadata",
     "RetrievedChunk",
     # Results
     "IngestionResult",
     "TriageResult",
     # Failures
     "AuditLogError",
-    "GenerationError",
     "IngestionError",
     "RetrievalError",
     "TriageError",
@@ -57,5 +48,6 @@ __all__ = [
     "AuditEventPublisherProtocol",
     "EmbedderProtocol",
     "LLMClientProtocol",
+    "Retriever",
     "RetrieverProtocol",
 ]

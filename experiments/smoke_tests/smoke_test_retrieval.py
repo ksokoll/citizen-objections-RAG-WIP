@@ -1,22 +1,19 @@
-"""Smoke test for the full Retrieval chain against the real corpus.
+"""Smoke test for the Retrieval chain against the real corpus.
 
 Run from the repository root:
     python smoke_test_retrieval.py <path-to-xml-directory>
 
-Loads the real multilingual-e5-large model, builds the FAISS index over
-all nine statutes, and resolves a set of probe citations covering:
+Loads all nine statutes and resolves a set of probe citations covering:
     - exact-match hits
     - sub-paragraph citations that drill down to the paragraph
     - Gesetz isolation (same section number in two statutes)
-    - a forced vector-fallback case
-    - an unresolvable citation
+    - an absent paragraph (unresolved)
+    - an unparseable citation (unresolved)
 
-The vector-fallback probes print their real cosine scores so the
-confidence floor in NormRetrievalService can be calibrated against actual
-data rather than a guessed value.
-
-This is the provider-compatibility / setup smoke test mandated by
-iteration_14_plan.md. First run downloads the e5 model (about 2 GB).
+Resolution is exact-match only (ADR-021); the probes confirm the
+paragraph-level normalisation and Gesetz isolation behave on the real
+corpus. The E5Embedder and FaissNormIndex remain in the context as
+experimental reference and are not exercised here.
 """
 
 from __future__ import annotations
@@ -27,14 +24,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
 
-from app.retrieval.application.norm_retrieval_service import (  # noqa: E402
+from app.retrieval.service import (  # noqa: E402
     NormRetrievalService,
 )
-from app.retrieval.infrastructure.e5_embedder import E5Embedder  # noqa: E402
-from app.retrieval.infrastructure.faiss_norm_index import (  # noqa: E402
-    FaissNormIndex,
-)
-from app.retrieval.infrastructure.gesetz_xml_loader import (  # noqa: E402
+from app.retrieval.gesetz_xml_loader import (  # noqa: E402
     load_all_gesetze,
 )
 
@@ -45,7 +38,7 @@ _PROBES: list[tuple[str, str]] = [
     ("§ 9 BauGB", "exact hit BauGB, must not return WHG § 9"),
     ("§ 1 BauGB", "exact hit BauGB"),
     ("§ 42 VwGO", "exact hit VwGO (no title in source)"),
-    ("§ 999 WHG", "absent paragraph, vector fallback or unresolved"),
+    ("§ 999 WHG", "absent paragraph, unresolved"),
     ("kaputte Zeichenkette ohne Norm", "parse fail, unresolved"),
 ]
 
@@ -64,22 +57,8 @@ def main() -> None:
     paragraphs = load_all_gesetze(xml_dir)
     print(f"  {len(paragraphs)} paragraphs loaded")
 
-    print("Loading e5 model (first run downloads ~2 GB)...")
-    t0 = time.perf_counter()
-    embedder = E5Embedder()
-    print(f"  model loaded in {time.perf_counter() - t0:.1f}s")
-
-    print("Embedding corpus (this is the one-time index build)...")
-    t0 = time.perf_counter()
-    # Embed title plus text where a title exists, else text alone. Title
-    # adds signal for the vector fallback; absence (e.g. VwGO) is fine.
-    passages = [f"{p.title}. {p.text}" if p.title else p.text for p in paragraphs]
-    embeddings = embedder.embed_passages(passages)
-    print(f"  embedded {len(embeddings)} paragraphs in {time.perf_counter() - t0:.1f}s")
-
-    index = FaissNormIndex(paragraphs, embeddings)
-    service = NormRetrievalService(index, embedder, paragraphs)
-    print(f"  index built, size={index.size()}\n")
+    service = NormRetrievalService(paragraphs)
+    print(f"  exact-match index built, size={len(paragraphs)}\n")
 
     print("Resolving probe citations:\n")
     for citation, note in _PROBES:

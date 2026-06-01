@@ -12,7 +12,8 @@ class AuditEventType(StrEnum):
 
     EINGANG = "eingang"
     TRIAGE = "triage"
-    ENTWURF_GENERIERT = "entwurf_generiert"
+    RETRIEVAL = "retrieval"
+    BRIEFING_ERSTELLT = "briefing_erstellt"
     ENTWURF_UNTERDRUECKT = "entwurf_unterdrueckt"
     KEIN_TREFFER = "kein_treffer"
     FREIGABE = "freigabe"

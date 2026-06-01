@@ -1,4 +1,4 @@
-"""Briefing assembly service for the ResponseDrafting bounded context.
+"""Assembly service for the Briefing bounded context.
 
 Application-layer service that assembles a WuerdigungsBriefing from the
 Triage output and the resolved norms supplied by the Retrieval context.
@@ -12,7 +12,7 @@ the bounded-context boundary clean.
 
 from __future__ import annotations
 
-from app.response_drafting.domain.entities import (
+from app.briefing.entities import (
     BriefingEntry,
     BriefingStatus,
     ResolvedNormEntry,

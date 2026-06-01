@@ -8,7 +8,7 @@ Workflow and measurement log for the Retrieval bounded context, which resolves c
 
 - Date: 2026-05-27
 - Iteration: 14
-- Bounded context: Retrieval (`src/app/retrieval/`), separated from ResponseDrafting per ADR-020.
+- Bounded context: Retrieval (`src/app/retrieval/`), separated per ADR-020 from the context that consumes the resolved norms (Briefing, formerly ResponseDrafting, renamed per ADR-022).
 - Production resolution strategy: exact-match only, per ADR-021. Vector fallback measured as unnecessary and removed from the production path.
 - Corpus: nine local gesetze-im-internet.de XML files, 1254 paragraphs total, representing the current Behörde state.
 
@@ -125,4 +125,4 @@ Outstanding process items deferred to the next iteration: the embedding index bu
 
 - The resolution recall is measured at paragraph granularity. A citation more specific than a paragraph resolves to the full paragraph text, which is acceptable for the Behörde use case (the Sachbearbeiter sees the whole provision) but means sub-paragraph precision is not separately measured.
 - The 25-citation test set covers six of the nine statutes. BImSchG, VwGO, and WaStrG citations did not appear in the Phase A must_retrieve sets and are therefore not exercised by the recall measurement, though the loader validated all nine and the smoke test exercised one VwGO citation.
-- Coupling to the pipeline: the Coordinator must collect canonical citations from the Triage output, pass them to the Retrieval resolve step, and pass the resolved norms to ResponseDrafting. This wiring is the next implementation step.
+- Coupling to the pipeline: the Coordinator must collect canonical citations from the Triage output, pass them to the Retrieval resolve step, then map the resolved norms into the Briefing context's `ResolvedNormEntry` and pass them to the deterministic Briefing assembly (ADR-022). This wiring is the next implementation step.

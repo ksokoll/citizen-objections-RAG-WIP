@@ -1,9 +1,9 @@
 """Predefined objection catalog for the Triage bounded context.
 
 Single source of truth for catalog entries and the CatalogId enum.
-Both the Pydantic extraction schema (Triage) and the corpus routing
-(ResponseDrafting) consume from this module. Drift is prevented by
-colocation: adding an entry requires updating both KATALOG and CatalogId.
+Both the Pydantic extraction schema (Triage) and the downstream Briefing
+assembly consume from this module. Drift is prevented by colocation:
+adding an entry requires updating both KATALOG and CatalogId.
 
 v3 (2026-05-26): Restructured from 7 thematic clusters (v2) to 9
 gesetz-based entries, one per law in the corpus. catalog_id IS the

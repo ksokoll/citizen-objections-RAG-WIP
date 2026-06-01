@@ -1,9 +1,9 @@
-"""Domain entities and protocols for the Retrieval bounded context.
+"""Entities and protocols for the Retrieval bounded context.
 
-Holds the value objects and the abstract interfaces. Pure domain: no
-I/O, no external dependencies beyond the standard library and typing,
-no imports from infrastructure or application layers. Concrete
-implementations of the protocols live in the infrastructure layer.
+Holds the value objects and the abstract interfaces. Pure: no I/O, no
+external dependencies beyond the standard library and typing, no imports
+from other modules in this context. Concrete implementations of the
+protocols live alongside this module in the flat context package.
 """
 
 from __future__ import annotations
@@ -17,9 +17,9 @@ class GesetzParagraph:
     """A single paragraph (§) of a German statute with its full text.
 
     Represents one indexable unit of legal text. Produced by the XML
-    loader in the infrastructure layer and consumed by the resolver in
-    the application layer. The canonical_key is the join point against
-    the canonical citation strings produced by the Triage norm_extractor.
+    loader and consumed by the resolver in this context. The
+    canonical_key is the join point against the canonical citation
+    strings produced by the Triage norm_extractor.
 
     Attributes:
         gesetz: Official abbreviation of the statute (e.g. "BauGB").
@@ -82,7 +82,7 @@ class Embedder(Protocol):
     """Abstract interface for turning text into dense vectors.
 
     Concrete implementations (for example a sentence-transformers wrapper)
-    live in the infrastructure layer. The asymmetric query/passage
+    live alongside this module in the context package. The asymmetric query/passage
     distinction is part of the contract because retrieval-tuned models
     such as the e5 family require different handling for indexed passages
     versus search queries.
@@ -94,17 +94,4 @@ class Embedder(Protocol):
 
     def embed_query(self, text: str) -> list[float]:
         """Embed a single text that will be used as a search query."""
-        ...
-
-
-class Retriever(Protocol):
-    """Abstract interface for resolving citations to source text.
-
-    The application-layer NormRetrievalService implements this. Triage
-    and ResponseDrafting depend on this Protocol, not on the concrete
-    service, so their unit tests can substitute a fake.
-    """
-
-    def resolve(self, citations: list[str]) -> list[NormWithSource]:
-        """Resolve canonical norm citations to their source Gesetzestext."""
         ...
