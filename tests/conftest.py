@@ -15,7 +15,7 @@ from app.core.entities import RetrievedChunk
 from app.core.statuses import EinwendungsTyp
 from app.document_ingestion.service import DocumentIngestionService
 from app.pipeline import Pipeline
-from app.response_drafting.service import ResponseDraftingService
+from app.response_drafting.briefing_service import ResponseDraftingService
 from app.triage.llm_schema import LLMArgument, LLMTriageOutput
 from app.triage.service import TriageService
 

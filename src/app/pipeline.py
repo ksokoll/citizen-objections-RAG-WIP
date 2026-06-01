@@ -24,7 +24,7 @@ from app.core.failures import (
     TriageError,
 )
 from app.document_ingestion.service import DocumentIngestionService
-from app.response_drafting.service import ResponseDraftingService
+from app.response_drafting.briefing_service import ResponseDraftingService
 from app.triage.service import TriageService
 
 

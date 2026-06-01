@@ -12,7 +12,7 @@ from app.core.statuses import (
     EinwendungsTyp,
     WuerdigungsStatus,
 )
-from app.response_drafting.service import ResponseDraftingService
+from app.response_drafting.briefing_service import ResponseDraftingService
 
 
 class FakeLLMClient:
