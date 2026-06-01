@@ -5,7 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from .entities import ExtrahiertesArgument
-from .statuses import EinwendungsTyp
 
 
 @dataclass(frozen=True)
@@ -34,5 +33,4 @@ class TriageResult:
     Coordinator sets wuerdigungs_status=KEIN_TREFFER in that case.
     """
 
-    einwendungs_typ: EinwendungsTyp
     extracted_arguments: list[ExtrahiertesArgument] = field(default_factory=list)
