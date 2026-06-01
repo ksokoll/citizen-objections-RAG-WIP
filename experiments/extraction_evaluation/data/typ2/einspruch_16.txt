@@ -1,0 +1,42 @@
+Einwendung im Rahmen der öffentlichen Auslegung
+Vorhabenbezogener Bebauungsplan Nr. 15 "Gewerbegebiet Starkenburg-Süd"
+Verbandsgemeinde Traben-Trarbach
+
+Eingereicht bei: Verbandsgemeinde Traben-Trarbach, Bauamt, Rathausstraße 5, 56841 Traben-Trarbach
+Datum: 09.11.2024
+Einreicher: Stadtwerke Traben-Trarbach AöR, vertreten durch Geschäftsführer Hans-Dieter Volz, Bahnhofstraße 12, 56841 Traben-Trarbach
+
+--- STELLUNGNAHME ZUR ABWÄRMENUTZUNG UND KOMMUNALEN WÄRMEPLANUNG ---
+
+I. AUSGANGSLAGE UND INTERESSE DES EINREICHERS
+
+Die Stadtwerke Traben-Trarbach AöR betreiben das lokale Wärmenetz und sind für die kommunale Wärmeplanung im Auftrag der Verbandsgemeinde zuständig. Mit Inkrafttreten des Wärmeplanungsgesetzes (WPG) ist die Verbandsgemeinde verpflichtet, bis spätestens 2028 einen kommunalen Wärmeplan vorzulegen. Die Stadtwerke nehmen daher Stellung zur Frage der Abwärmenutzung des geplanten Rechenzentrums.
+
+II. ERHEBLICHES ABWÄRMEPOTENZIAL
+
+Ein Rechenzentrum mit 120 MW IT-Last erzeugt nach gängigen Effizienzstandards (PUE 1,3 bis 1,5) eine Abwärmeleistung von mindestens 36 bis 60 MW thermisch. Dies ist eine Größenordnung, die das gesamte Fernwärmenetz der Gemeinde um ein Vielfaches übersteigen würde, wenn sie in ein Wärmenetz eingespeist werden könnte. Selbst eine teilweise Nutzung von 10 bis 15 MW würde die Wärmeversorgung des Ortskerns von Traben-Trarbach erheblich dekarbonisieren.
+
+III. MÄNGEL DER PLANUNTERLAGEN IN BEZUG AUF ABWÄRME
+
+1. Die Begründung zum Bebauungsplan enthält in Abschnitt 6.3 ("Energetische Konzeption") den Hinweis, dass die Abwärmenutzung "geprüft" werde. Eine verbindliche Festsetzung oder auch nur eine belastbare Zusage seitens der NordCore Digital GmbH fehlt.
+
+2. Im Durchführungsvertrag zum vorhabenbezogenen Bebauungsplan ist keine Verpflichtung zur Übergabe von Abwärme an das kommunale Wärmenetz enthalten.
+
+3. Das Wärmeversorgungskonzept des Vorhabens sieht nach Unterlagen der Firma ausschließlich Rückkühltürme vor, d.h. die gesamte Abwärme wird an die Atmosphäre abgegeben. Ein technischer Anschluss an das Fernwärmenetz ist nicht geplant.
+
+IV. RECHTLICHE UND PLANERISCHE EINORDNUNG
+
+Gemäß § 7 WPG sollen bei der kommunalen Wärmeplanung vorhandene und geplante industrielle Abwärmequellen berücksichtigt werden. Eine Ansiedlung eines großen Rechenzentrums ohne verbindliche Abwärmenutzung steht dem Planungsgrundsatz der Wärmeplanung entgegen und konterkariert die kommunale Klimastrategie.
+
+Darüber hinaus besteht nach Auffassung der Stadtwerke die Möglichkeit, im Durchführungsvertrag gemäß § 12 BauGB eine Verpflichtung zur Abwärmeauskopplung als öffentlichen Belang zu verankern. Diese Möglichkeit wird in den Planunterlagen nicht thematisiert.
+
+V. FORDERUNGEN DER STADTWERKE
+
+Die Stadtwerke Traben-Trarbach AöR fordern:
+1. Aufnahme einer verbindlichen Klausel im Durchführungsvertrag, die die NordCore Digital GmbH zur Installation einer Wärmeübergabestation und zur Einspeisung von mindestens 8 MW Abwärme in das kommunale Wärmenetz verpflichtet.
+2. Vorlage eines Abwärmekonzepts einschließlich Temperaturniveaus, Verfügbarkeit und technischem Anschlusskonzept.
+3. Prüfung, ob die Fördervoraussetzungen des Bundesministeriums für Wirtschaft und Klimaschutz (BMWK) für die Nutzung industrieller Abwärme in Anspruch genommen werden können.
+4. Ergänzung der Begründung zum Bebauungsplan um eine Bewertung der Abwärmeintegration in den kommunalen Wärmeplan.
+
+Hans-Dieter Volz
+Geschäftsführer Stadtwerke Traben-Trarbach AöR

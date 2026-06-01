@@ -1,0 +1,81 @@
+{
+  "doc_id": "einspruch_17",
+  "einwendungs_typ": "TYP_2",
+  "expected_argument_count_range": [
+    3,
+    4
+  ],
+  "expected_arguments": [
+    {
+      "argument_id": "arg1",
+      "argument_summary": "Flächenverlust weinbaulich relevanter Flächen, Präzedenz für Region",
+      "argument_anchor": "Umwidmung dieser Flächen in Gewerbeland setzt einen Präzedenzfall",
+      "expected_catalog_ids": [
+        "baugb"
+      ],
+      "expected_norms": {
+        "must_retrieve": [],
+        "should_retrieve": [
+          {
+            "paragraph_id": "baugb_§1",
+            "citation": "§ 1 Abs. 6 Nr. 8 BauGB",
+            "source": "inferred_applicable",
+            "rank_target": "top_10",
+            "rationale": "Belange des Weinbaus implizit, nicht im Text zitiert."
+          }
+        ],
+        "not_retrievable_via_xml": []
+      }
+    },
+    {
+      "argument_id": "arg2",
+      "argument_summary": "Mikroklimatische Beeinträchtigung der Weinbergsflächen durch Licht und Wärme",
+      "argument_anchor": "Großflächige Industrieanlagen im Bereich von Weinbergslagen können durch artifizielle Belichtung und lokale Wärmeabgabe",
+      "expected_catalog_ids": [],
+      "expected_norms": {
+        "must_retrieve": [],
+        "should_retrieve": [],
+        "not_retrievable_via_xml": []
+      }
+    },
+    {
+      "argument_id": "arg3",
+      "argument_summary": "Visuelle Beeinträchtigung Landschaftsbild und UNESCO-Welterbe-Antrag",
+      "argument_anchor": "industrielles Großbauwerk von bis zu 25 Metern Höhe in unmittelbarer Sichtachse",
+      "expected_catalog_ids": [],
+      "expected_norms": {
+        "must_retrieve": [],
+        "should_retrieve": [],
+        "not_retrievable_via_xml": []
+      }
+    },
+    {
+      "argument_id": "arg4",
+      "argument_summary": "Lage im Landschaftsschutzgebiet Moseltal, Befreiungserfordernis",
+      "argument_anchor": "Teile des Plangebiets liegen nach unserer Prüfung am Rand des Landschaftsschutzgebiets Moseltal",
+      "expected_catalog_ids": [
+        "bnatschg"
+      ],
+      "expected_norms": {
+        "must_retrieve": [
+          {
+            "paragraph_id": "bnatschg_§67",
+            "citation": "§ 67 BNatSchG",
+            "source": "verbatim_in_text",
+            "rank_target": "top_1",
+            "rationale": "Befreiungsmöglichkeit von LSG-Schutz."
+          }
+        ],
+        "should_retrieve": [],
+        "not_retrievable_via_xml": [
+          {
+            "citation": "LSG-Verordnung Kreis Bernkastel-Wittlich",
+            "source": "not_retrievable_via_xml",
+            "rationale": "Landesrechtliche LSG-Verordnung, nicht in Bundes-XMLs."
+          }
+        ]
+      }
+    }
+  ],
+  "notes": "Schwerpunkt: Landschaftsschutz, Weinbau, UNESCO. Einreicher: Moselwein e.V., Dr. Karl-Heinz Pontzen. arg2 (Mikroklima) und arg3 (UNESCO) haben keine spezifischen § Normen, nur Sach-Argumentation."
+}

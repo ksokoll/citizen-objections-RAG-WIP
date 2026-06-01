@@ -1,0 +1,74 @@
+{
+  "doc_id": "einspruch_15",
+  "einwendungs_typ": "TYP_2",
+  "expected_argument_count_range": [
+    3,
+    3
+  ],
+  "expected_arguments": [
+    {
+      "argument_id": "arg1",
+      "argument_summary": "Fehlende verbindliche Netzanschlussbestätigung",
+      "argument_anchor": "verbindliche Netzanschlussbestätigung der Westnetz GmbH oder des zuständigen Übertragungsnetzbetreibers Amprion",
+      "expected_catalog_ids": [
+        "enwg"
+      ],
+      "expected_norms": {
+        "must_retrieve": [
+          {
+            "paragraph_id": "enwg_§17",
+            "citation": "§ 17 EnWG",
+            "source": "verbatim_in_text",
+            "rank_target": "top_1",
+            "rationale": "Netzanschlussrecht und -pflicht, Voraussetzung jeder Anschlussplanung."
+          }
+        ],
+        "should_retrieve": [],
+        "not_retrievable_via_xml": []
+      }
+    },
+    {
+      "argument_id": "arg2",
+      "argument_summary": "Ungeklärte Kostentragung für Netzausbaumaßnahmen",
+      "argument_anchor": "Wer trägt die Kosten der notwendigen Netzausbaumaßnahmen",
+      "expected_catalog_ids": [
+        "enwg"
+      ],
+      "expected_norms": {
+        "must_retrieve": [
+          {
+            "paragraph_id": "enwg_§17",
+            "citation": "§ 17 Abs. 3 EnWG",
+            "source": "verbatim_in_text",
+            "rank_target": "top_3",
+            "rationale": "Anschlusskosten vom Anschlussnehmer; selber Paragraph wie arg1, anderer Absatz."
+          }
+        ],
+        "should_retrieve": [],
+        "not_retrievable_via_xml": []
+      }
+    },
+    {
+      "argument_id": "arg3",
+      "argument_summary": "Widerspruch zum kommunalen Klimaschutzkonzept",
+      "argument_anchor": "Klimaschutzkonzepts 2022 eine Reduktion des kommunalen Energieverbrauchs um 30 Prozent bis 2035",
+      "expected_catalog_ids": [
+        "baugb"
+      ],
+      "expected_norms": {
+        "must_retrieve": [],
+        "should_retrieve": [
+          {
+            "paragraph_id": "baugb_§1",
+            "citation": "§ 1 Abs. 5 BauGB",
+            "source": "inferred_applicable",
+            "rank_target": "top_10",
+            "rationale": "Klimaschutz als Belang der Bauleitplanung (impliziter Rechtsbezug)."
+          }
+        ],
+        "not_retrievable_via_xml": []
+      }
+    }
+  ],
+  "notes": "Schwerpunkt: Energiewirtschaftsrecht, Netzanschluss, Klimaschutz. Einreicher: Initiative Energiefragen Mosel, Stefan Kramer. arg1 und arg2 referenzieren beide enwg_§17 (verschiedene Absätze). Retriever muss diesen Paragraphen einmal liefern, beide Argumente sind dann erfüllt."
+}

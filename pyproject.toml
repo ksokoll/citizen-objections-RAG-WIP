@@ -11,8 +11,9 @@ dependencies = [
     "pydantic>=2.0",
     "faiss-cpu>=1.7",
     "numpy>=1.26",
-    "anthropic>=0.25",
-    "openai>=1.30",
+    "anthropic>=0.39.0",
+    "openai>=1.40.0",
+    "mistralai>=1.0.0",
     "python-dotenv>=1.0",
     "sentence-transformers>=3.0",
     "rank-bm25>=0.2",
@@ -27,7 +28,7 @@ dev = [
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/citizen_objections_rag"]
+packages = ["src/app"]
 
 [tool.ruff]
 line-length = 88
@@ -38,6 +39,11 @@ exclude = ["experiments"]
 select = ["E", "F", "I", "UP", "ANN"]
 ignore = ["ANN101", "ANN102"]
 
+[tool.ruff.lint.per-file-ignores]
+"src/app/triage/prompts.py" = ["E501"]
+"src/app/response_drafting/prompts.py" = ["E501"]
+"tests/**" = ["ANN"]
+
 [tool.mypy]
 python_version = "3.11"
 strict = true
@@ -47,3 +53,8 @@ explicit_package_bases = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["src"]
+markers = [
+    "external: tests that make real network calls to external providers (costs money, non-deterministic, opt-in only)",
+]
+addopts = "-m 'not external'"

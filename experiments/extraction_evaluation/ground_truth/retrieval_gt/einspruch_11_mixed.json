@@ -1,0 +1,96 @@
+{
+  "doc_id": "einspruch_11",
+  "einwendungs_typ": "TYP_2",
+  "expected_argument_count_range": [
+    3,
+    3
+  ],
+  "expected_arguments": [
+    {
+      "argument_id": "arg1",
+      "argument_summary": "Widerspruch zum Flächennutzungsplan ohne ordnungsgemäßes Parallelverfahren",
+      "argument_anchor": "von dieser Darstellung des Flächennutzungsplans abweicht, ist nach § 8 Abs. 2 BauGB",
+      "expected_catalog_ids": [
+        "baugb"
+      ],
+      "expected_norms": {
+        "must_retrieve": [
+                {
+        "paragraph_id": "baugb_§1",
+        "citation": "§ 1 Abs. 6 Nr. 8 BauGB",
+        "source": "verbatim_in_text",
+        "rank_target": "top_3",
+        "rationale": "Konkreter Sub-Absatz der die im Argument genannten Abwägungs-Belange (Weinbau, Fremdenverkehr, Landschaft) explizit aufzählt."
+          },
+          {
+            "paragraph_id": "baugb_§8",
+            "citation": "§ 8 Abs. 2 BauGB",
+            "source": "verbatim_in_text",
+            "rank_target": "top_1",
+            "rationale": "Direkte Norm für Entwicklungsgebot und Parallelverfahren bei FNP-Abweichung."
+          }
+        ],
+        "should_retrieve": [],
+        "not_retrievable_via_xml": []
+      }
+    },
+    {
+      "argument_id": "arg2",
+      "argument_summary": "Fehlerhafte Abwägung der Belange Weinbau, Fremdenverkehr und Landschaft",
+      "argument_anchor": "keine hinreichende Auseinandersetzung mit den betroffenen Belangen des Weinbaus",
+      "expected_catalog_ids": [
+        "baugb"
+      ],
+      "expected_norms": {
+        "must_retrieve": [
+          {
+            "paragraph_id": "baugb_§1",
+            "citation": "§ 1 Abs. 7 BauGB",
+            "source": "verbatim_in_text",
+            "rank_target": "top_1",
+            "rationale": "Abwägungsgebot (§ 1 Abs. 7) ist die zentrale Norm. § 1 Abs. 6 Nr. 8 (Weinbau, Fremdenverkehr, Landschaft) ist Sub-Absatz desselben Paragraphen."
+          }
+        ],
+        "should_retrieve": [],
+        "not_retrievable_via_xml": []
+      }
+    },
+    {
+      "argument_id": "arg3",
+      "argument_summary": "Fehlerhafte Festsetzung als Gewerbegebiet statt Sondergebiet",
+      "argument_anchor": "Hyperscale-Rechenzentrum mit einer Netzanschlussleistung von 120 MW ist typologisch kein klassisches Gewerbe",
+      "expected_catalog_ids": [
+        "baunvo"
+      ],
+      "expected_norms": {
+        "must_retrieve": [
+          {
+            "paragraph_id": "baunvo_§14",
+            "citation": "§ 14 Abs. 2 BauNVO",
+            "source": "verbatim_in_text",
+            "rank_target": "top_3",
+            "rationale": "Fernmeldetechnische Anlagen sind in § 14 Abs. 2 BauNVO geregelt."
+          },
+          {
+            "paragraph_id": "baunvo_§11",
+            "citation": "§ 11 BauNVO",
+            "source": "verbatim_in_text",
+            "rank_target": "top_1",
+            "rationale": "Sondergebiet als sachgerechte Alternative zur GE-Festsetzung."
+          }
+        ],
+        "should_retrieve": [
+          {
+            "paragraph_id": "baunvo_§8",
+            "citation": "§ 8 BauNVO",
+            "source": "inferred_applicable",
+            "rank_target": "top_10",
+            "rationale": "GE-Festsetzung basiert juristisch auf § 8 BauNVO, im Text nicht explizit zitiert."
+          }
+        ],
+        "not_retrievable_via_xml": []
+      }
+    }
+  ],
+  "notes": "Schwerpunkt: Planungsrecht, Bebauungsplan. Einreicher: Dr. Klaus Bertram, Rechtsanwalt. Klare 3-Argument-Struktur mit Sub-Punkten II.1 bis II.3."
+}

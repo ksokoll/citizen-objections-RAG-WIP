@@ -1,0 +1,72 @@
+{
+  "doc_id": "einspruch_13",
+  "einwendungs_typ": "TYP_2",
+  "expected_argument_count_range": [
+    3,
+    4
+  ],
+  "expected_arguments": [
+    {
+      "argument_id": "arg1",
+      "argument_summary": "Fehlende Berücksichtigung tieffrequenter Geräuschanteile (Infraschall)",
+      "argument_anchor": "Rückkühltürme und Großaggregate emittieren ausgeprägte tieffrequente Schallanteile",
+      "expected_catalog_ids": [],
+      "expected_norms": {
+        "must_retrieve": [],
+        "should_retrieve": [],
+        "not_retrievable_via_xml": [
+          {
+            "citation": "DIN 45680",
+            "source": "not_retrievable_via_xml",
+            "rationale": "Technische Norm für Messung tieffrequenter Geräusche."
+          },
+          {
+            "citation": "TA Lärm Anhang A.1.5",
+            "source": "not_retrievable_via_xml",
+            "rationale": "Verwaltungsvorschrift-Anhang für tieffrequente Geräusche."
+          }
+        ]
+      }
+    },
+    {
+      "argument_id": "arg2",
+      "argument_summary": "Meteorologische Sondersituationen im Moseltal nicht abgedeckt",
+      "argument_anchor": "Moseltal als topografisch eingeschlossene Tallage sind bei bestimmten Wetterlagen erheblich erhöhte Immissionspegel",
+      "expected_catalog_ids": [],
+      "expected_norms": {
+        "must_retrieve": [],
+        "should_retrieve": [],
+        "not_retrievable_via_xml": []
+      }
+    },
+    {
+      "argument_id": "arg3",
+      "argument_summary": "Nachtwertüberschreitung der TA-Lärm-Richtwerte nicht ausgeschlossen",
+      "argument_anchor": "Gemäß TA Lärm gilt für allgemeine Wohngebiete ein Nachtwert von 40 dB(A)",
+      "expected_catalog_ids": [],
+      "expected_norms": {
+        "must_retrieve": [],
+        "should_retrieve": [],
+        "not_retrievable_via_xml": [
+          {
+            "citation": "TA Lärm",
+            "source": "not_retrievable_via_xml",
+            "rationale": "Verwaltungsvorschrift TA Lärm, Nachtwert für allgemeines Wohngebiet."
+          }
+        ]
+      }
+    },
+    {
+      "argument_id": "arg4",
+      "argument_summary": "Impulszuschläge für simultanen Notstromaggregat-Anlauf nicht berücksichtigt",
+      "argument_anchor": "simultane Anfahren von bis zu 24 Dieselaggregaten im Notbetrieb stellt ein impulsartiges Schallereignis",
+      "expected_catalog_ids": [],
+      "expected_norms": {
+        "must_retrieve": [],
+        "should_retrieve": [],
+        "not_retrievable_via_xml": []
+      }
+    }
+  ],
+  "notes": "Schwerpunkt: Lärmschutz, Schallgutachten. Einreicher: Ingrid und Paul Nessler, vertreten durch Dipl.-Ing. Akustik Thomas Reiff. Edge Case: keine retrievable § Normen vorhanden. Layer-2-Recall ist hier undefiniert. Layer-1-Coverage prüft ob LLM die 4 Sub-Argumente extrahiert."
+}
