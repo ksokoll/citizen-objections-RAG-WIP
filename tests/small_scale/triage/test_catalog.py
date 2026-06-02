@@ -6,7 +6,7 @@ original-zitat substring check (ADR-006 Layer 1) controls the
 `argument_verified` flag.
 """
 
-from app.core.statuses import EinwendungsTyp
+from app.core import EinwendungsTyp
 from app.triage.llm_schema import LLMArgument, LLMTriageOutput
 from app.triage.service import TriageService
 from tests.conftest import FakeLLMClient

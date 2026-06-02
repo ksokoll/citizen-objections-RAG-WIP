@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
-from app.core.statuses import EinwendungsTyp
+from app.core import EinwendungsTyp
 from app.triage.catalog import CatalogId
 
 

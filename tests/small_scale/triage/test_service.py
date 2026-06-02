@@ -7,7 +7,7 @@ configuring `FakeLLMClient.parse_response` with an explicit
 describe what each block verifies.
 """
 
-from app.core.statuses import EinwendungsTyp
+from app.core import EinwendungsTyp
 from app.triage.classification import classify_einwendungs_typ
 from app.triage.llm_schema import LLMArgument, LLMTriageOutput
 from app.triage.service import TriageService

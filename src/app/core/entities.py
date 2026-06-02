@@ -3,8 +3,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from enum import StrEnum
 
-from .statuses import EinwendungsTyp
+
+class EinwendungsTyp(StrEnum):
+    """Classification of an objection: informal (TYP_1) or legal (TYP_2)."""
+
+    TYP_1 = "TYP_1"
+    TYP_2 = "TYP_2"
 
 
 @dataclass(frozen=True)

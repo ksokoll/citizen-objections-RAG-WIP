@@ -7,10 +7,10 @@ import pytest
 
 from app.audit_log.store import JsonLinesAuditStore
 from app.briefing.entities import BriefingStatus
+from app.core import EinwendungsTyp
 from app.core.events import AuditEventType
 from app.core.failures import IngestionError
 from app.core.results import TriageResult
-from app.core.statuses import EinwendungsTyp
 from app.pipeline import Pipeline
 
 SAMPLE_EINWENDUNG = (

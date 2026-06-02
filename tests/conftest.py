@@ -10,7 +10,7 @@ from pydantic import BaseModel
 from app.audit_log.service import AuditLogService
 from app.audit_log.store import JsonLinesAuditStore
 from app.briefing.service import BriefingService
-from app.core.statuses import EinwendungsTyp
+from app.core import EinwendungsTyp
 from app.document_ingestion.service import DocumentIngestionService
 from app.pipeline import Pipeline
 from app.retrieval.entities import NormWithSource

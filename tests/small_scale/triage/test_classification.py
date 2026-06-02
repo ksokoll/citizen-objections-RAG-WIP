@@ -2,8 +2,8 @@
 
 import uuid
 
+from app.core import EinwendungsTyp
 from app.core.entities import ExtrahiertesArgument
-from app.core.statuses import EinwendungsTyp
 from app.triage.classification import classify_einwendungs_typ
 
 
