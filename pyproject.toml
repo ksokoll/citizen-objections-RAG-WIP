@@ -17,6 +17,9 @@ dependencies = [
     "python-dotenv>=1.0",
     "sentence-transformers>=3.0",
     "rank-bm25>=0.2",
+    "presidio-analyzer",
+    "presidio-anonymizer",
+    "de_core_news_md @ https://github.com/explosion/spacy-models/releases/download/de_core_news_md-3.8.0/de_core_news_md-3.8.0-py3-none-any.whl",
 ]
 
 [project.optional-dependencies]

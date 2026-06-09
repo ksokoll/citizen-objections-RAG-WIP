@@ -1,3 +1,4 @@
+# core.protocols.py - Protocol definitions for core services and interfaces.
 from datetime import datetime
 from typing import Protocol, TypeVar
 
@@ -6,6 +7,7 @@ from pydantic import BaseModel
 from app.retrieval.entities import NormWithSource
 
 from .events import AuditEvent, AuditEventType
+from .results import MaskingResult
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -78,5 +80,29 @@ class AuditEventPublisherProtocol(Protocol):
 
         Returns:
             List of matching events, or empty list if no match.
+        """
+        ...
+
+
+class PiiMasker(Protocol):
+    """Masks personally identifiable information in free text.
+
+    Implemented by the DocumentIngestion context's PresidioMasker. The
+    DocumentIngestionService depends on this Protocol rather than the concrete
+    masker, so unit tests can substitute a fake that does not load the spaCy
+    model. Masking is one-way: implementations must not retain a
+    placeholder-to-original mapping. The original is recoverable only from the
+    access-controlled raw store via the document_id (ADR-010, ADR-025).
+    """
+
+    def mask(self, text: str) -> MaskingResult:
+        """Replace detected PII spans with speaking German type placeholders.
+
+        Args:
+            text: Raw text that may contain PII (names, addresses, phone
+                numbers, email, IBAN, case numbers).
+
+        Returns:
+            MaskingResult with the masked text and per-type masked-span counts.
         """
         ...

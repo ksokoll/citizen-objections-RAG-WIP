@@ -1,4 +1,4 @@
-"""Bounded context output DTOs for cross-context communication."""
+# core.results.py - Data classes representing results from core processing stages.
 
 from __future__ import annotations
 
@@ -35,3 +35,24 @@ class TriageResult:
 
     einwendungs_typ: EinwendungsTyp
     extracted_arguments: list[ExtrahiertesArgument] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class MaskingResult:
+    """Output of the PII masking step in DocumentIngestion.
+
+    DTO carrying the masked text plus per-type counts of how many spans of
+    each entity type were masked. The counts feed the masking Fitness
+    Function and the audit record; they contain no PII themselves (only type
+    names and integers). An empty entity_counts dict is a valid result: text
+    with no detectable PII produces no masked spans.
+
+    Attributes:
+        text: The masked text, with detected PII spans replaced by speaking
+            German type placeholders ([NAME], [ADRESSE], etc.).
+        entity_counts: Mapping of entity type to the number of spans masked
+            for that type (e.g. {"NAME": 2, "ADRESSE": 1}).
+    """
+
+    text: str
+    entity_counts: dict[str, int] = field(default_factory=dict)

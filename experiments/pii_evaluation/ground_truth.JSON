@@ -1,0 +1,161 @@
+{
+  "_meta": {
+    "description": "Ground truth for PII masking evaluation (Weg A: counts plus positive and negative lists). Convention: occurrences, not distinct persons. names_must_mask lists personal-name tokens (given and family names) that MUST NOT appear in the masked text (recall). must_survive lists substantive terms (street names, place names, technical terms, dates, identifiers, organisation names) that MUST still appear in the masked text (precision). expected_name_count is a coarse indicator of personal-name occurrences and may differ from the masker span count.",
+    "scope": "Masked types: NAME, TELEFON, EMAIL, IBAN. The corpus contains no phone numbers, emails, or IBANs; this GT exercises NAME recall and the precision of not masking substantive terms.",
+    "convention_decisions": {
+      "couples": "Married-couple constructions count each person. 'Ralf und Brigitte Kessler' = 2 persons per occurrence.",
+      "familie_gross": "'Familie Groß' counts the family surname as a name to mask. Organisation names (Weingut Groß, Kanzlei Franken & Stein) are NOT counted as names but are placed on must_survive to detect false positives.",
+      "titles": "Titles and functions (Dr., RA, Geschäftsführer, Sprecherin, Dipl.-Ing.) are not names and are ignored."
+    }
+  },
+  "documents": [
+    {
+      "file": "typ1/einspruch_01.txt",
+      "expected_name_count": 2,
+      "names_must_mask": ["Hildegard", "Schumacher"],
+      "must_survive": ["Rathausstraße", "Moselstraße", "Traben-Trarbach", "56841"]
+    },
+    {
+      "file": "typ1/einspruch_02.txt",
+      "expected_name_count": 4,
+      "names_must_mask": ["Ralf", "Brigitte", "Kessler"],
+      "must_survive": ["Köln", "Weingut Kessler", "Traben-Trarbach", "Mosel", "56841"]
+    },
+    {
+      "file": "typ1/einspruch_03.txt",
+      "expected_name_count": 2,
+      "names_must_mask": ["Werner", "Philipp"],
+      "must_survive": ["NordCore Digital GmbH", "Im Wingert", "Traben-Trarbach", "Bauamt"]
+    },
+    {
+      "file": "typ1/einspruch_04.txt",
+      "expected_name_count": 2,
+      "names_must_mask": [],
+      "must_survive": ["Weingut Groß", "Starkenburger Weg", "Rathausstraße", "Traben-Trarbach"]
+    },
+    {
+      "file": "typ1/einspruch_05.txt",
+      "expected_name_count": 2,
+      "names_must_mask": ["Dieter", "Brons"],
+      "must_survive": ["Moselufer", "Traben-Trarbach", "56841"]
+    },
+    {
+      "file": "typ1/einspruch_06.txt",
+      "expected_name_count": 12,
+      "names_must_mask": [
+        "Hildegard", "Mayer", "Thomas", "Petra", "Schreiber",
+        "Karl-Heinz", "Fuchs", "Renate", "Ute", "Linden", "Joachim",
+        "Sandra", "Wolf", "Franz", "Huber", "Monika", "Zimmer",
+        "Georg", "Annemarie", "Sauer"
+      ],
+      "must_survive": ["Moselstraße", "Starkenburger Weg", "Im Wingert", "Rathausstraße", "Traben-Trarbach"]
+    },
+    {
+      "file": "typ1/einspruch_07.txt",
+      "expected_name_count": 3,
+      "names_must_mask": ["Horst", "Kleinen", "Gretel"],
+      "must_survive": ["Bergstraße", "NordCore", "Traben-Trarbach"]
+    },
+    {
+      "file": "typ1/einspruch_08.txt",
+      "expected_name_count": 4,
+      "names_must_mask": ["Günter", "Hannelore", "Berger"],
+      "must_survive": ["Weinbergstraße", "Hyperion Data Infrastructure", "Traben-Trarbach", "08.11.2024"]
+    },
+    {
+      "file": "typ1/einspruch_09.txt",
+      "expected_name_count": 2,
+      "names_must_mask": ["Martina", "Holz"],
+      "must_survive": ["Zum Moselbogen", "Uferstraße", "Traben-Trarbach"]
+    },
+    {
+      "file": "typ1/einspruch_10.txt",
+      "expected_name_count": 4,
+      "names_must_mask": ["Julia", "Marc", "Sommer"],
+      "must_survive": ["Kirschweg", "Traben-Trarbach", "Mosel", "56841"]
+    },
+    {
+      "file": "mixed/einspruch_11_mixed.txt",
+      "expected_name_count": 2,
+      "names_must_mask": ["Klaus", "Bertram"],
+      "must_survive": ["Moselblick", "Rathausstraße", "Traben-Trarbach", "Gemarkung Traben"]
+    },
+    {
+      "file": "mixed/einspruch_12_mixed.txt",
+      "expected_name_count": 2,
+      "names_must_mask": ["Björn", "Sauer"],
+      "must_survive": ["SGD Nord", "Stresemannstraße", "Koblenz", "Im Moseltal", "Traben-Trarbach"]
+    },
+    {
+      "file": "mixed/einspruch_13_mixed.txt",
+      "expected_name_count": 6,
+      "names_must_mask": ["Ingrid", "Paul", "Nessler", "Thomas", "Reiff"],
+      "must_survive": [
+        "Starkenburger Weg", "AcouTech GmbH", "AT-2024-117", "DIN 45680",
+        "TA Lärm", "Moseltal", "Nachtwert", "IO-3", "Traben-Trarbach"
+      ]
+    },
+    {
+      "file": "typ2/einspruch_14.txt",
+      "expected_name_count": 2,
+      "names_must_mask": ["Andreas", "Wengler"],
+      "must_survive": [
+        "NABU", "Bernkastel-Wittlich", "Kurfürstenstraße", "Wittlich",
+        "Moseltal", "Mosel", "DE-6007-302", "Schweich", "Koblenz", "BNatSchG"
+      ]
+    },
+    {
+      "file": "typ2/einspruch_15.txt",
+      "expected_name_count": 2,
+      "names_must_mask": ["Stefan", "Kramer"],
+      "must_survive": [
+        "Energiefragen Mosel", "Bundesnetzagentur", "Tulpenfeld", "Bonn",
+        "Weingärtenweg", "Traben-Trarbach"
+      ]
+    },
+    {
+      "file": "typ2/einspruch_16.txt",
+      "expected_name_count": 2,
+      "names_must_mask": ["Hans-Dieter", "Volz"],
+      "must_survive": [
+        "Stadtwerke Traben-Trarbach", "Bahnhofstraße", "Traben-Trarbach"
+      ]
+    },
+    {
+      "file": "typ2/einspruch_17.txt",
+      "expected_name_count": 2,
+      "names_must_mask": ["Karl-Heinz", "Pontzen"],
+      "must_survive": [
+        "Moselwein", "DLR Mosel", "Brüningstraße", "Bernkastel-Kues",
+        "Zeltinger Straße"
+      ]
+    },
+    {
+      "file": "typ2/einspruch_18.txt",
+      "expected_name_count": 2,
+      "names_must_mask": ["Erika", "Feldmann"],
+      "must_survive": [
+        "Mosel bleibt Mosel", "Landesbetrieb Mobilität", "Rizzastraße",
+        "Koblenz", "Weinbergspfad", "Traben-Trarbach"
+      ]
+    },
+    {
+      "file": "typ2/einspruch_19.txt",
+      "expected_name_count": 2,
+      "names_must_mask": ["Sabine", "Wolff"],
+      "must_survive": [
+        "ADD", "Willy-Brandt-Platz", "Trier", "Moselblick", "Traben-Trarbach"
+      ]
+    },
+    {
+      "file": "typ2/einspruch_20.txt",
+      "expected_name_count": 3,
+      "names_must_mask": ["Erika", "Feldmann", "Matthias", "Lena"],
+      "must_survive": [
+        "Kanzlei Franken & Stein", "Mosel bleibt Mosel", "Gutenbergstraße",
+        "Mainz", "FS/2024-TT-015", "Flurstücke", "Kurfürstenstraße",
+        "Stresemannstraße", "Weinbergspfad", "Traben-Trarbach"
+      ]
+    }
+  ]
+}
