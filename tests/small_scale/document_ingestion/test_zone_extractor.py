@@ -6,7 +6,7 @@ regression guards for the prefix-stripping bugs found during development
 (ADR-025, PII evaluation Iteration 4).
 """
 
-from app.document_ingestion.zone_extractor import extract_names
+from app.document_ingestion.zone_extractor import extract_names, extract_zones
 
 
 class TestSubmitterZone:
@@ -142,3 +142,85 @@ class TestOrganisationHandling:
 
         # Then nothing is extracted
         assert names == []
+
+
+class TestZoneSpans:
+    def test_should_confine_anchor_zone_to_the_header(self) -> None:
+        # Given a submitter line followed by running text mentioning the
+        # submitter token again as a common word
+        text = (
+            "Einreicher: Lärmschutz Müller, Musterweg 1\n"
+            "\n"
+            "Der Lärmschutz ist unzureichend gewürdigt."
+        )
+
+        # When extracting zones
+        zones = extract_zones(text)
+
+        # Then the anchor zone ends at the header, before the running text, so
+        # the body occurrence of the common word is outside it
+        assert zones.anchor_zone is not None
+        start, end = zones.anchor_zone
+        assert text[start:end].startswith("Einreicher:")
+        assert "Der Lärmschutz" not in text[start:end]
+        assert text.index("Der Lärmschutz") >= end
+
+    def test_should_open_signature_zone_at_grussformel(self) -> None:
+        # Given a closing formula before the signature
+        text = (
+            "Einreicher: Hildegard Schumacher\n\n"
+            "Ich wende mich gegen den Ausbau.\n\n"
+            "Mit freundlichen Grüßen\nHildegard Schumacher\n"
+        )
+
+        # When extracting zones
+        zones = extract_zones(text)
+
+        # Then the signature zone starts at the Grußformel and reaches the end
+        assert zones.signature_zone is not None
+        start, end = zones.signature_zone
+        assert text[start:].startswith("Mit freundlichen Grüßen")
+        assert end == len(text)
+        assert "Hildegard Schumacher" in text[start:end]
+
+    def test_should_cover_signature_line_before_trailing_ps(self) -> None:
+        # Given no Grußformel, a signature line, then a short PS block (the
+        # regression that the last-block-only fallback missed). The reasoning
+        # paragraph above the signature is long, as real ones are, so the climb
+        # stops there.
+        text = (
+            "Von: Horst Kleinen, Bergstraße 8\n\n"
+            "Ich fordere mindestens ein unabhängiges Schallgutachten, das für "
+            "alle betroffenen Anwohner jederzeit einsehbar ist, bevor das "
+            "Vorhaben überhaupt weiter geplant werden darf.\n\n"
+            "Horst Kleinen\n\n"
+            "PS: Auch meine Frau Gretel Kleinen ist dagegen.\n"
+        )
+
+        # When extracting zones
+        zones = extract_zones(text)
+
+        # Then the signature zone reaches up to the signature line, covering
+        # both the name line and the PS, but not the reasoning paragraph
+        assert zones.signature_zone is not None
+        start, _ = zones.signature_zone
+        assert text[start:].startswith("Horst Kleinen")
+        assert "Schallgutachten" not in text[start:]
+
+    def test_should_not_open_signature_zone_when_ending_mid_reasoning(
+        self,
+    ) -> None:
+        # Given a document whose final block is a long reasoning paragraph
+        text = (
+            "Einreicher: Klaus Bertram\n\n"
+            "Der vorgelegte Bebauungsplan missachtet den gebotenen Lärmschutz "
+            "der Anwohner und ist in der ausgelegten Fassung nicht "
+            "genehmigungsfähig, weshalb wir umfassende Einwendung erheben."
+        )
+
+        # When extracting zones
+        zones = extract_zones(text)
+
+        # Then no signature zone is opened, leaving the tail to NER rather than
+        # masking anchor tokens inside the legal argument
+        assert zones.signature_zone is None

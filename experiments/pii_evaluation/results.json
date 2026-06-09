@@ -18,9 +18,9 @@
     }
   },
   "typ1/einspruch_04.txt": {
-    "masked_text": "Einspruch Bebauungsplan Starkenburg-Süd, B-Plan Nr. 15\nEingereicht bei: Verbandsgemeinde Traben-Trarbach, Bauamt, Rathausstraße 5, 56841 Traben-Trarbach\nDatum: 07.11.2024\nEinreicher: Familie [NAME], Weingut [NAME], Starkenburger Weg 3, 56841 Traben-Trarbach\n\nHiermit legen wir als ansässiges Weingut Einspruch gegen das Rechenzentrum ein.\n\nUnsere Familie bewirtschaftet seit vier Generationen Weinberge in Sichtweite des geplanten Baugebiets. Das Vorhaben bedroht unsere Existenz. Wenn dort ein hässlicher Betonklotz hingebaut wird, wollen die Kunden keinen Moselwein mehr kaufen. Die Marke Mosel lebt von der Landschaft und der Natur. Das versteht die Firma aus Frankfurt anscheinend nicht.\n\nAußerdem haben wir Sorgen wegen dem Wasser. Wir brauchen für unsere Weinberge gutes Wasser und wenn die Mosel durch die Kühlanlage aufgeheizt wird, weiß niemand was das für unsere Reben bedeutet.\n\nWir fordern den Gemeinderat auf, das Projekt abzulehnen und stattdessen in Tourismus und regionale Wirtschaft zu investieren.\n\nFamilie [NAME]\nWeingut [NAME]\n",
+    "masked_text": "Einspruch Bebauungsplan Starkenburg-Süd, B-Plan Nr. 15\nEingereicht bei: Verbandsgemeinde Traben-Trarbach, Bauamt, Rathausstraße 5, 56841 Traben-Trarbach\nDatum: 07.11.2024\nEinreicher: Familie [NAME], Weingut Groß, Starkenburger Weg 3, 56841 Traben-Trarbach\n\nHiermit legen wir als ansässiges Weingut Einspruch gegen das Rechenzentrum ein.\n\nUnsere Familie bewirtschaftet seit vier Generationen Weinberge in Sichtweite des geplanten Baugebiets. Das Vorhaben bedroht unsere Existenz. Wenn dort ein hässlicher Betonklotz hingebaut wird, wollen die Kunden keinen Moselwein mehr kaufen. Die Marke Mosel lebt von der Landschaft und der Natur. Das versteht die Firma aus Frankfurt anscheinend nicht.\n\nAußerdem haben wir Sorgen wegen dem Wasser. Wir brauchen für unsere Weinberge gutes Wasser und wenn die Mosel durch die Kühlanlage aufgeheizt wird, weiß niemand was das für unsere Reben bedeutet.\n\nWir fordern den Gemeinderat auf, das Projekt abzulehnen und stattdessen in Tourismus und regionale Wirtschaft zu investieren.\n\nFamilie [NAME]\nWeingut [NAME]\n",
     "entity_counts": {
-      "NAME": 4
+      "NAME": 3
     }
   },
   "typ1/einspruch_05.txt": {
@@ -54,9 +54,9 @@
     }
   },
   "typ1/einspruch_10.txt": {
-    "masked_text": "Einspruch\nBebauungsplan Nr. 15, Gewerbegebiet Starkenburg-Süd\nAn das Bauamt der Verbandsgemeinde Traben-Trarbach\nDatum: 13.11.2024\nVon: [NAME] und [NAME], Kirschweg 4, 56841 Traben-Trarbach\n\nSehr geehrte Damen und Herren,\n\nwir sind eine junge Familie mit drei Kindern und leben seit fünf Jahren in Traben-Trarbach. Wir haben uns bewusst für diesen Ort entschieden weil er so schön und natürlich ist, weit weg vom städtischen Stress.\n\nJetzt soll in unserer unmittelbaren Nachbarschaft ein gigantisches Rechenzentrum gebaut werden. Wir machen uns große Sorgen. Was atmen unsere Kinder dann ein wenn 24 Dieselaggregate laufen? Was passiert mit dem Wasser der Mosel, in der unsere Kinder im [NAME] schwimmen? Wie soll man hier noch ruhig schlafen wenn Kühlaggregate rund um die Uhr laufen?\n\nWir haben für unser Haus hier viel Geld bezahlt. Der Wert wird sicher massiv sinken wenn das gebaut wird.\n\nAußerdem fragen wir uns: Was hat Traben-Trarbach davon? Paar Jobs bei der Firma, das war's? Und dafür geben wir unsere Natur auf?\n\nWir sind dagegen und bitten Sie, das Projekt zu stoppen.\n\n[NAME] und [NAME]\n",
+    "masked_text": "Einspruch\nBebauungsplan Nr. 15, Gewerbegebiet Starkenburg-Süd\nAn das Bauamt der Verbandsgemeinde Traben-Trarbach\nDatum: 13.11.2024\nVon: [NAME] und [NAME], Kirschweg 4, 56841 Traben-Trarbach\n\nSehr geehrte Damen und Herren,\n\nwir sind eine junge Familie mit drei Kindern und leben seit fünf Jahren in Traben-Trarbach. Wir haben uns bewusst für diesen Ort entschieden weil er so schön und natürlich ist, weit weg vom städtischen Stress.\n\nJetzt soll in unserer unmittelbaren Nachbarschaft ein gigantisches Rechenzentrum gebaut werden. Wir machen uns große Sorgen. Was atmen unsere Kinder dann ein wenn 24 Dieselaggregate laufen? Was passiert mit dem Wasser der Mosel, in der unsere Kinder im Sommer schwimmen? Wie soll man hier noch ruhig schlafen wenn Kühlaggregate rund um die Uhr laufen?\n\nWir haben für unser Haus hier viel Geld bezahlt. Der Wert wird sicher massiv sinken wenn das gebaut wird.\n\nAußerdem fragen wir uns: Was hat Traben-Trarbach davon? Paar Jobs bei der Firma, das war's? Und dafür geben wir unsere Natur auf?\n\nWir sind dagegen und bitten Sie, das Projekt zu stoppen.\n\n[NAME] und [NAME]\n",
     "entity_counts": {
-      "NAME": 5
+      "NAME": 4
     }
   },
   "mixed/einspruch_11_mixed.txt": {

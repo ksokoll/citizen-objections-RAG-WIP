@@ -9,10 +9,13 @@ Concrete PiiMasker implementation (ADR-025). Layered detection:
 2. Presidio analyze over the full text: spaCy German NER for PERSON plus a
    German phone-number regex, and the built-in email and IBAN recognizers.
 
-The two sources are merged additively: the anchor names are masked at every
-word-boundary occurrence (which also covers the signature, where the same
-name recurs), and the NER/regex spans cover the running text. This is the
-only module that imports Presidio.
+The two sources are merged additively: the anchor names are masked only within
+the anchor zone (the header) and the signature zone (the document tail), not at
+every word-boundary occurrence across the whole text, while the NER/regex spans
+cover the running text. Zone restriction closes an analysis-integrity vector: a
+crafted submitter line ("Einreicher: Lärmschutz Bebauungsplan") can no longer
+redact those substantive words throughout the legal reasoning. This is the only
+module that imports Presidio.
 
 Masking is one-way: no placeholder-to-original mapping is kept. The original
 is recoverable only from the raw store via the document_id; that store is
@@ -51,7 +54,7 @@ from presidio_anonymizer import AnonymizerEngine
 from presidio_anonymizer.entities import OperatorConfig
 
 from app.document_ingestion.entities import MaskingResult
-from app.document_ingestion.zone_extractor import extract_names
+from app.document_ingestion.zone_extractor import ZoneExtraction, extract_zones
 
 _ENTITY_TO_PLACEHOLDER: dict[str, str] = {
     "PERSON": "[NAME]",
@@ -142,8 +145,8 @@ class PresidioMasker:
             language=self._LANGUAGE,
             entities=list(_ENTITY_TO_PLACEHOLDER.keys()),
         )
-        anchor_names = extract_names(text)
-        merged = list(results) + self._anchor_person_spans(text, anchor_names)
+        zones = extract_zones(text)
+        merged = list(results) + self._anchor_person_spans(text, zones)
         resolved = self._resolve_overlaps(merged, text)
 
         entity_counts: dict[str, int] = {}
@@ -160,57 +163,111 @@ class PresidioMasker:
             operators=self._operators,
         )
 
-        self._verify_anchor_coverage(anchor_names, anonymized.text, entity_counts)
+        self._verify_anchor_coverage(text, resolved, zones, entity_counts)
 
         return MaskingResult(text=anonymized.text, entity_counts=entity_counts)
 
     @staticmethod
     def _verify_anchor_coverage(
-        anchor_names: list[str],
-        masked_text: str,
+        text: str,
+        resolved: list[RecognizerResult],
+        zones: ZoneExtraction,
         entity_counts: dict[str, int],
     ) -> None:
-        """Self-check that the deterministic anchor names left no token behind.
+        """Self-check that the anchor layer cleared the names from its zones.
 
         The anchor layer is deterministic: every non-stopword token of every
-        extracted name is masked at all its occurrences. After anonymization no
-        such token should survive as a word in the output, so a survivor is an
-        internal contradiction (an offset, overlap-resolution, or anonymizer
-        bug), not the documented probabilistic NER residual.
+        extracted name is masked at every occurrence within the anchor and
+        signature zones. So after masking no such token should survive as a word
+        inside those zones. A survivor there is an internal contradiction (an
+        offset, overlap-resolution, or anonymizer bug), not the documented
+        probabilistic NER residual.
+
+        The check is scoped to the zones, not the whole output, on purpose: with
+        zone-restricted masking a name token may legitimately remain in the
+        running text (a submitter common noun the masker deliberately leaves;
+        ADR-025). Checking the whole output would flag that by-design survival as
+        an anomaly. So the masked renderings of just the zones are inspected.
 
         Records nothing on its own: the NAME count in entity_counts is the
         positive coverage evidence carried into the audit. On a survivor it logs
-        a stderr warning naming the masked-name count and the survivor count,
-        then returns. It never raises and never blocks: under the
-        encapsulated-LLM model a slipped name stays inside the trust boundary,
-        so a leak must be provable in the log, not fatal.
+        a stderr warning naming the masked-name and survivor counts, then
+        returns. It never raises and never blocks: under the encapsulated-LLM
+        model a slipped name stays inside the trust boundary, so a leak must be
+        provable in the log, not fatal.
 
         Args:
-            anchor_names: The names extracted from the anchor zones.
-            masked_text: The anonymized output text.
+            text: The original (unmasked) document text.
+            resolved: The position-ordered, non-overlapping masking spans.
+            zones: The extracted names and the anchor/signature zone spans.
             entity_counts: The per-type masked-region counts (NAME is the
                 positive coverage evidence).
         """
+        zone_spans = [
+            z for z in (zones.anchor_zone, zones.signature_zone) if z is not None
+        ]
+        masked_zones = [
+            PresidioMasker._render_zone(text, resolved, start, end)
+            for start, end in zone_spans
+        ]
         survivors = sorted(
             {
                 token
-                for name in anchor_names
+                for name in zones.names
                 for token in name.split()
                 if token.lower() not in _NAME_STOPWORDS
-                and _is_present_as_word(token, masked_text)
+                and any(_is_present_as_word(token, mz) for mz in masked_zones)
             }
         )
         if survivors:
             print(
                 "PII coverage anomaly: "
                 f"{len(survivors)} deterministic anchor name token(s) survived "
-                f"masking ({entity_counts.get('NAME', 0)} NAME region(s) "
-                f"masked): {survivors}. The anchor layer is deterministic, so "
-                "this is an internal contradiction; processing continues "
-                "(encapsulated-LLM model, a slipped name stays in the trust "
-                "boundary).",
+                f"masking in their zone ({entity_counts.get('NAME', 0)} NAME "
+                f"region(s) masked): {survivors}. The anchor layer is "
+                "deterministic, so this is an internal contradiction; processing "
+                "continues (encapsulated-LLM model, a slipped name stays in the "
+                "trust boundary).",
                 file=sys.stderr,
             )
+
+    @staticmethod
+    def _render_zone(
+        text: str,
+        resolved: list[RecognizerResult],
+        start: int,
+        end: int,
+    ) -> str:
+        """Render text[start:end] with the resolved masking spans applied.
+
+        Reproduces the anonymizer output for one zone so the coverage check sees
+        what actually survived in the region the anchor layer owns. Works in
+        original offsets: resolved is non-overlapping and position-ordered, so a
+        single left-to-right pass suffices. A span straddling a zone boundary
+        still contributes its placeholder (it masks part of the zone).
+
+        Args:
+            text: The original document text.
+            resolved: The position-ordered, non-overlapping masking spans.
+            start: Inclusive zone start offset.
+            end: Exclusive zone end offset.
+
+        Returns:
+            The masked rendering of the zone substring.
+        """
+        pieces: list[str] = []
+        cursor = start
+        for span in resolved:
+            if span.end <= start or span.start >= end:
+                continue
+            seg_start = max(span.start, start)
+            if seg_start > cursor:
+                pieces.append(text[cursor:seg_start])
+            pieces.append(_ENTITY_TO_PLACEHOLDER.get(span.entity_type, ""))
+            cursor = min(span.end, end)
+        if cursor < end:
+            pieces.append(text[cursor:end])
+        return "".join(pieces)
 
     @staticmethod
     def _resolve_overlaps(
@@ -294,30 +351,41 @@ class PresidioMasker:
         )
 
     def _anchor_person_spans(
-        self, text: str, names: list[str]
+        self, text: str, zones: ZoneExtraction
     ) -> list[RecognizerResult]:
-        """Build PERSON spans for anchor-extracted names at all occurrences.
+        """Build PERSON spans for anchor names within the anchor/signature zones.
 
-        Finds every word-boundary occurrence of each extracted name token in
-        the text (covering the signature). Name strings are split into tokens
-        and stopwords (und, c/o, Familie, ...) are dropped, so connective words
-        are not masked on their own.
+        Finds each name token's word-boundary occurrences, but keeps only those
+        that fall inside the anchor zone (the header) or the signature zone (the
+        document tail). Occurrences in the running text are left to NER, so a
+        crafted submitter line cannot redact substantive words throughout the
+        legal reasoning. Name strings are split into tokens and stopwords (und,
+        c/o, Familie, ...) are dropped, so connective words are not masked.
 
         Args:
             text: The full document text.
-            names: The names extracted from the fixed submitter and
-                representative zones.
+            zones: The extracted names and the anchor/signature zone spans.
 
         Returns:
             A list of RecognizerResult PERSON spans with global positions.
         """
+        zone_spans = [
+            z for z in (zones.anchor_zone, zones.signature_zone) if z is not None
+        ]
+        if not zone_spans:
+            return []
         spans: list[RecognizerResult] = []
         seen: set[tuple[int, int]] = set()
-        for name in names:
+        for name in zones.names:
             for token in name.split():
                 if token.lower() in _NAME_STOPWORDS:
                     continue
                 for match in re.finditer(r"\b" + re.escape(token) + r"\b", text):
+                    if not any(
+                        start <= match.start() and match.end() <= end
+                        for start, end in zone_spans
+                    ):
+                        continue
                     key = (match.start(), match.end())
                     if key in seen:
                         continue
