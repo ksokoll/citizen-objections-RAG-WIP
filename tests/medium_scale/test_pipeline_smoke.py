@@ -11,6 +11,7 @@ from app.core import EinwendungsTyp
 from app.core.events import AuditEventType
 from app.core.failures import IngestionError
 from app.core.results import TriageResult
+from app.document_ingestion.service import DocumentIngestionService
 from app.pipeline import Pipeline
 
 SAMPLE_EINWENDUNG = (
@@ -64,11 +65,10 @@ class TestPipelineSmoke:
         tmp_path: Path,
     ) -> None:
         # Given a pipeline where triage produces no arguments
-        from tests.conftest import FakeLLMClient, FakeRetriever
+        from tests.conftest import FakeLLMClient, FakePiiMasker, FakeRetriever
 
         from app.audit_log.service import AuditLogService
         from app.briefing.service import BriefingService
-        from app.document_ingestion.service import DocumentIngestionService
         from app.triage.service import TriageService
 
         class EmptyTriageService(TriageService):
@@ -80,7 +80,10 @@ class TestPipelineSmoke:
 
         audit_store = JsonLinesAuditStore(tmp_path / "audit.jsonl")
         pipeline = Pipeline(
-            ingestion=DocumentIngestionService(raw_store_path=tmp_path / "raw"),
+            ingestion=DocumentIngestionService(
+                raw_store_path=tmp_path / "raw",
+                masker=FakePiiMasker(),
+            ),
             triage=EmptyTriageService(llm=FakeLLMClient()),
             retrieval=FakeRetriever(),
             briefing=BriefingService(),

@@ -82,7 +82,10 @@ class Pipeline:
             self._emit(
                 einwendungs_id,
                 AuditEventType.EINGANG,
-                {"document_id": ingestion_result.document_id},
+                {
+                    "document_id": ingestion_result.document_id,
+                    "masked_entity_counts": ingestion_result.entity_counts,
+                },
             )
 
             triage_result = self._triage.triage(ingestion_result.clean_text)

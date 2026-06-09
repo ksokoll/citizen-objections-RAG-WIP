@@ -11,6 +11,7 @@ from app.audit_log.service import AuditLogService
 from app.audit_log.store import JsonLinesAuditStore
 from app.briefing.service import BriefingService
 from app.core import EinwendungsTyp
+from app.core.results import MaskingResult
 from app.document_ingestion.service import DocumentIngestionService
 from app.pipeline import Pipeline
 from app.retrieval.entities import NormWithSource
@@ -59,6 +60,38 @@ class FakeLLMClient:
                 "Set fake.parse_response = LLMTriageOutput(...) in the test setup."
             )
         return self.parse_response
+
+
+class FakePiiMasker:
+    """Test double for the PiiMasker protocol.
+
+    Deterministic and free of spaCy or Presidio. By default it is a
+    pass-through (returns the text unchanged, empty counts), which suits
+    pipeline and smoke fixtures where masking is not the subject under test.
+
+    Tests that exercise masking behaviour configure a replacements map of
+    {string_to_mask: placeholder}; each occurrence of a key is replaced by
+    its placeholder, and entity_counts records one count per replaced
+    occurrence keyed by the placeholder label without brackets (e.g. "NAME").
+    The mask calls are recorded for tests that assert the masker was invoked.
+    """
+
+    def __init__(self, replacements: dict[str, str] | None = None) -> None:
+        self.replacements = replacements or {}
+        self.mask_calls: list[str] = []
+
+    def mask(self, text: str) -> MaskingResult:
+        self.mask_calls.append(text)
+        masked = text
+        counts: dict[str, int] = {}
+        for target, placeholder in self.replacements.items():
+            occurrences = masked.count(target)
+            if occurrences == 0:
+                continue
+            masked = masked.replace(target, placeholder)
+            label = placeholder.strip("[]")
+            counts[label] = counts.get(label, 0) + occurrences
+        return MaskingResult(text=masked, entity_counts=counts)
 
 
 class FakeRetriever:
@@ -128,11 +161,16 @@ def pipeline_and_audit(tmp_path: Path) -> tuple[Pipeline, JsonLinesAuditStore]:
     LLMTriageOutput whose original_zitat matches the smoke-test sample
     text. The Briefing context uses no LLM, so no drafting double is
     needed; the FakeRetriever supplies resolved norm text deterministically.
+    The ingestion masker is a pass-through FakePiiMasker, since masking is
+    not the subject of pipeline orchestration tests.
     """
     audit_store = JsonLinesAuditStore(tmp_path / "audit.jsonl")
     triage_llm = FakeLLMClient(parse_response=_DEFAULT_TRIAGE_OUTPUT)
     pipeline = Pipeline(
-        ingestion=DocumentIngestionService(raw_store_path=tmp_path / "raw"),
+        ingestion=DocumentIngestionService(
+            raw_store_path=tmp_path / "raw",
+            masker=FakePiiMasker(),
+        ),
         triage=TriageService(llm=triage_llm),
         retrieval=FakeRetriever(),
         briefing=BriefingService(),
