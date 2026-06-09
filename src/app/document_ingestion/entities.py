@@ -22,6 +22,15 @@ class MaskingResult:
     names and integers). An empty entity_counts dict is a valid result: text
     with no detectable PII produces no masked spans.
 
+    Count contract: one count per masked region after the masker's own
+    resolution. The masker merges anchor and analyzer spans into regions
+    (joining overlapping spans, and whitespace-adjacent spans of the same
+    type), then counts the regions per type. The count is therefore defined by
+    our code, not by a third-party anonymizer's internal merge, and is
+    independent of whether the NER happened to span a multi-token name. The
+    same name in both a header and a signature is two regions, hence two NAME
+    counts (see the medium-scale PresidioMasker test).
+
     Attributes:
         text: The masked text, with detected PII spans replaced by speaking
             German type placeholders ([NAME], [TELEFON], [EMAIL], [IBAN]).

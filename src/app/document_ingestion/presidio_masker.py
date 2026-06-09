@@ -24,8 +24,14 @@ postal codes, and case numbers are deliberately not masked. Under an
 encapsulated-LLM deployment the masking serves internal data minimization, not
 protection against a third-party processor.
 
-Entity counts are derived from the anonymizer's applied items, after overlap
-resolution, so overlapping detections are never double-counted.
+Entity counts follow an explicit contract owned by this module: the anchor and
+analyzer spans are merged into regions (overlapping spans, and whitespace
+adjacent spans of the same type, join one region), and the regions are counted
+per type. The count is defined by our region resolution, not by the
+anonymizer's internal merge of `anonymized.items`. The same region set is then
+handed to the anonymizer, so the masked text and the counts rest on one
+resolution step, and the count is independent of whether the NER happened to
+span a multi-token name.
 """
 
 from __future__ import annotations
@@ -92,6 +98,12 @@ class PresidioMasker:
     def mask(self, text: str) -> MaskingResult:
         """Replace detected PII spans with German type placeholders.
 
+        Merges the analyzer and anchor spans into regions with our own rule
+        (overlapping or whitespace-adjacent same-type spans join one region),
+        counts the regions per type, then anonymizes that same region set. The
+        counts are therefore defined by this method, not by the anonymizer's
+        internal merge.
+
         Args:
             text: Raw text that may contain PII.
 
@@ -104,24 +116,105 @@ class PresidioMasker:
             language=self._LANGUAGE,
             entities=list(_ENTITY_TO_PLACEHOLDER.keys()),
         )
-        anchor_results = self._anchor_person_spans(text)
-        merged = list(results) + anchor_results
-
-        anonymized = self._anonymizer.anonymize(
-            text=text,
-            analyzer_results=merged,
-            operators=self._operators,
-        )
+        merged = list(results) + self._anchor_person_spans(text)
+        resolved = self._resolve_overlaps(merged, text)
 
         entity_counts: dict[str, int] = {}
-        for item in anonymized.items:
-            placeholder = _ENTITY_TO_PLACEHOLDER.get(item.entity_type)
+        for span in resolved:
+            placeholder = _ENTITY_TO_PLACEHOLDER.get(span.entity_type)
             if placeholder is None:
                 continue
             label = placeholder.strip("[]")
             entity_counts[label] = entity_counts.get(label, 0) + 1
 
+        anonymized = self._anonymizer.anonymize(
+            text=text,
+            analyzer_results=resolved,
+            operators=self._operators,
+        )
+
         return MaskingResult(text=anonymized.text, entity_counts=entity_counts)
+
+    @staticmethod
+    def _resolve_overlaps(
+        spans: list[RecognizerResult],
+        text: str,
+    ) -> list[RecognizerResult]:
+        """Merge spans into one span per masked region (the count unit).
+
+        Defines the count contract: one span (hence one count) per masked
+        region, where a region is a maximal run of masked characters in the
+        output. Two spans join the same region when they overlap, or when the
+        gap between them is whitespace only and they share an entity type. The
+        merged span spans [min start, max end] and takes the entity type of its
+        highest-scoring member (anchors carry 1.0, so an anchor wins the type
+        against the lower-scored NER span it overlaps).
+
+        Merging the union, rather than dropping the lower-scored span, keeps
+        coverage intact: an NER span "Vorname Nachname" overlapping only the
+        "Nachname" anchor still contributes its "Vorname" extent, so no name
+        token leaks. Bridging a whitespace gap makes the count deterministic and
+        independent of whether the NER happened to span both name tokens: a
+        two-token name is one region either way, counted once per occurrence.
+        The same name in a header and a signature is two regions, hence two
+        counts; these regions are separated by running text, not whitespace, so
+        they never merge.
+
+        Args:
+            spans: The merged analyzer and anchor spans, possibly overlapping.
+            text: The full document text, used to test whether the gap between
+                two spans is whitespace only.
+
+        Returns:
+            One non-overlapping span per region, ordered by position.
+        """
+        ordered = sorted(spans, key=lambda s: (s.start, s.end))
+        regions: list[RecognizerResult] = []
+        for span in ordered:
+            current = regions[-1] if regions else None
+            if current is not None and PresidioMasker._joins_region(
+                current, span, text
+            ):
+                merged_type = (
+                    span.entity_type
+                    if span.score > current.score
+                    else current.entity_type
+                )
+                regions[-1] = RecognizerResult(
+                    entity_type=merged_type,
+                    start=current.start,
+                    end=max(current.end, span.end),
+                    score=max(current.score, span.score),
+                )
+            else:
+                regions.append(span)
+        return regions
+
+    @staticmethod
+    def _joins_region(
+        current: RecognizerResult, span: RecognizerResult, text: str
+    ) -> bool:
+        """Return whether span belongs to the same masked region as current.
+
+        True when span overlaps current, or when the gap between them is
+        whitespace only and both carry the same entity type (so a name split
+        into two tokens by a space stays one region, but two different masked
+        types side by side do not merge).
+
+        Args:
+            current: The region built so far (ordered before span by start).
+            span: The next span in start order.
+            text: The full document text, for inspecting the gap.
+
+        Returns:
+            True if span should extend current, False if it starts a new region.
+        """
+        if span.start < current.end:
+            return True
+        return (
+            span.entity_type == current.entity_type
+            and text[current.end : span.start].strip() == ""
+        )
 
     def _anchor_person_spans(self, text: str) -> list[RecognizerResult]:
         """Build PERSON spans for anchor-extracted names at all occurrences.
