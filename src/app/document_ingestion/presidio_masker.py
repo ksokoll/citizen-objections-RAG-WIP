@@ -42,7 +42,7 @@ from presidio_analyzer.nlp_engine import NlpEngineProvider
 from presidio_anonymizer import AnonymizerEngine
 from presidio_anonymizer.entities import OperatorConfig
 
-from app.core.results import MaskingResult
+from app.document_ingestion.entities import MaskingResult
 from app.document_ingestion.zone_extractor import extract_names
 
 _ENTITY_TO_PLACEHOLDER: dict[str, str] = {

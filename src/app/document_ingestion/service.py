@@ -11,8 +11,8 @@ import uuid
 from pathlib import Path
 
 from app.core.failures import IngestionError
-from app.core.protocols import PiiMasker
 from app.core.results import IngestionResult
+from app.document_ingestion.protocols import PiiMasker
 
 
 class DocumentIngestionService:

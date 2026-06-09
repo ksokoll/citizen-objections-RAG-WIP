@@ -15,12 +15,10 @@ from .failures import (
 from .protocols import (
     AuditEventPublisherProtocol,
     LLMClientProtocol,
-    PiiMasker,
     Retriever,
 )
 from .results import (
     IngestionResult,
-    MaskingResult,
     TriageResult,
 )
 
@@ -31,7 +29,6 @@ __all__ = [
     "ExtrahiertesArgument",
     # Results
     "IngestionResult",
-    "MaskingResult",
     "TriageResult",
     # Failures
     "AuditLogError",
@@ -44,6 +41,5 @@ __all__ = [
     # Protocols
     "AuditEventPublisherProtocol",
     "LLMClientProtocol",
-    "PiiMasker",
     "Retriever",
 ]
