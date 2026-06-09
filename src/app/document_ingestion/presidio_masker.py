@@ -38,6 +38,7 @@ span a multi-token name.
 from __future__ import annotations
 
 import re
+import sys
 
 from presidio_analyzer import (
     AnalyzerEngine,
@@ -70,6 +71,30 @@ _PHONE_PATTERN = Pattern(
     regex=r"(?<![\d-])(?:\+49|0)[\s/-]?\d(?:[\s/-]?\d){6,}",
     score=0.6,
 )
+
+
+def _is_present_as_word(token: str, text: str) -> bool:
+    """Return whether token appears as a standalone word in text.
+
+    Mirrors the recall check in experiments/pii_evaluation/evaluate.py: word
+    boundaries so a token is not matched as a substring of an unrelated longer
+    word ("Stein" inside "Steinbruch" does not count), with a plain-substring
+    fallback for tokens that cannot form a regex boundary (e.g. a trailing
+    hyphen). Duplicated rather than imported because production code must not
+    depend on the offline experiment package.
+
+    Args:
+        token: The name token to look for.
+        text: The text to search.
+
+    Returns:
+        True if the token is present as a word, False otherwise.
+    """
+    pattern = r"\b" + re.escape(token) + r"\b"
+    try:
+        return re.search(pattern, text) is not None
+    except re.error:
+        return token in text
 
 
 class PresidioMasker:
@@ -117,7 +142,8 @@ class PresidioMasker:
             language=self._LANGUAGE,
             entities=list(_ENTITY_TO_PLACEHOLDER.keys()),
         )
-        merged = list(results) + self._anchor_person_spans(text)
+        anchor_names = extract_names(text)
+        merged = list(results) + self._anchor_person_spans(text, anchor_names)
         resolved = self._resolve_overlaps(merged, text)
 
         entity_counts: dict[str, int] = {}
@@ -134,7 +160,57 @@ class PresidioMasker:
             operators=self._operators,
         )
 
+        self._verify_anchor_coverage(anchor_names, anonymized.text, entity_counts)
+
         return MaskingResult(text=anonymized.text, entity_counts=entity_counts)
+
+    @staticmethod
+    def _verify_anchor_coverage(
+        anchor_names: list[str],
+        masked_text: str,
+        entity_counts: dict[str, int],
+    ) -> None:
+        """Self-check that the deterministic anchor names left no token behind.
+
+        The anchor layer is deterministic: every non-stopword token of every
+        extracted name is masked at all its occurrences. After anonymization no
+        such token should survive as a word in the output, so a survivor is an
+        internal contradiction (an offset, overlap-resolution, or anonymizer
+        bug), not the documented probabilistic NER residual.
+
+        Records nothing on its own: the NAME count in entity_counts is the
+        positive coverage evidence carried into the audit. On a survivor it logs
+        a stderr warning naming the masked-name count and the survivor count,
+        then returns. It never raises and never blocks: under the
+        encapsulated-LLM model a slipped name stays inside the trust boundary,
+        so a leak must be provable in the log, not fatal.
+
+        Args:
+            anchor_names: The names extracted from the anchor zones.
+            masked_text: The anonymized output text.
+            entity_counts: The per-type masked-region counts (NAME is the
+                positive coverage evidence).
+        """
+        survivors = sorted(
+            {
+                token
+                for name in anchor_names
+                for token in name.split()
+                if token.lower() not in _NAME_STOPWORDS
+                and _is_present_as_word(token, masked_text)
+            }
+        )
+        if survivors:
+            print(
+                "PII coverage anomaly: "
+                f"{len(survivors)} deterministic anchor name token(s) survived "
+                f"masking ({entity_counts.get('NAME', 0)} NAME region(s) "
+                f"masked): {survivors}. The anchor layer is deterministic, so "
+                "this is an internal contradiction; processing continues "
+                "(encapsulated-LLM model, a slipped name stays in the trust "
+                "boundary).",
+                file=sys.stderr,
+            )
 
     @staticmethod
     def _resolve_overlaps(
@@ -217,24 +293,27 @@ class PresidioMasker:
             and text[current.end : span.start].strip() == ""
         )
 
-    def _anchor_person_spans(self, text: str) -> list[RecognizerResult]:
+    def _anchor_person_spans(
+        self, text: str, names: list[str]
+    ) -> list[RecognizerResult]:
         """Build PERSON spans for anchor-extracted names at all occurrences.
 
-        Extracts names from the fixed submitter and representative zones, then
-        finds every word-boundary occurrence of each name token in the text
-        (covering the signature). Name strings are split into tokens and
-        stopwords (und, c/o, Familie, ...) are dropped, so connective words are
-        not masked on their own.
+        Finds every word-boundary occurrence of each extracted name token in
+        the text (covering the signature). Name strings are split into tokens
+        and stopwords (und, c/o, Familie, ...) are dropped, so connective words
+        are not masked on their own.
 
         Args:
             text: The full document text.
+            names: The names extracted from the fixed submitter and
+                representative zones.
 
         Returns:
             A list of RecognizerResult PERSON spans with global positions.
         """
         spans: list[RecognizerResult] = []
         seen: set[tuple[int, int]] = set()
-        for name in extract_names(text):
+        for name in names:
             for token in name.split():
                 if token.lower() in _NAME_STOPWORDS:
                     continue
