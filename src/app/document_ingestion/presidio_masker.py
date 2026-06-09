@@ -15,7 +15,8 @@ name recurs), and the NER/regex spans cover the running text. This is the
 only module that imports Presidio.
 
 Masking is one-way: no placeholder-to-original mapping is kept. The original
-is recoverable only from the access-controlled raw store via the document_id
+is recoverable only from the raw store via the document_id; that store is
+created owner-restricted on POSIX (0o700 / 0o600), best-effort on Windows
 (ADR-010, ADR-025).
 
 Scope (ADR-025, DATA_GOVERNANCE_STATEMENT): only identifying core attributes

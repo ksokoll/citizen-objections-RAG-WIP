@@ -21,7 +21,8 @@ class PiiMasker(Protocol):
     masker, so unit tests can substitute a fake that does not load the spaCy
     model. Masking is one-way: implementations must not retain a
     placeholder-to-original mapping. The original is recoverable only from the
-    access-controlled raw store via the document_id (ADR-010, ADR-025).
+    raw store via the document_id; that store is created owner-restricted on
+    POSIX (0o700 / 0o600), best-effort on Windows (ADR-010, ADR-025).
     """
 
     def mask(self, text: str) -> MaskingResult:

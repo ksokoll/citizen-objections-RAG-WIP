@@ -6,7 +6,10 @@ import pytest
 from tests.conftest import FakePiiMasker
 
 from app.core.failures import IngestionError
-from app.document_ingestion.service import DocumentIngestionService
+from app.document_ingestion.service import (
+    _MAX_RAW_TEXT_CHARS,
+    DocumentIngestionService,
+)
 
 
 class TestDocumentIngestionService:
@@ -131,3 +134,32 @@ class TestDocumentIngestionService:
 
         # Then entity_counts is empty
         assert result.entity_counts == {}
+
+
+class TestRawTextLengthBound:
+    def test_should_raise_ingestion_error_for_text_over_length_limit(
+        self, tmp_path: Path
+    ) -> None:
+        # Given a service and an input one character over the bound
+        service = DocumentIngestionService(
+            raw_store_path=tmp_path, masker=FakePiiMasker()
+        )
+        over_limit = "a" * (_MAX_RAW_TEXT_CHARS + 1)
+
+        # When ingest is called with over-limit text
+        # Then IngestionError is raised (input validation at the edge)
+        with pytest.raises(IngestionError):
+            service.ingest(over_limit)
+
+    def test_should_accept_text_at_length_limit(self, tmp_path: Path) -> None:
+        # Given a service and an input exactly at the bound
+        service = DocumentIngestionService(
+            raw_store_path=tmp_path, masker=FakePiiMasker()
+        )
+        at_limit = "a" * _MAX_RAW_TEXT_CHARS
+
+        # When ingest is called with text at the limit
+        result = service.ingest(at_limit)
+
+        # Then it passes (the bound is inclusive)
+        assert result.clean_text == at_limit
