@@ -32,7 +32,9 @@ detailed specifications live in ADRs and are not repeated here:
   canonical-serialization specification and its versioning, durable append and
   chain-head recovery, single-writer enforcement, and the erasure-coexistence
   rationale.
-- ADR-025 (candidate): Audit-Write Failure Policy (completeness vs availability,
+- ADR-026: Observability Logging Policy (one sink, default-deny allowlist,
+  message and exception policy, time-based retention).
+- ADR-027: Audit-Write Failure Policy (completeness vs availability,
   see the Completeness section).
 
 ## Guiding distinction
@@ -119,7 +121,7 @@ window in which items 1 to 5 could log unsafely.
      signal.
    - audit_write_failures_total: counts swallowed-or-handled audit publish
      failures, so a degrading audit store is visible regardless of the failure
-     policy chosen in ADR-025.
+     policy chosen in ADR-027.
 
    On "dropped" metrics: the agent's in-loop verification gate is removed.
    Verification as such is not gone; norm resolution is itself a verification
@@ -279,7 +281,7 @@ advance invariant (Step 2) and the audit_write_failures_total metric and an
 ERROR span status (Step 1) together make the failure visible regardless of the
 policy chosen.
 
-Open decision (candidate ADR-025): the audit-write failure policy, completeness
+Decided in ADR-027: the audit-write failure policy, completeness
 versus availability.
 
 - Fail-closed: a failed write for a chain-of-custody event aborts the run (or
@@ -289,12 +291,12 @@ versus availability.
 - Fail-open (current): the pipeline continues so a citizen still receives a
   briefing on a transient hiccup. Accepts silent incompleteness.
 
-Recommended direction, reinforced by the reliability review and to be ratified in
-ADR-025 before go-live (not after): fail-closed for the six custody events
+Recommended direction, reinforced by the reliability review and ratified in
+ADR-027 before go-live (not after): fail-closed for the six custody events
 (EINGANG, TRIAGE, RETRIEVAL, BRIEFING_ERSTELLT, KEIN_TREFFER, PIPELINE_FEHLER),
 because for a Behörde compliance trail completeness is the point. Best-effort
 handling is acceptable only for operational telemetry outside the custody chain.
-The decision is recorded in ADR-025 before _emit is changed.
+The decision is recorded in ADR-027 before _emit is changed.
 
 ## Out of scope
 

@@ -529,3 +529,74 @@ The Sachbearbeiter does not wait on a queue: they submit a document and expect a
 
 **Why does Briefing receive the arguments and resolved norms from the Coordinator?**
 Briefing assembles a per-argument artifact, so it needs the extracted arguments (as plain dicts) and the resolved norms mapped by the Coordinator into `ResolvedNormEntry`. It also receives `einwendungs_typ` to carry the document-level classification onto the briefing, not to select an LLM prompt strategy (there is no LLM in this context). The Coordinator owns the cross-context mapping so that Briefing imports nothing from Triage or Retrieval.
+
+
+# BOUNDED_CONTEXTS.md: Required Edits for ADR-027
+
+Two locations in the current BOUNDED_CONTEXTS.md still encode the old
+fail-open audit behavior and contradict ADR-027. Apply both edits in the
+same commit that flips ADR-027 to Accepted.
+
+The AuditLog *boundary rationale* (the "Why is AuditLog a separate BC"
+design note) stays as written: AuditLog still has a distinct failure mode
+and an append-only contract. What changes is only how a write failure
+propagates, not why the context is separate. The phrase "write failure must
+not suppress domain results" in that note is now stale for custody events and
+should be softened to reflect that a custody-event write failure aborts the
+run (ADR-027), while a telemetry write failure does not.
+
+## Edit 1: Error Propagation block
+
+Current:
+
+```
+IngestionError    →  Pipeline aborted, AuditEvent(INGESTION_FAILED) emitted
+TriageError       →  Pipeline aborted, AuditEvent(TRIAGE_FAILED) emitted
+NoMatchEvent      →  Pipeline terminated (valid), AuditEvent(NO_MATCH) emitted
+RetrievalError    →  Pipeline aborted, AuditEvent(RETRIEVAL_FAILED) emitted
+AuditLogError     →  Logged at ERROR, pipeline result returned regardless
+```
+
+Replace the last line, and add a line, so the block reads:
+
+```
+IngestionError    →  Pipeline aborted, AuditEvent(PIPELINE_FEHLER) emitted
+TriageError       →  Pipeline aborted, AuditEvent(PIPELINE_FEHLER) emitted
+NoMatchEvent      →  Pipeline terminated (valid), AuditEvent(KEIN_TREFFER) emitted
+RetrievalError    →  Pipeline aborted, AuditEvent(PIPELINE_FEHLER) emitted
+AuditWriteError   →  Custody event: pipeline aborted (fail-closed, ADR-027),
+                     audit_write_failures_total incremented, ERROR timing log
+AuditLogError     →  Duplicate or query failure (not a write failure):
+                     surfaced to the caller, does not silently pass
+```
+
+Rationale for the event-name corrections: the prose used placeholder names
+(INGESTION_FAILED, TRIAGE_FAILED, NO_MATCH, RETRIEVAL_FAILED) that do not
+match the actual AuditEventType members in core/events.py (PIPELINE_FEHLER,
+KEIN_TREFFER, etc.) as wired in pipeline.py. Align the doc to the code while
+making this edit.
+
+## Edit 2: Context Map Coordinator box
+
+Current bullet list inside the Coordinator box:
+
+```
+│  - Sequential BC orchestration               │
+│  - Protocol dependency injection             │
+│  - AuditEvent emission after each step        │
+│  - Failure routing and status mapping         │
+```
+
+Change the AuditEvent line to make the fail-closed posture visible at the
+map level:
+
+```
+│  - AuditEvent emission (fail-closed, ADR-027) │
+```
+
+## Edit 3: cross-reference
+
+In the "Why is AuditLog a separate BC" note, append one sentence:
+
+"The write-failure propagation policy for custody events is fail-closed; see
+ADR-027."

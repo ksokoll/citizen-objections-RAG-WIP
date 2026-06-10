@@ -245,4 +245,4 @@ NER-based masking is de-identification, not anonymisation (cf. Pilán/Lison TAB;
 2. Add the FakePiiMasker to conftest and the service unit tests plus zone_extractor unit tests.
 3. Reproducibility fixes: git-sha in results.json, model identifier in the result filename.
 4. Reconcile ADR-010 against the implemented masker (the originally planned LLM masking pass was not built).
-5. Resolve the ADR numbering collision (the observability document calls the audit-write-failure policy "ADR-025 candidate"; ADR-025 is now the PII masking record, so the failure policy should be renumbered to ADR-026).
+5. Resolve the ADR numbering collision (the observability document called the audit-write-failure policy "ADR-025 candidate"; ADR-025 is now the PII masking record). Resolved in round 15: the audit-write-failure policy is ADR-027 and the observability logging policy is ADR-026.
