@@ -97,6 +97,9 @@ def test_allowlist_is_the_frozen_golden_set() -> None:
             "audit_event_type",
             "exc_type",
             "exc_location",
+            "survivor_count",
+            "name_regions_masked",
+            "store_mode",
         }
     )
 

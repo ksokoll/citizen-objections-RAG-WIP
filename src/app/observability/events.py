@@ -11,9 +11,10 @@ Foreign stdlib records (Presidio, OpenTelemetry, urllib3) are not subject to
 this vocabulary: their message text is arbitrary by nature and is governed only
 by the key allowlist and the WARNING clamp.
 
-Round A defines the single governed event the pipeline emits, the interim
-audit-append failure. Rounds B and C extend this registry (timing, tracing,
-metrics, custody-write events) deliberately, one constant at a time.
+Round A defines the governed events emitted in this round: the interim
+audit-append failure and the two DocumentIngestion warnings that previously
+escaped to stderr ungoverned. Rounds B and C extend this registry (timing,
+tracing, metrics, custody-write events) deliberately, one constant at a time.
 """
 
 from __future__ import annotations
@@ -25,9 +26,20 @@ from typing import Final
 #: the same call site fail-closed; the log line stays.
 AUDIT_APPEND_FAILED: Final[str] = "audit.append_failed"
 
+#: A persisted raw store is world-accessible on POSIX (DocumentIngestion).
+#: A misconfiguration, not a masking outcome: logged, processing continues.
+INGESTION_RAW_STORE_WORLD_READABLE: Final[str] = "ingestion.raw_store_world_readable"
+
+#: Deterministic anchor name tokens survived masking in their own zone
+#: (DocumentIngestion). An internal contradiction; logged as a count only,
+#: never the surviving tokens, so the anomaly signal carries no PII.
+INGESTION_PII_COVERAGE_ANOMALY: Final[str] = "ingestion.pii_coverage_anomaly"
+
 REGISTERED_EVENTS: Final[frozenset[str]] = frozenset(
     {
         AUDIT_APPEND_FAILED,
+        INGESTION_RAW_STORE_WORLD_READABLE,
+        INGESTION_PII_COVERAGE_ANOMALY,
     }
 )
 

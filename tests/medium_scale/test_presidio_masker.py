@@ -11,10 +11,12 @@ model.
 from __future__ import annotations
 
 import pytest
+import structlog
 from presidio_analyzer import RecognizerResult
 
 from app.document_ingestion.presidio_masker import PresidioMasker
 from app.document_ingestion.zone_extractor import ZoneExtraction
+from app.observability.events import INGESTION_PII_COVERAGE_ANOMALY
 
 
 def _person_span(text: str, substring: str) -> RecognizerResult:
@@ -67,14 +69,13 @@ class TestCoverageSelfCheck:
     """Pins the zone-scoped coverage self-check (no spaCy; pure staticmethod).
 
     The check logs but never raises: under the encapsulated-LLM model a slipped
-    name is tolerable, so a leak must be provable in the audit, not fatal. It is
-    scoped to the anchor and signature zones, so a name token left in the
-    running text by design is not flagged.
+    name is tolerable, so a leak must be provable in the governed log, not
+    fatal. It is scoped to the anchor and signature zones, so a name token left
+    in the running text by design is not flagged. The governed event carries
+    counts only; the surviving tokens never leave the trust boundary (ADR-026).
     """
 
-    def test_should_warn_when_anchor_token_survives_in_zone(
-        self, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_should_warn_when_anchor_token_survives_in_zone(self) -> None:
         # Given an anchor zone where only the first name was masked, the
         # surname surviving inside the zone
         text = "Einreicher: Klaus Bertram"
@@ -85,17 +86,20 @@ class TestCoverageSelfCheck:
         )
         resolved = [_person_span(text, "Klaus")]
 
-        PresidioMasker._verify_anchor_coverage(text, resolved, zones, {"NAME": 1})
+        with structlog.testing.capture_logs() as logs:
+            PresidioMasker._verify_anchor_coverage(text, resolved, zones, {"NAME": 1})
 
-        # Then a stderr anomaly names the survivor and the masked-name count
-        err = capsys.readouterr().err
-        assert "PII coverage anomaly" in err
-        assert "Bertram" in err
-        assert "1 NAME region" in err
+        # Then a governed anomaly event is logged with the survivor count and
+        # the masked-name region count, and the surviving token is never in it.
+        anomalies = [
+            log for log in logs if log["event"] == INGESTION_PII_COVERAGE_ANOMALY
+        ]
+        assert len(anomalies) == 1
+        assert anomalies[0]["survivor_count"] == 1
+        assert anomalies[0]["name_regions_masked"] == 1
+        assert "Bertram" not in repr(anomalies[0])
 
-    def test_should_not_warn_when_zone_name_fully_masked(
-        self, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_should_not_warn_when_zone_name_fully_masked(self) -> None:
         # Given a zone where the whole name region was masked
         text = "Einreicher: Klaus Bertram"
         zones = ZoneExtraction(
@@ -112,14 +116,13 @@ class TestCoverageSelfCheck:
             )
         ]
 
-        PresidioMasker._verify_anchor_coverage(text, resolved, zones, {"NAME": 1})
+        with structlog.testing.capture_logs() as logs:
+            PresidioMasker._verify_anchor_coverage(text, resolved, zones, {"NAME": 1})
 
         # Then nothing is logged
-        assert capsys.readouterr().err == ""
+        assert logs == []
 
-    def test_should_not_warn_for_token_left_in_running_text(
-        self, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_should_not_warn_for_token_left_in_running_text(self) -> None:
         # Given a submitter common noun masked in the header but deliberately
         # left in the running text (outside both zones)
         text = (
@@ -138,14 +141,13 @@ class TestCoverageSelfCheck:
             _person_span(text, "Müller"),
         ]
 
-        PresidioMasker._verify_anchor_coverage(text, resolved, zones, {"NAME": 1})
+        with structlog.testing.capture_logs() as logs:
+            PresidioMasker._verify_anchor_coverage(text, resolved, zones, {"NAME": 1})
 
         # Then the running-text survival is not flagged (check is zone-scoped)
-        assert capsys.readouterr().err == ""
+        assert logs == []
 
-    def test_should_ignore_stopword_tokens_in_coverage_check(
-        self, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_should_ignore_stopword_tokens_in_coverage_check(self) -> None:
         # Given a couple whose connective "und" is left unmasked by design
         text = "Einreichende Person: Ralf und Brigitte Kessler"
         zones = ZoneExtraction(
@@ -159,10 +161,11 @@ class TestCoverageSelfCheck:
             _person_span(text, "Kessler"),
         ]
 
-        PresidioMasker._verify_anchor_coverage(text, resolved, zones, {"NAME": 3})
+        with structlog.testing.capture_logs() as logs:
+            PresidioMasker._verify_anchor_coverage(text, resolved, zones, {"NAME": 3})
 
         # Then the stopword "und" is not treated as a surviving name token
-        assert capsys.readouterr().err == ""
+        assert logs == []
 
 
 class TestZoneRestrictedAnchorMasking:

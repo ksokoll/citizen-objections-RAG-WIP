@@ -61,6 +61,12 @@ ALLOWED_KEYS: frozenset[str] = frozenset(
         "audit_event_type",
         "exc_type",
         "exc_location",
+        # Operational counts and a mode string for the two governed
+        # DocumentIngestion warnings. Counts only: the PII coverage anomaly
+        # never carries the surviving tokens, only how many survived.
+        "survivor_count",
+        "name_regions_masked",
+        "store_mode",
     }
 )
 

@@ -41,8 +41,8 @@ span a multi-token name.
 from __future__ import annotations
 
 import re
-import sys
 
+import structlog
 from presidio_analyzer import (
     AnalyzerEngine,
     Pattern,
@@ -55,6 +55,9 @@ from presidio_anonymizer.entities import OperatorConfig
 
 from app.document_ingestion.entities import MaskingResult
 from app.document_ingestion.zone_extractor import ZoneExtraction, extract_zones
+from app.observability.events import INGESTION_PII_COVERAGE_ANOMALY
+
+_log = structlog.get_logger()
 
 _ENTITY_TO_PLACEHOLDER: dict[str, str] = {
     "PERSON": "[NAME]",
@@ -220,15 +223,15 @@ class PresidioMasker:
             }
         )
         if survivors:
-            print(
-                "PII coverage anomaly: "
-                f"{len(survivors)} deterministic anchor name token(s) survived "
-                f"masking in their zone ({entity_counts.get('NAME', 0)} NAME "
-                f"region(s) masked): {survivors}. The anchor layer is "
-                "deterministic, so this is an internal contradiction; processing "
-                "continues (encapsulated-LLM model, a slipped name stays in the "
-                "trust boundary).",
-                file=sys.stderr,
+            # Governed anomaly signal (ADR-026): the former stderr print
+            # interpolated the surviving NAME tokens, leaking PII through the
+            # one channel logging cannot govern. Only counts are logged now;
+            # the tokens never leave the trust boundary. Processing continues
+            # (encapsulated-LLM model: a slipped name stays inside it).
+            _log.error(
+                INGESTION_PII_COVERAGE_ANOMALY,
+                survivor_count=len(survivors),
+                name_regions_masked=entity_counts.get("NAME", 0),
             )
 
     @staticmethod

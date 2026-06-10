@@ -15,13 +15,17 @@ from __future__ import annotations
 
 import os
 import stat
-import sys
 import uuid
 from pathlib import Path
+
+import structlog
 
 from app.core.failures import IngestionError
 from app.core.results import IngestionResult
 from app.document_ingestion.protocols import PiiMasker
+from app.observability.events import INGESTION_RAW_STORE_WORLD_READABLE
+
+_log = structlog.get_logger()
 
 # Upper bound on raw_text length, enforced at the ingest boundary. This is
 # input validation at the edge, not a masking decision: a single oversized
@@ -131,9 +135,10 @@ class DocumentIngestionService:
             return
         mode = self._raw_store_path.stat().st_mode
         if mode & (stat.S_IROTH | stat.S_IWOTH | stat.S_IXOTH):
-            print(
-                f"WARNING: raw store {self._raw_store_path} is world-accessible "
-                f"(mode {stat.S_IMODE(mode):#o}); the unmasked originals are "
-                "not owner-restricted. Set the directory to 0o700.",
-                file=sys.stderr,
+            # Governed warning (ADR-026): the former stderr print bypassed the
+            # logging controls. The store path is not logged (it could be
+            # sensitive); the mode is enough to act on.
+            _log.warning(
+                INGESTION_RAW_STORE_WORLD_READABLE,
+                store_mode=f"{stat.S_IMODE(mode):#o}",
             )

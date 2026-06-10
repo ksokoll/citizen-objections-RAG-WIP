@@ -17,9 +17,10 @@ ResolvedNormEntry, so neither context imports the other's domain model.
 
 from __future__ import annotations
 
-import sys
 import uuid
 from typing import Any
+
+import structlog
 
 from app.audit_log.service import AuditLogService
 from app.briefing.entities import ResolvedNormEntry, WuerdigungsBriefing
@@ -32,7 +33,11 @@ from app.core.failures import (
 )
 from app.core.protocols import Retriever
 from app.document_ingestion.service import DocumentIngestionService
+from app.observability import reset_correlation_id, set_correlation_id
+from app.observability.events import AUDIT_APPEND_FAILED
 from app.triage.service import TriageService
+
+_log = structlog.get_logger()
 
 
 class Pipeline:
@@ -75,10 +80,16 @@ class Pipeline:
             RetrievalError: If norm retrieval fails.
         """
         einwendungs_id: str | None = None
+        correlation_token = None
 
         try:
             ingestion_result = self._ingestion.ingest(raw_text)
             einwendungs_id = ingestion_result.document_id
+            # Anchor every subsequent log event of this run on the document_id,
+            # the pseudonymous correlation id (ADR-026). It is set here rather
+            # than at run() entry because the id does not exist until ingestion
+            # mints it; all emitting code runs after this point.
+            correlation_token = set_correlation_id(einwendungs_id)
             self._emit(
                 einwendungs_id,
                 AuditEventType.EINGANG,
@@ -136,6 +147,9 @@ class Pipeline:
                     {"reason": "pipeline error"},
                 )
             raise
+        finally:
+            if correlation_token is not None:
+                reset_correlation_id(correlation_token)
 
     def _resolve_norms(
         self,
@@ -189,7 +203,19 @@ class Pipeline:
         event_type: AuditEventType,
         payload: dict[str, Any],
     ) -> None:
-        """Emit an audit event. Logs to stderr on failure, never raises.
+        """Emit an audit event. Interim: log a governed ERROR on failure.
+
+        Interim policy (ADR-027): a failed publish is logged as a registered
+        ERROR event (AUDIT_APPEND_FAILED) and swallowed, not raised. The
+        fail-closed abort specified in ADR-027 for the six custody events lands
+        in Round C behind this same log line, once the chain invariants that
+        make an abort diagnosable exist (ADR-024).
+
+        This replaces the previous stderr print, which bypassed every logging
+        control and interpolated the raw exception text, itself a violation of
+        the exception policy (ADR-026). The exception is attached via exc_info
+        and reduced to type plus location by the logging chain; its message is
+        never written.
 
         Args:
             einwendungs_id: ID of the objection being processed.
@@ -205,9 +231,9 @@ class Pipeline:
                     payload=payload,
                 )
             )
-        except Exception as e:
-            print(
-                f"AUDIT ERROR: failed to emit {event_type.value} "
-                f"for {einwendungs_id}: {e}",
-                file=sys.stderr,
+        except Exception:
+            _log.error(
+                AUDIT_APPEND_FAILED,
+                audit_event_type=event_type.value,
+                exc_info=True,
             )

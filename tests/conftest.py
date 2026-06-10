@@ -11,6 +11,8 @@ from app.audit_log.service import AuditLogService
 from app.audit_log.store import JsonLinesAuditStore
 from app.briefing.service import BriefingService
 from app.core import EinwendungsTyp
+from app.core.events import AuditEvent, AuditEventType
+from app.core.failures import AuditLogError
 from app.document_ingestion.entities import MaskingResult
 from app.document_ingestion.service import DocumentIngestionService
 from app.pipeline import Pipeline
@@ -134,6 +136,35 @@ class FakeRetriever:
         return results
 
 
+class RaisingAuditStoreFake:
+    """AuditEventPublisherProtocol fake whose publish always raises.
+
+    Drives the interim _emit failure path (ADR-027): every custody emit fails,
+    is logged at ERROR as AUDIT_APPEND_FAILED, and is swallowed in Round A. In
+    Round C the same fake will make run() raise AuditWriteError; the pipeline
+    logging test notes that pending mutation in its docstring. publish_calls
+    records how many publishes were attempted, so a test can assert the failure
+    path was exercised.
+    """
+
+    def __init__(self, error: Exception | None = None) -> None:
+        self._error = error or AuditLogError("simulated audit store write failure")
+        self.publish_calls = 0
+
+    def publish(self, event: AuditEvent) -> None:
+        self.publish_calls += 1
+        raise self._error
+
+    def query(
+        self,
+        einwendungs_id: str | None = None,
+        event_type: AuditEventType | None = None,
+        after: Any = None,
+        before: Any = None,
+    ) -> list[AuditEvent]:
+        return []
+
+
 # Default LLMTriageOutput for pipeline-level fixtures: a single TYP_2 argument
 # whose original_zitat is a substring of the smoke-test SAMPLE_EINWENDUNG.
 # Pre-configuring this on the triage FakeLLMClient keeps the smoke test
@@ -177,3 +208,29 @@ def pipeline_and_audit(tmp_path: Path) -> tuple[Pipeline, JsonLinesAuditStore]:
         audit=AuditLogService(store=audit_store),
     )
     return pipeline, audit_store
+
+
+@pytest.fixture()
+def pipeline_with_failing_audit(
+    tmp_path: Path,
+) -> tuple[Pipeline, RaisingAuditStoreFake]:
+    """Pipeline whose audit store raises on every publish.
+
+    Identical to pipeline_and_audit except the audit store is a
+    RaisingAuditStoreFake, so every custody emit hits the interim _emit failure
+    path (ADR-027). Used to exercise the governed-ERROR-and-swallow behaviour
+    and the constant correlation id across a run's failed emits.
+    """
+    raising_store = RaisingAuditStoreFake()
+    triage_llm = FakeLLMClient(parse_response=_DEFAULT_TRIAGE_OUTPUT)
+    pipeline = Pipeline(
+        ingestion=DocumentIngestionService(
+            raw_store_path=tmp_path / "raw",
+            masker=FakePiiMasker(),
+        ),
+        triage=TriageService(llm=triage_llm),
+        retrieval=FakeRetriever(),
+        briefing=BriefingService(),
+        audit=AuditLogService(store=raising_store),
+    )
+    return pipeline, raising_store
