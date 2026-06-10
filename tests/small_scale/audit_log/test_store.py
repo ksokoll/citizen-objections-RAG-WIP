@@ -145,6 +145,10 @@ def test_event_survives_roundtrip(tmp_path: Path) -> None:
     assert retrieved.timestamp == original.timestamp
     assert retrieved.timestamp.tzinfo is not None
     assert retrieved.payload == original.payload
+    # Round A hash-chain layout fields survive the JSONL roundtrip; they
+    # default until Round C populates the chain (ADR-024).
+    assert retrieved.serialization_version == 1
+    assert retrieved.event_hash is None
 
 
 def test_query_combined_filters(tmp_path: Path) -> None:

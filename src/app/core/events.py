@@ -46,6 +46,25 @@ class AuditEvent(BaseModel):
             "Context-specific metadata (confidence scores, intermediate results, etc.)"
         ),
     )
+    serialization_version: int = Field(
+        default=1,
+        description=(
+            "Version of the canonical serialization used for the hash chain. "
+            "Laid out now (Round A); the chain that depends on it is populated "
+            "in Round C (ADR-024). Versioning lets verify_chain() select the "
+            "canonicalization per event so a later field addition does not "
+            "invalidate historical events."
+        ),
+    )
+    event_hash: str | None = Field(
+        default=None,
+        description=(
+            "SHA-256 over the canonical content plus the predecessor hash. "
+            "None until Round C computes the chain (ADR-024); None is honest "
+            "for events written before the chain exists, not a placeholder to "
+            "be masked."
+        ),
+    )
 
     @field_validator("event_id", "einwendungs_id", mode="before")
     @classmethod
