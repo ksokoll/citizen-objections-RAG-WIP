@@ -149,4 +149,8 @@ Deferred to a backlog and explicitly not extending this iteration: OTLP exporter
 
 ## Deviations Log
 
-Deviations from this pre-registration are recorded here during implementation (what changed, why), per the LESSONS_LEARNED process change. Empty at pre-registration time.
+Deviations from this pre-registration are recorded here during implementation (what changed, why), per the LESSONS_LEARNED process change.
+
+- Round A. ADR numbering: the observability logging policy took ADR-026 and the audit-write failure policy moved to ADR-027 (the pre-registration originally called the audit-write policy ADR-026). The split into two ADRs was review-driven; the logging policy grew large enough to warrant its own record.
+- Round A. Two ungoverned stderr prints in DocumentIngestion (a world-readable-store warning and a PII coverage anomaly) were converted to governed structlog events. The pre-registration scoped masking-file changes out, but step 15's "no ungoverned output in src/app" required it, and one print interpolated surviving citizen NAME tokens to stderr (a real PII leak through the channel logging cannot govern). The conversion changes the output mechanism only, not masking logic, and logs counts not tokens.
+- Round A. The key allowlist gained three operational fields (survivor_count, name_regions_masked, store_mode) to carry the two converted ingestion events as counts. This is a deliberate, golden-test-gated widening of the default-deny set, not a silent one.

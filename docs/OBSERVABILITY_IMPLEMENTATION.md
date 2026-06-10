@@ -1,6 +1,7 @@
 # Observability and Defensibility Implementation Plan
 
-Status: Planned
+Status: Round A implemented (structured logging, PII discipline, AuditEvent
+layout). Rounds B and C planned. See the Round A status note under Step 1.
 Date: 2026-06-02 (revised, third review pass: reliability)
 Scope: Non-functional layer for the citizen-objections pipeline
 (DocumentIngestion -> Triage -> Retrieval -> Briefing -> AuditLog). Adds
@@ -68,6 +69,32 @@ of Step 1.
 
 Done together because all of it touches the logging path or the briefing data
 model. (Decision: ADR-023.)
+
+Round A status (implemented): items 1 (structured logging plus time-based
+rotation), 2 (correlation id on document_id), 6 (PII discipline), and the
+AuditEvent layout fields (serialization_version, event_hash) are done and
+tested at the sink. Items 3, 4, 5, and 7 (tracing, the @traced decorator,
+metrics, the corpus identifier) are Round B; Step 2 (the hash chain, single
+writer, fail-closed _emit) is Round C.
+
+Review-driven additions beyond the original Step 1, all in Round A (ADR-026):
+- One sink, not a structlog-only allowlist: structlog and foreign stdlib
+  records route through the same shared processor chain (ProcessorFormatter
+  with foreign_pre_chain), closing the third-party logging bypass. Third-party
+  loggers are clamped to WARNING.
+- Message policy: log event names are registered static constants
+  (observability.events.REGISTERED_EVENTS); an unregistered structlog event
+  fails loudly. Exception policy: exceptions reduce to type plus location,
+  never str() or a rendered traceback.
+- The default-deny key allowlist is frozen by a golden test.
+- Retention is time-based (TimedRotatingFileHandler at midnight UTC) plus a
+  startup mtime sweep, not size-based rotation.
+- The interim _emit fix: a failed audit publish is a governed ERROR event
+  (AUDIT_APPEND_FAILED), not a stderr print; the fail-closed raise lands in
+  Round C (ADR-027).
+- Two ungoverned DocumentIngestion stderr prints were converted to governed
+  events (counts only); one of them had been interpolating surviving citizen
+  NAME tokens to stderr.
 
 The numbers below are reference labels, not an execution order. The PII
 processor (item 6) is no longer ordered relative to the other items; it is
@@ -153,8 +180,12 @@ window in which items 1 to 5 could log unsafely.
    test or migration logging setup cannot open a leak window. Tests: one pushes a
    PII-shaped field through the processor and asserts it is absent from the
    output; one asserts the correlation id is constant across all events of a run.
-   Optional defense-in-depth: a periodic scan of the log sink for non-allowlist
-   keys.
+   Deferred, now defense-in-depth not primary control: a periodic scan of the
+   log sink for non-allowlist keys. The corrected rationale (ADR-027 deferrals):
+   once the one-sink routing sends both structlog and foreign stdlib records
+   through the same allowlist, the main leak path is closed at the sink, so a
+   periodic scan is a backstop against a future misconfiguration rather than the
+   load-bearing mechanism it would have been without stdlib routing.
 
    The identifier: document_id is a random uuid4 token, not derived from PII. It
    is pseudonymization, not anonymization, because re-identification remains
