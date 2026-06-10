@@ -6,3 +6,4 @@ CLAUDE.md
 XML/*
 __pycache__
 experiments/*/results/
+logs/
