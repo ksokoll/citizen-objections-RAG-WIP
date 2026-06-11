@@ -19,16 +19,24 @@ from pathlib import Path
 import pytest
 import structlog
 
+from app.observability import logging_config
 from app.observability.correlation import correlation_scope
-from app.observability.events import AUDIT_APPEND_FAILED, UnregisteredLogEventError
+from app.observability.events import (
+    AUDIT_APPEND_FAILED,
+    LOG_SINK_SIZE_BYTES,
+    PROCESSOR_FAILED,
+    UNREGISTERED_LOG_EVENT,
+    UnregisteredLogEventError,
+)
 from app.observability.logging_config import (
     ALLOWED_KEYS,
     LOG_FILENAME,
     MAX_FOREIGN_EVENT_CHARS,
+    ObservabilityBootstrapError,
     ProcessorChainError,
     _OwnerOnlyTimedRotatingFileHandler,
-    _self_check,
     configure_logging,
+    never_raise,
     sweep_expired_logs,
 )
 
@@ -42,8 +50,10 @@ _POSIX_ONLY = pytest.mark.skipif(
 def log_sink(tmp_path: Path) -> Callable[[], list[dict]]:
     """Redirect the single sink to tmp_path; return a JSON-lines reader.
 
-    Teardown restores a good configuration in the same tmp path so a test that
-    deliberately breaks the chain (the self-check test) does not leak a broken
+    The reader filters out the startup ``log_sink_size_bytes`` event that
+    configure_logging emits, so a per-test assertion sees only the lines the
+    test produced. Teardown restores a good configuration in the same tmp path
+    so a test that deliberately breaks the chain does not leak a broken
     structlog config into later tests.
     """
     configure_logging(log_dir=tmp_path, fmt="json")
@@ -55,9 +65,11 @@ def log_sink(tmp_path: Path) -> Callable[[], list[dict]]:
         if not log_file.exists():
             return []
         return [
-            json.loads(line)
+            record
             for line in log_file.read_text(encoding="utf-8").splitlines()
             if line.strip()
+            for record in [json.loads(line)]
+            if record.get("event") != LOG_SINK_SIZE_BYTES
         ]
 
     yield read_lines
@@ -109,6 +121,9 @@ def test_allowlist_is_the_frozen_golden_set() -> None:
             "survivor_count",
             "name_regions_masked",
             "store_mode",
+            "sink_size_bytes",
+            "failed_processor",
+            "caller_location",
         }
     )
 
@@ -153,24 +168,159 @@ def test_unregistered_structlog_event_name_raises(
         log.info("ad.hoc.unregistered.event", count=1)
 
 
-def test_self_check_raises_when_allowlist_removed_from_chain(
-    log_sink: Callable[[], list[dict]],
+def test_configure_raises_when_allowlist_missing_from_chain(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The self-check fails loudly if the allowlist leaves the active chain.
+    """The self-check fails loudly at configure time if the allowlist is absent.
 
-    Given a reconfiguration that keeps the self-check but drops the allowlist
-    processor, when the next event is emitted, then ProcessorChainError is
-    raised before any ungoverned output is produced.
+    Given a chain builder that drops the default-deny allowlist processor, when
+    configure_logging runs, then ProcessorChainError is raised at configure time
+    (not per event), before any ungoverned sink is installed. The check now runs
+    once at bootstrap; post-startup tampering is out of scope for the runtime
+    path (ADR-026, phase separation).
     """
-    structlog.configure(
-        processors=[_self_check, structlog.processors.JSONRenderer()],
-        logger_factory=structlog.stdlib.LoggerFactory(),
-        cache_logger_on_first_use=False,
+    original_build = logging_config._build_shared_processors
+
+    def build_without_allowlist() -> list:
+        return [
+            processor
+            for processor in original_build()
+            if getattr(processor, "__wrapped__", None)
+            is not logging_config._filter_allowlist
+        ]
+
+    monkeypatch.setattr(
+        logging_config, "_build_shared_processors", build_without_allowlist
     )
-    log = structlog.get_logger()
 
     with pytest.raises(ProcessorChainError):
-        log.info(AUDIT_APPEND_FAILED)
+        configure_logging(log_dir=tmp_path, fmt="json")
+
+
+def test_configure_against_a_file_path_raises_bootstrap_error(
+    tmp_path: Path,
+) -> None:
+    """A log-dir path that is an existing file fails loud with the path named.
+
+    Given a path that already exists as a file, when configure_logging targets
+    it as the log directory, then ObservabilityBootstrapError is raised (no
+    degradation) and its message names the offending path so the operator can
+    act (ADR-026, strict bootstrap).
+    """
+    clash = tmp_path / "not_a_dir"
+    clash.write_text("i am a file, not a directory\n", encoding="utf-8")
+
+    with pytest.raises(ObservabilityBootstrapError) as exc_info:
+        configure_logging(log_dir=clash, fmt="json")
+
+    assert str(clash) in str(exc_info.value)
+
+
+def test_configure_sweeps_expired_rotated_files(
+    tmp_path: Path,
+) -> None:
+    """An over-age rotated file present before configure is gone after configure.
+
+    Given an expired rotated log file, when configure_logging runs, then the
+    wired-in sweep deletes it as part of bootstrap, so a startup always enforces
+    the retention horizon (ADR-026, retention).
+    """
+    expired = tmp_path / f"{LOG_FILENAME}.2026-01-01"
+    expired.write_text("expired rotated line\n", encoding="utf-8")
+    expired_mtime = datetime(2026, 1, 1, tzinfo=UTC).timestamp()
+    os.utime(expired, (expired_mtime, expired_mtime))
+
+    configure_logging(log_dir=tmp_path, fmt="json", retention_days=30)
+
+    assert not expired.exists()
+
+
+def test_configure_emits_the_sink_size_event(
+    tmp_path: Path,
+) -> None:
+    """A registered log_sink_size_bytes event appears in the sink after configure.
+
+    Given a fresh sink, when configure_logging runs, then a governed
+    log_sink_size_bytes event carrying a sink_size_bytes field is written, the
+    startup signal for the Windows rotation failure mode (ADR-026).
+    """
+    configure_logging(log_dir=tmp_path, fmt="json")
+
+    for handler in logging.getLogger().handlers:
+        handler.flush()
+    lines = [
+        json.loads(line)
+        for line in (tmp_path / LOG_FILENAME).read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+
+    size_events = [line for line in lines if line["event"] == LOG_SINK_SIZE_BYTES]
+    assert len(size_events) == 1
+    assert "sink_size_bytes" in size_events[0]
+
+
+def test_unregistered_event_is_substituted_in_production(
+    log_sink: Callable[[], list[dict]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With strict mode off, an unregistered event is substituted, not raised.
+
+    Given strict mode disabled (production), when an f-string-shaped event name
+    carrying a PII payload is logged, then exactly one sink line appears whose
+    event is the unregistered_log_event constant with a caller_location, and the
+    original interpolated text is nowhere in the sink: the unvetted name is
+    discarded entirely (ADR-026, unbreakable runtime).
+    """
+    monkeypatch.delenv("OBSERVABILITY_STRICT", raising=False)
+    secret = "citizen Max Mustermann leaked into an ad hoc event"
+
+    structlog.get_logger().info(secret, count=1)
+
+    lines = log_sink()
+    assert len(lines) == 1
+    record = lines[0]
+    assert record["event"] == UNREGISTERED_LOG_EVENT
+    assert "caller_location" in record
+    assert secret not in json.dumps(record)
+    assert "Max Mustermann" not in json.dumps(record)
+
+
+def test_a_raising_processor_is_contained_as_processor_failed(
+    log_sink: Callable[[], list[dict]],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A processor exception is contained as a processor_failed line, no raise.
+
+    Given strict mode off and a processor injected into the chain that always
+    raises, when an event is logged, then the log call returns normally and the
+    sink carries a processor_failed line naming the failing processor: no
+    logging call can abort a business operation (ADR-026, unbreakable runtime).
+    The log_sink fixture is requested before monkeypatch so its teardown
+    restores a clean chain after the monkeypatch is undone.
+    """
+    monkeypatch.delenv("OBSERVABILITY_STRICT", raising=False)
+
+    def boom(logger: object, method_name: str, event_dict: dict) -> dict:
+        raise RuntimeError("processor blew up")
+
+    original_build = logging_config._build_shared_processors
+
+    def build_with_boom() -> list:
+        chain = original_build()
+        chain.insert(0, never_raise(boom))
+        return chain
+
+    monkeypatch.setattr(logging_config, "_build_shared_processors", build_with_boom)
+    configure_logging(log_dir=tmp_path, fmt="json")
+
+    # The call must return normally despite the always-raising processor.
+    structlog.get_logger().error(AUDIT_APPEND_FAILED)
+
+    failed = [line for line in log_sink() if line["event"] == PROCESSOR_FAILED]
+    assert failed
+    assert all(line["failed_processor"] == "boom" for line in failed)
 
 
 def test_sweep_deletes_only_expired_rotated_files(tmp_path: Path) -> None:

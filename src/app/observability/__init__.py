@@ -24,6 +24,8 @@ from app.observability.events import (
     UnregisteredLogEventError,
 )
 from app.observability.logging_config import (
+    ObservabilityBootstrapError,
+    ProcessorChainError,
     configure_logging,
     sweep_expired_logs,
 )
@@ -31,6 +33,8 @@ from app.observability.logging_config import (
 __all__ = [
     "AUDIT_APPEND_FAILED",
     "REGISTERED_EVENTS",
+    "ObservabilityBootstrapError",
+    "ProcessorChainError",
     "UnregisteredLogEventError",
     "configure_logging",
     "correlation_scope",

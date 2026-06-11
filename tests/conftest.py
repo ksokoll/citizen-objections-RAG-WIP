@@ -23,6 +23,19 @@ from app.triage.service import TriageService
 load_dotenv()
 
 
+@pytest.fixture(autouse=True)
+def _observability_strict_mode(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Enforce strict observability mode for the whole suite (ADR-026).
+
+    Runtime enforcement is mode-dependent: production substitutes degraded
+    events for unregistered names and processor failures, but the test suite
+    runs strict (OBSERVABILITY_STRICT=1) so CI catches every typo and every
+    processor bug at its origin. A test that exercises production behaviour
+    opts out with ``monkeypatch.delenv("OBSERVABILITY_STRICT", raising=False)``.
+    """
+    monkeypatch.setenv("OBSERVABILITY_STRICT", "1")
+
+
 class FakeLLMClient:
     """Test double for the LLMClient protocol.
 

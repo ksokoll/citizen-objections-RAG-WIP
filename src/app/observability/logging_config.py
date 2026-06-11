@@ -31,20 +31,40 @@ structlog routes into stdlib via ProcessorFormatter.wrap_for_formatter; foreign
 stdlib records route through the same shared processors via
 ProcessorFormatter(foreign_pre_chain=shared). Configuration runs as an
 import-time side effect (configure_logging() at module bottom) so there is no
-bootstrap window before the controls are installed. A self-check processor
-asserts the allowlist is still in the active chain on every event.
+bootstrap window before the controls are installed.
+
+The two enforcement phases are deliberately separated (ADR-026, phase
+separation): strict at configuration time, unbreakable at request time.
+
+- Strict bootstrap. configure_logging() fails loud: any directory, handler, or
+  structlog setup failure becomes ObservabilityBootstrapError with an
+  actionable message, and a missing default-deny allowlist raises
+  ProcessorChainError, both at configure time. There is no degradation to a
+  NullHandler or bare stderr, because running without the governed sink would
+  be fail-open for the central PII control (ADR-026, no-degradation rationale).
+  The allowlist self-check therefore runs once at configure time, not per event.
+- Unbreakable runtime. Every own processor is wrapped by never_raise so a
+  processor exception becomes a substitute processor_failed event rather than
+  propagating into the business call. The event-vocabulary check is
+  mode-dependent: in strict mode (OBSERVABILITY_STRICT=1, set by the test
+  suite) an unregistered name raises so CI catches every typo; in production it
+  substitutes the unregistered_log_event constant plus the caller location and
+  discards the original name entirely (it is potential payload).
 
 Retention is time-based: the handler rotates at midnight UTC and keeps
 RETENTION_DAYS backups; sweep_expired_logs() removes over-age rotated files by
-mtime, covering boundaries the process was not alive for.
+mtime, covering boundaries the process was not alive for, and is wired into
+configure_logging() so a startup always enforces the horizon.
 """
 
 from __future__ import annotations
 
+import functools
 import io
 import logging
 import os
 import stat
+import sys
 from datetime import UTC, datetime, timedelta
 from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
@@ -54,8 +74,11 @@ from structlog.typing import EventDict, Processor, WrappedLogger
 
 from app.observability.correlation import add_correlation_id
 from app.observability.events import (
+    LOG_SINK_SIZE_BYTES,
     LOG_SINK_WORLD_READABLE,
+    PROCESSOR_FAILED,
     REGISTERED_EVENTS,
+    UNREGISTERED_LOG_EVENT,
     UnregisteredLogEventError,
 )
 
@@ -73,6 +96,13 @@ LOG_FILENAME: str = "observability.log"
 
 ENV_LOG_DIR: str = "OBSERVABILITY_LOG_DIR"
 ENV_FORMAT: str = "OBSERVABILITY_FORMAT"
+
+#: When set to "1", the runtime enforcement is strict: an unregistered event
+#: name raises and a processor exception propagates, so CI catches every typo
+#: and every processor bug. Unset (production), the same conditions are
+#: contained as substitute events and never reach the business call (ADR-026,
+#: phase separation). The test suite sets this via an autouse conftest fixture.
+ENV_STRICT: str = "OBSERVABILITY_STRICT"
 
 #: Owner-only modes for the sink, matching the raw store (ADR-025, ADR-026).
 #: Enforced on POSIX; on Windows POSIX modes do not map to ACLs (documented
@@ -109,6 +139,14 @@ ALLOWED_KEYS: frozenset[str] = frozenset(
         "survivor_count",
         "name_regions_masked",
         "store_mode",
+        # Observability self-instrumentation (ADR-026, unbreakable runtime):
+        # the active-sink size for the rotation-failure signal, the failing
+        # processor's name for a contained processor exception, and the caller
+        # location for an unregistered event substituted in production. Each is
+        # operational metadata, never payload.
+        "sink_size_bytes",
+        "failed_processor",
+        "caller_location",
     }
 )
 
@@ -135,34 +173,122 @@ _INSTALLED_HANDLER: logging.Handler | None = None
 
 
 class ProcessorChainError(Exception):
-    """Raised by the self-check when the allowlist processor is not in the
-    active structlog configuration.
+    """Raised by the configure-time self-check when the allowlist processor is
+    not in the active structlog configuration.
 
     Signals that a later reconfiguration (a refactor, a test setup, a migration
     script) removed the default-deny control. The fix is to restore the
-    allowlist processor, not to suppress the error.
+    allowlist processor, not to suppress the error. The check runs once at
+    configure time, not per event: post-startup chain tampering is out of scope
+    for the runtime path (ADR-026, phase separation).
     """
 
 
-def _self_check(
-    logger: WrappedLogger, method_name: str, event_dict: EventDict
-) -> EventDict:
-    """Assert the allowlist processor is present in the active chain.
+class ObservabilityBootstrapError(Exception):
+    """Raised when the logging configuration cannot be installed at startup.
 
-    Runs on every event. If a reconfiguration dropped _filter_allowlist from
-    the structlog configuration, the next event raises rather than emitting
-    through an ungoverned chain.
+    Fail-loud, no degradation (ADR-026): a directory, handler, or structlog
+    setup failure aborts configuration with a named, actionable message
+    (operation, path, what to check) rather than falling back to a NullHandler
+    or bare stderr. Running the pipeline without its governed sink would be
+    fail-open for the central PII control, so a bootstrap failure must stop the
+    process, not silently downgrade it.
+    """
+
+
+def _is_strict() -> bool:
+    """Return whether runtime enforcement is strict (read live, per call).
+
+    Strict mode is governed by OBSERVABILITY_STRICT and read at call time, not
+    captured at configure time, so a test can toggle the mode and emit without
+    reconfiguring the chain (ADR-026, phase separation).
+    """
+    return os.environ.get(ENV_STRICT) == "1"
+
+
+#: Path substrings whose frames are skipped when locating the caller of an
+#: unregistered event: structlog internals, the stdlib logging package, and
+#: this module. The first frame outside them is the application call site.
+_CALLER_SKIP_MARKERS: tuple[str, ...] = (
+    f"{os.sep}structlog{os.sep}",
+    f"{os.sep}logging{os.sep}",
+    "logging_config.py",
+)
+
+
+def _caller_location() -> str:
+    """Return ``basename:lineno`` of the first application frame above us.
+
+    Walks the stack past structlog internals, the stdlib logging package, and
+    this module, returning the first application frame. Best-effort: returns
+    ``unknown`` if no such frame is found. The location carries no payload, only
+    where an unregistered event name was logged so the typo can be fixed.
+    """
+    frame = sys._getframe(1)
+    while frame is not None:
+        filename = frame.f_code.co_filename
+        if not any(marker in filename for marker in _CALLER_SKIP_MARKERS):
+            return f"{os.path.basename(filename)}:{frame.f_lineno}"
+        frame = frame.f_back
+    return "unknown"
+
+
+def never_raise(processor: Processor) -> Processor:
+    """Wrap an own processor so a runtime exception can never reach the caller.
+
+    Round A enforcement could abort a business call from inside the telemetry:
+    a processor exception propagated out of the log call. This wrapper contains
+    that. On a processor exception, the original event dict is discarded (a
+    processor that failed mid-chain may hold half-processed, untrusted data) and
+    replaced by a substitute PROCESSOR_FAILED event naming the failing
+    processor, which then flows through the remaining chain and the allowlist.
+    The business call returns normally.
+
+    The single exception is strict mode (OBSERVABILITY_STRICT=1, the test
+    suite): there the wrapper re-raises so CI catches both typos and processor
+    bugs. Enforcement belongs where the error originates (CI), not where it
+    happens to surface (the request path) (ADR-026, phase separation).
+    """
+
+    @functools.wraps(processor)
+    def wrapper(
+        logger: WrappedLogger, method_name: str, event_dict: EventDict
+    ) -> EventDict:
+        try:
+            return processor(logger, method_name, event_dict)
+        except Exception:
+            if _is_strict():
+                raise
+            return {
+                "event": PROCESSOR_FAILED,
+                "failed_processor": processor.__name__,
+                "_from_structlog": event_dict.get("_from_structlog"),
+            }
+
+    return wrapper
+
+
+def _assert_allowlist_in_chain() -> None:
+    """Configure-time self-check: the allowlist processor is in the active chain.
+
+    Runs once during configure_logging, after structlog.configure. The allowlist
+    processor is wrapped by never_raise in the chain, so the check accepts either
+    the function itself or a wrapper whose ``__wrapped__`` is it.
 
     Raises:
         ProcessorChainError: If _filter_allowlist is absent from the configured
-            structlog processors.
+            structlog processors (directly or as a never_raise wrapper target).
     """
     processors = structlog.get_config().get("processors", [])
-    if _filter_allowlist not in processors:
-        raise ProcessorChainError(
-            "default-deny allowlist processor missing from the logging chain"
-        )
-    return event_dict
+    for processor in processors:
+        if processor is _filter_allowlist or (
+            getattr(processor, "__wrapped__", None) is _filter_allowlist
+        ):
+            return
+    raise ProcessorChainError(
+        "default-deny allowlist processor missing from the logging chain; "
+        "restore _filter_allowlist in _build_shared_processors"
+    )
 
 
 def _enforce_event_vocabulary(
@@ -175,19 +301,42 @@ def _enforce_event_vocabulary(
     nature. structlog-originated events carry no ``_from_structlog`` marker at
     this stage, so the absence of the marker identifies our own events.
 
+    Mode-dependent (ADR-026, phase separation):
+
+    - Strict mode (the test suite): an unregistered name raises
+      UnregisteredLogEventError, so CI catches every typo at its origin.
+    - Production: the original name is discarded entirely (it is potential
+      payload, e.g. an interpolated f-string), and the event is replaced by the
+      UNREGISTERED_LOG_EVENT constant plus the caller location, so the typo is
+      locatable without writing the unvetted name to disk.
+
     Raises:
-        UnregisteredLogEventError: If a structlog event name is not in
-            REGISTERED_EVENTS.
+        UnregisteredLogEventError: In strict mode, if a structlog event name is
+            not in REGISTERED_EVENTS.
     """
     if event_dict.get("_from_structlog") is False:
         return event_dict
     event_name = event_dict.get("event")
-    if event_name not in REGISTERED_EVENTS:
+    if event_name in REGISTERED_EVENTS:
+        return event_dict
+    if _is_strict():
         raise UnregisteredLogEventError(
             f"log event {event_name!r} is not a registered constant; "
             "add it to observability.events.REGISTERED_EVENTS"
         )
-    return event_dict
+    # Production: discard the original name (potential payload) and substitute
+    # the registered constant plus the caller location. Authoritative stamps
+    # already on the dict (correlation_id, level, timestamp) are preserved; the
+    # untrusted original name and any other own-code keys are dropped.
+    location = _caller_location()
+    substitute: EventDict = {
+        key: value
+        for key, value in event_dict.items()
+        if key in ("level", "timestamp", "correlation_id", "_from_structlog")
+    }
+    substitute["event"] = UNREGISTERED_LOG_EVENT
+    substitute["caller_location"] = location
+    return substitute
 
 
 def _reduce_exception(
@@ -289,24 +438,29 @@ def _filter_allowlist(
 def _build_shared_processors() -> list[Processor]:
     """Build the shared chain used for both structlog and foreign records.
 
-    Order (ADR-026, lift-stamp-filter): self-check, contextvars merge, then the
+    Order (ADR-026, lift-stamp-filter): contextvars merge, then the
     authoritative stamps (correlation, log level, timestamp) that assign
     unconditionally and so cannot be spoofed by a pre-existing key, then
     vocabulary enforcement and exception reduction, then value normalization,
     then the allowlist last before handoff. The chain has no extra-merging
     processor: foreign ``extra`` data is default-denied by origin and never
     lifted into the event dict at all.
+
+    Every own processor is wrapped by never_raise so a runtime exception is
+    contained as a substitute event rather than aborting the business call
+    (ADR-026, unbreakable runtime). The structlog built-ins (contextvars merge,
+    add_log_level, TimeStamper) are left unwrapped. The allowlist's presence is
+    verified once at configure time by _assert_allowlist_in_chain, not per event.
     """
     return [
-        _self_check,
         structlog.contextvars.merge_contextvars,
-        add_correlation_id,
+        never_raise(add_correlation_id),
         structlog.processors.add_log_level,
         structlog.processors.TimeStamper(fmt="iso", utc=True),
-        _enforce_event_vocabulary,
-        _reduce_exception,
-        _sanitize_values,
-        _filter_allowlist,
+        never_raise(_enforce_event_vocabulary),
+        never_raise(_reduce_exception),
+        never_raise(_sanitize_values),
+        never_raise(_filter_allowlist),
     ]
 
 
@@ -370,6 +524,20 @@ def _warn_if_sink_world_readable(log_dir: Path) -> None:
         )
 
 
+def _emit_log_sink_size(log_dir: Path) -> None:
+    """Emit the active sink file size once, after configuration.
+
+    Surfaces the Windows rotation failure mode (ADR-026): if a second process
+    holds the active file open, the midnight rename fails silently and the file
+    grows without bound. The size reported at the next startup makes that
+    visible. The file may not exist yet (the handler opens with delay), in which
+    case the size is 0.
+    """
+    log_path = log_dir / LOG_FILENAME
+    size_bytes = log_path.stat().st_size if log_path.exists() else 0
+    _log.info(LOG_SINK_SIZE_BYTES, sink_size_bytes=size_bytes)
+
+
 def configure_logging(
     log_dir: Path | None = None,
     fmt: str | None = None,
@@ -377,9 +545,13 @@ def configure_logging(
 ) -> None:
     """Install the one-sink, default-deny logging configuration.
 
-    Idempotent: a second call replaces the handler this module installed rather
-    than stacking a second sink. Runs as an import-time side effect with
-    defaults; tests call it explicitly to redirect the sink to a tmp path.
+    Strict at bootstrap (ADR-026, phase separation): a directory, handler, or
+    structlog setup failure raises ObservabilityBootstrapError with an
+    actionable message, and a missing allowlist raises ProcessorChainError. No
+    degradation to a NullHandler or bare stderr. Idempotent: a second call
+    replaces the handler this module installed rather than stacking a second
+    sink. Runs as an import-time side effect with defaults; tests call it
+    explicitly to redirect the sink to a tmp path.
 
     Args:
         log_dir: Sink directory. Defaults to OBSERVABILITY_LOG_DIR or
@@ -387,44 +559,78 @@ def configure_logging(
         fmt: Output format, "json" or "console". Defaults to
             OBSERVABILITY_FORMAT or "json".
         retention_days: Rotated-backup count and sweep horizon.
+
+    Raises:
+        ObservabilityBootstrapError: If the log directory, the structlog chain,
+            or the sink handler cannot be set up.
+        ProcessorChainError: If the default-deny allowlist processor is not in
+            the configured chain.
     """
     global _INSTALLED_HANDLER
 
     resolved_dir = log_dir or Path(os.environ.get(ENV_LOG_DIR, str(DEFAULT_LOG_DIR)))
     resolved_fmt = (fmt or os.environ.get(ENV_FORMAT, "json")).lower()
-    resolved_dir.mkdir(parents=True, exist_ok=True)
-    if os.name == "posix":
-        # mkdir's mode is masked by umask, so set it explicitly afterwards.
-        os.chmod(resolved_dir, _LOG_DIR_MODE)
+
+    try:
+        resolved_dir.mkdir(parents=True, exist_ok=True)
+        if os.name == "posix":
+            # mkdir's mode is masked by umask, so set it explicitly afterwards.
+            os.chmod(resolved_dir, _LOG_DIR_MODE)
+    except OSError as exc:
+        raise ObservabilityBootstrapError(
+            f"could not create or secure the log directory '{resolved_dir}': "
+            "check that the path is a directory and not an existing file, that "
+            "the parent exists and is writable, and that the filesystem is not "
+            "read-only"
+        ) from exc
 
     shared = _build_shared_processors()
 
-    structlog.configure(
-        processors=[*shared, structlog.stdlib.ProcessorFormatter.wrap_for_formatter],
-        logger_factory=structlog.stdlib.LoggerFactory(),
-        wrapper_class=structlog.stdlib.BoundLogger,
-        # Disabled so tests can reconfigure the chain (the self-check test) and
-        # have the change take effect on the next event.
-        cache_logger_on_first_use=False,
-    )
+    try:
+        structlog.configure(
+            processors=[
+                *shared,
+                structlog.stdlib.ProcessorFormatter.wrap_for_formatter,
+            ],
+            logger_factory=structlog.stdlib.LoggerFactory(),
+            wrapper_class=structlog.stdlib.BoundLogger,
+            # Disabled so tests can reconfigure the chain and have the change
+            # take effect on the next event.
+            cache_logger_on_first_use=False,
+        )
+    except Exception as exc:
+        raise ObservabilityBootstrapError(
+            "could not configure the structlog processor chain: check the "
+            "observability.logging_config processor definitions"
+        ) from exc
 
-    formatter = structlog.stdlib.ProcessorFormatter(
-        foreign_pre_chain=shared,
-        processors=[
-            structlog.stdlib.ProcessorFormatter.remove_processors_meta,
-            _build_renderer(resolved_fmt),
-        ],
-    )
+    # Configure-time self-check (not per event): the default-deny control must
+    # be in the chain we just installed, or bootstrap fails loud.
+    _assert_allowlist_in_chain()
 
-    handler = _OwnerOnlyTimedRotatingFileHandler(
-        filename=resolved_dir / LOG_FILENAME,
-        when="midnight",
-        utc=True,
-        backupCount=retention_days,
-        encoding="utf-8",
-        delay=True,
-    )
-    handler.setFormatter(formatter)
+    try:
+        formatter = structlog.stdlib.ProcessorFormatter(
+            foreign_pre_chain=shared,
+            processors=[
+                structlog.stdlib.ProcessorFormatter.remove_processors_meta,
+                _build_renderer(resolved_fmt),
+            ],
+        )
+        handler = _OwnerOnlyTimedRotatingFileHandler(
+            filename=resolved_dir / LOG_FILENAME,
+            when="midnight",
+            utc=True,
+            backupCount=retention_days,
+            encoding="utf-8",
+            delay=True,
+        )
+        handler.setFormatter(formatter)
+    except OSError as exc:
+        raise ObservabilityBootstrapError(
+            f"could not open the log sink file '{resolved_dir / LOG_FILENAME}': "
+            "check directory permissions and that no other process holds the "
+            "active file open"
+        ) from exc
 
     root = logging.getLogger()
     if _INSTALLED_HANDLER is not None and _INSTALLED_HANDLER in root.handlers:
@@ -437,7 +643,12 @@ def configure_logging(
     for name in _THIRD_PARTY_LOGGERS:
         logging.getLogger(name).setLevel(logging.WARNING)
 
-    # Sink is configured; verify its access posture through the governed chain.
+    # Enforce the retention horizon on every startup, covering rotation
+    # boundaries the process was not alive for (ADR-026, retention).
+    sweep_expired_logs(log_dir=resolved_dir, retention_days=retention_days)
+    # Sink is configured; emit its size (rotation-failure signal) and verify its
+    # access posture, both through the governed chain.
+    _emit_log_sink_size(resolved_dir)
     _warn_if_sink_world_readable(resolved_dir)
 
 

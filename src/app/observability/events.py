@@ -40,12 +40,36 @@ LOG_SINK_WORLD_READABLE: Final[str] = "observability.log_sink_world_readable"
 #: never the surviving tokens, so the anomaly signal carries no PII.
 INGESTION_PII_COVERAGE_ANOMALY: Final[str] = "ingestion.pii_coverage_anomaly"
 
+#: Size in bytes of the active log sink, emitted once after configuration
+#: (observability). Surfaces the Windows rotation failure mode: if a second
+#: handle on the active file blocks the midnight rename, the file grows without
+#: bound and the size reported at the next startup makes that visible (ADR-026).
+LOG_SINK_SIZE_BYTES: Final[str] = "observability.log_sink_size_bytes"
+
+#: A governed processor raised at runtime and was contained by the never-raise
+#: wrapper (observability). The substitute event carries the failing processor's
+#: name so the bug is attributable, while the business call returns normally
+#: (ADR-026, unbreakable runtime). The original event dict is discarded: a
+#: processor that failed mid-chain may hold half-processed, untrusted data.
+PROCESSOR_FAILED: Final[str] = "observability.processor_failed"
+
+#: An own-code structlog event whose name was not a registered constant, seen
+#: in production mode (observability). The original name is discarded entirely
+#: (it is potential payload) and replaced by this constant plus the caller
+#: location, so the typo is locatable without writing the unvetted name to disk.
+#: In strict mode (the test suite) the same condition raises instead, so CI
+#: catches every typo (ADR-026, enforcement at origin).
+UNREGISTERED_LOG_EVENT: Final[str] = "observability.unregistered_log_event"
+
 REGISTERED_EVENTS: Final[frozenset[str]] = frozenset(
     {
         AUDIT_APPEND_FAILED,
         INGESTION_RAW_STORE_WORLD_READABLE,
         LOG_SINK_WORLD_READABLE,
         INGESTION_PII_COVERAGE_ANOMALY,
+        LOG_SINK_SIZE_BYTES,
+        PROCESSOR_FAILED,
+        UNREGISTERED_LOG_EVENT,
     }
 )
 
