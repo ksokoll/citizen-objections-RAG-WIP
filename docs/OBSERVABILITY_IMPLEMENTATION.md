@@ -96,6 +96,13 @@ Review-driven additions beyond the original Step 1, all in Round A (ADR-026):
   events (counts only); one of them had been interpolating surviving citizen
   NAME tokens to stderr.
 
+Round B backlog (security review, Round 15.1): the sink directory is currently
+read from the OBSERVABILITY_LOG_DIR environment variable at logging-module
+import time. Round B moves it to an explicit composition-root parameter so the
+sink path is not attacker-influenceable through the process environment (finding
+5, path injection via the composition root CLI). Nothing else from finding 5
+changes in Round A.
+
 The numbers below are reference labels, not an execution order. The PII
 processor (item 6) is no longer ordered relative to the other items; it is
 enforced at logging-module import time (see item 6), so there is no bootstrap

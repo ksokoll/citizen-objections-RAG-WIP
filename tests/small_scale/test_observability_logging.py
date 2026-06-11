@@ -24,6 +24,7 @@ from app.observability.events import AUDIT_APPEND_FAILED, UnregisteredLogEventEr
 from app.observability.logging_config import (
     ALLOWED_KEYS,
     LOG_FILENAME,
+    MAX_FOREIGN_EVENT_CHARS,
     ProcessorChainError,
     _OwnerOnlyTimedRotatingFileHandler,
     _self_check,
@@ -299,3 +300,44 @@ def test_sink_modes_survive_a_forced_rollover(
     for rotated_file in rotated:
         assert stat.S_IMODE(rotated_file.stat().st_mode) == 0o600
     assert stat.S_IMODE(tmp_path.stat().st_mode) == 0o700
+
+
+def test_control_characters_in_a_foreign_message_do_not_reach_the_sink(
+    log_sink: Callable[[], list[dict]],
+) -> None:
+    """Control characters are stripped from foreign message text before render.
+
+    Given a third-party record whose message embeds a newline (a log-forging
+    attempt), a NUL, and a tab, when it reaches the sink, then those control
+    characters are absent from the rendered ``event`` value and the residual
+    text is contiguous.
+    """
+    logging.getLogger("presidio-analyzer").error("line one\nFORGED two\x00\ttabbed")
+
+    lines = log_sink()
+
+    assert len(lines) == 1
+    event = lines[0]["event"]
+    assert "\n" not in event
+    assert "\x00" not in event
+    assert "\t" not in event
+    assert event == "line oneFORGED twotabbed"
+
+
+def test_oversized_foreign_event_arrives_truncated_with_marker(
+    log_sink: Callable[[], list[dict]],
+) -> None:
+    """A foreign event longer than the cap is truncated with a literal marker.
+
+    Given a third-party record whose message exceeds MAX_FOREIGN_EVENT_CHARS,
+    when it reaches the sink, then the ``event`` value is the first
+    MAX_FOREIGN_EVENT_CHARS characters followed by a literal ``[truncated]``
+    marker, bounding the unredacted foreign-message residual (ADR-026).
+    """
+    logging.getLogger("presidio-analyzer").error("A" * 500)
+
+    lines = log_sink()
+
+    assert len(lines) == 1
+    event = lines[0]["event"]
+    assert event == "A" * MAX_FOREIGN_EVENT_CHARS + "[truncated]"

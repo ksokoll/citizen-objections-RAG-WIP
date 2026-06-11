@@ -1,7 +1,7 @@
 """One-sink, default-deny logging configuration (ADR-026).
 
 All log output, from our structlog calls and from third-party stdlib loggers
-alike, passes through a single shared processor chain into a single
+alike, passes through a single shared processor chain into a single owner-only
 TimedRotatingFileHandler. The chain enforces default-deny by both key and
 origin, following lift-stamp-filter ordering (ADR-026): foreign data is lifted
 first or not at all, authoritative truth is stamped after, filtering is last.
@@ -12,12 +12,20 @@ The controls at the sink:
 - authoritative stamps (correlation id, level, timestamp) assign
   unconditionally, so a pre-existing key from an own-code kwarg cannot spoof
   them;
+- value normalization (sanitize_values), so control characters are stripped
+  from every string value and a foreign event message is length-bounded before
+  rendering;
 - a default-deny key allowlist (ALLOWED_KEYS), so a field is invisible until
   it is allowlisted on purpose;
 - a registered event vocabulary (events.REGISTERED_EVENTS), so a structlog
   event name that is not a registered constant fails loudly;
 - exception reduction to type plus location, so an exception message (foreign
   authored text) is never written to disk.
+
+The sink is owner-only on POSIX (directory 0o700, files 0o600, rotated files
+inherit the mode) to match the raw store (ADR-025), with a world-readable
+self-check; on Windows POSIX modes do not map to ACLs (documented limitation,
+ADR-026).
 
 structlog routes into stdlib via ProcessorFormatter.wrap_for_formatter; foreign
 stdlib records route through the same shared processors via
@@ -29,11 +37,6 @@ asserts the allowlist is still in the active chain on every event.
 Retention is time-based: the handler rotates at midnight UTC and keeps
 RETENTION_DAYS backups; sweep_expired_logs() removes over-age rotated files by
 mtime, covering boundaries the process was not alive for.
-
-The sink is owner-only on POSIX (directory 0o700, files 0o600, rotated files
-inherit the mode) to match the raw store (ADR-025), with a world-readable
-self-check; on Windows POSIX modes do not map to ACLs (documented limitation,
-ADR-026).
 """
 
 from __future__ import annotations
@@ -76,6 +79,16 @@ ENV_FORMAT: str = "OBSERVABILITY_FORMAT"
 #: limitation, ADR-026).
 _LOG_DIR_MODE: int = 0o700
 _LOG_FILE_MODE: int = 0o600
+
+#: Upper bound on a foreign record's ``event`` value (the arbitrary third-party
+#: message text). Bounds the unredacted foreign-message residual; closure
+#: remains with the deferred sink scan and redaction (ADR-026).
+MAX_FOREIGN_EVENT_CHARS: int = 200
+
+#: Translation table that deletes the C0 control characters (\x00-\x1f),
+#: including newlines, carriage returns, and tabs, from string values so a
+#: foreign record cannot forge log lines or inject terminal control sequences.
+_CONTROL_CHAR_TABLE: dict[int, None] = {codepoint: None for codepoint in range(0x20)}
 
 #: The frozen key allowlist (ADR-026). Default-deny: every other key is dropped
 #: before the record is rendered. Frozen by a golden test; a key cannot be
@@ -224,6 +237,36 @@ def _reduce_exception(
     return event_dict
 
 
+def _sanitize_values(
+    logger: WrappedLogger, method_name: str, event_dict: EventDict
+) -> EventDict:
+    """Normalize and bound every string value before rendering.
+
+    Two controls, applied last before the allowlist (ADR-026, lift-stamp-filter:
+    filter last):
+
+    - Control-character strip. Every string value has the C0 control characters
+      (``\\x00``-``\\x1f``, including newlines, carriage returns, and tabs)
+      removed, so a foreign record cannot forge a second log line or inject
+      terminal control sequences through the ``event`` message or any other
+      string field.
+    - Foreign-event length bound. A foreign record's ``event`` value (the
+      arbitrary third-party message text) is capped at MAX_FOREIGN_EVENT_CHARS
+      and a literal ``[truncated]`` marker appended, bounding the unredacted
+      foreign-message residual that the allowlist cannot inspect. Our own events
+      are registered constants, so the cap targets foreign messages only.
+    """
+    is_foreign = event_dict.get("_from_structlog") is False
+    for key, value in event_dict.items():
+        if not isinstance(value, str):
+            continue
+        cleaned = value.translate(_CONTROL_CHAR_TABLE)
+        if is_foreign and key == "event" and len(cleaned) > MAX_FOREIGN_EVENT_CHARS:
+            cleaned = cleaned[:MAX_FOREIGN_EVENT_CHARS] + "[truncated]"
+        event_dict[key] = cleaned
+    return event_dict
+
+
 def _filter_allowlist(
     logger: WrappedLogger, method_name: str, event_dict: EventDict
 ) -> EventDict:
@@ -249,10 +292,10 @@ def _build_shared_processors() -> list[Processor]:
     Order (ADR-026, lift-stamp-filter): self-check, contextvars merge, then the
     authoritative stamps (correlation, log level, timestamp) that assign
     unconditionally and so cannot be spoofed by a pre-existing key, then
-    vocabulary enforcement and exception reduction, then the allowlist last
-    before handoff. The chain has no extra-merging processor: foreign ``extra``
-    data is default-denied by origin and never lifted into the event dict at
-    all.
+    vocabulary enforcement and exception reduction, then value normalization,
+    then the allowlist last before handoff. The chain has no extra-merging
+    processor: foreign ``extra`` data is default-denied by origin and never
+    lifted into the event dict at all.
     """
     return [
         _self_check,
@@ -262,12 +305,18 @@ def _build_shared_processors() -> list[Processor]:
         structlog.processors.TimeStamper(fmt="iso", utc=True),
         _enforce_event_vocabulary,
         _reduce_exception,
+        _sanitize_values,
         _filter_allowlist,
     ]
 
 
 def _build_renderer(fmt: str) -> Processor:
-    """Return the final renderer for the resolved OBSERVABILITY_FORMAT."""
+    """Return the final renderer for the resolved OBSERVABILITY_FORMAT.
+
+    JSON is the default and the mandatory renderer in security-relevant
+    environments (ADR-026); the console renderer is a developer convenience
+    only.
+    """
     if fmt == "console":
         return structlog.dev.ConsoleRenderer(colors=False)
     return structlog.processors.JSONRenderer()
