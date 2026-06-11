@@ -27,6 +27,7 @@ from app.briefing.entities import ResolvedNormEntry, WuerdigungsBriefing
 from app.briefing.service import BriefingService
 from app.core.events import AuditEvent, AuditEventType
 from app.core.failures import (
+    AuditLogError,
     IngestionError,
     RetrievalError,
     TriageError,
@@ -203,7 +204,7 @@ class Pipeline:
         event_type: AuditEventType,
         payload: dict[str, Any],
     ) -> None:
-        """Emit an audit event. Interim: log a governed ERROR on failure.
+        """Emit an audit event. Interim: log a governed ERROR on store failure.
 
         Interim policy (ADR-027): a failed publish is logged as a registered
         ERROR event (AUDIT_APPEND_FAILED) and swallowed, not raised. The
@@ -211,11 +212,22 @@ class Pipeline:
         in Round C behind this same log line, once the chain invariants that
         make an abort diagnosable exist (ADR-024).
 
+        Only the recoverable store-failure class is swallowed: AuditLogError
+        (the store's own write/duplicate error) and OSError (raw I/O). A
+        programming error (TypeError, ValueError, a bug in the publish path) is
+        not an expected store failure and propagates, so it surfaces in
+        development instead of being silently treated like a transient I/O
+        hiccup (failure-routing rule, ADR-027).
+
         This replaces the previous stderr print, which bypassed every logging
         control and interpolated the raw exception text, itself a violation of
         the exception policy (ADR-026). The exception is attached via exc_info
         and reduced to type plus location by the logging chain; its message is
-        never written.
+        never written. The _log.error call is itself guarded: by the
+        never-raises contract of this interim emit, a failure in the logging
+        path (a sabotaged or degraded sink) must not turn into a raise either.
+        Independent failure-visibility for that double failure is Round B's
+        metric (ADR-027 interim section).
 
         Args:
             einwendungs_id: ID of the objection being processed.
@@ -231,9 +243,15 @@ class Pipeline:
                     payload=payload,
                 )
             )
-        except Exception:
-            _log.error(
-                AUDIT_APPEND_FAILED,
-                audit_event_type=event_type.value,
-                exc_info=True,
-            )
+        except (AuditLogError, OSError):
+            try:
+                _log.error(
+                    AUDIT_APPEND_FAILED,
+                    audit_event_type=event_type.value,
+                    exc_info=True,
+                )
+            except Exception:
+                # Never-raises contract: even a failing sink must not abort the
+                # run from inside the interim emit. The only remaining trace is
+                # stdlib handleError stderr; the Round B metric closes the gap.
+                pass

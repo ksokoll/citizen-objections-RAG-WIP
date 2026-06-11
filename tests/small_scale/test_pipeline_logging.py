@@ -101,3 +101,46 @@ def test_emit_failure_is_logged_at_error_and_swallowed(
     assert all("audit_event_type" in line for line in failures)
     rendered = json.dumps(failures)
     assert "simulated audit store write failure" not in rendered
+
+
+def test_store_programming_error_propagates_out_of_run(
+    pipeline_with_crashing_audit: tuple[Pipeline, RaisingAuditStoreFake],
+) -> None:
+    """A non-recoverable store error (TypeError) aborts run(), it is not swallowed.
+
+    Given an audit store that raises TypeError (a programming error, not the
+    recoverable store-failure class), when run() reaches the first custody emit,
+    then the TypeError propagates out of run() rather than being logged and
+    swallowed: hard and recoverable failures are routed differently (ADR-027,
+    failure-routing rule).
+    """
+    pipeline, _ = pipeline_with_crashing_audit
+
+    with pytest.raises(TypeError):
+        pipeline.run(_SAMPLE_EINWENDUNG)
+
+
+def test_emit_does_not_raise_when_store_and_sink_both_fail(
+    pipeline_with_failing_audit: tuple[Pipeline, RaisingAuditStoreFake],
+    log_sink: Callable[[], list[dict]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A double failure (store down and logger sabotaged) still does not raise.
+
+    Given a run whose audit store raises the recoverable AuditLogError and whose
+    sink logger itself raises on every call, when the run completes, then _emit
+    neither propagates the store error nor the logging error: the never-raises
+    contract holds even when the failure-visibility channel is also down. The
+    interim accepts this blind spot; the Round B metric closes it (ADR-027).
+    """
+    pipeline, _ = pipeline_with_failing_audit
+
+    class SabotagedLogger:
+        def error(self, *args: object, **kwargs: object) -> None:
+            raise RuntimeError("logging sink sabotaged")
+
+    monkeypatch.setattr("app.pipeline._log", SabotagedLogger())
+
+    briefing = pipeline.run(_SAMPLE_EINWENDUNG)
+
+    assert briefing is not None

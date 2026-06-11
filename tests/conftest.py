@@ -197,20 +197,19 @@ _DEFAULT_TRIAGE_OUTPUT = LLMTriageOutput(
 )
 
 
-@pytest.fixture()
-def pipeline_and_audit(tmp_path: Path) -> tuple[Pipeline, JsonLinesAuditStore]:
-    """Fully wired pipeline with a stubbed triage LLM and a fake retriever.
+def _build_pipeline(tmp_path: Path, audit_publisher: Any) -> Pipeline:
+    """Wire a pipeline with test doubles around the given audit publisher.
 
     The triage FakeLLMClient is preloaded with a single-argument
-    LLMTriageOutput whose original_zitat matches the smoke-test sample
-    text. The Briefing context uses no LLM, so no drafting double is
-    needed; the FakeRetriever supplies resolved norm text deterministically.
-    The ingestion masker is a pass-through FakePiiMasker, since masking is
-    not the subject of pipeline orchestration tests.
+    LLMTriageOutput whose original_zitat matches the smoke-test sample text.
+    The Briefing context uses no LLM, so no drafting double is needed; the
+    FakeRetriever supplies resolved norm text deterministically. The ingestion
+    masker is a pass-through FakePiiMasker, since masking is not the subject of
+    pipeline orchestration tests. Only the audit publisher varies across the
+    pipeline fixtures, so it is the single injected parameter here.
     """
-    audit_store = JsonLinesAuditStore(tmp_path / "audit.jsonl")
     triage_llm = FakeLLMClient(parse_response=_DEFAULT_TRIAGE_OUTPUT)
-    pipeline = Pipeline(
+    return Pipeline(
         ingestion=DocumentIngestionService(
             raw_store_path=tmp_path / "raw",
             masker=FakePiiMasker(),
@@ -218,32 +217,49 @@ def pipeline_and_audit(tmp_path: Path) -> tuple[Pipeline, JsonLinesAuditStore]:
         triage=TriageService(llm=triage_llm),
         retrieval=FakeRetriever(),
         briefing=BriefingService(),
-        audit=AuditLogService(store=audit_store),
+        audit=AuditLogService(store=audit_publisher),
     )
-    return pipeline, audit_store
+
+
+@pytest.fixture()
+def pipeline_and_audit(tmp_path: Path) -> tuple[Pipeline, JsonLinesAuditStore]:
+    """Fully wired pipeline with a stubbed triage LLM and a fake retriever.
+
+    The audit store is a real JsonLinesAuditStore, so custody events are
+    durably appended and queryable.
+    """
+    audit_store = JsonLinesAuditStore(tmp_path / "audit.jsonl")
+    return _build_pipeline(tmp_path, audit_store), audit_store
 
 
 @pytest.fixture()
 def pipeline_with_failing_audit(
     tmp_path: Path,
 ) -> tuple[Pipeline, RaisingAuditStoreFake]:
-    """Pipeline whose audit store raises on every publish.
+    """Pipeline whose audit store raises AuditLogError on every publish.
 
-    Identical to pipeline_and_audit except the audit store is a
-    RaisingAuditStoreFake, so every custody emit hits the interim _emit failure
-    path (ADR-027). Used to exercise the governed-ERROR-and-swallow behaviour
-    and the constant correlation id across a run's failed emits.
+    The store raises the recoverable failure class, so every custody emit hits
+    the interim _emit failure path (ADR-027): logged at ERROR as
+    AUDIT_APPEND_FAILED and swallowed. Used to exercise the
+    governed-ERROR-and-swallow behaviour and the constant correlation id across
+    a run's failed emits.
     """
     raising_store = RaisingAuditStoreFake()
-    triage_llm = FakeLLMClient(parse_response=_DEFAULT_TRIAGE_OUTPUT)
-    pipeline = Pipeline(
-        ingestion=DocumentIngestionService(
-            raw_store_path=tmp_path / "raw",
-            masker=FakePiiMasker(),
-        ),
-        triage=TriageService(llm=triage_llm),
-        retrieval=FakeRetriever(),
-        briefing=BriefingService(),
-        audit=AuditLogService(store=raising_store),
+    return _build_pipeline(tmp_path, raising_store), raising_store
+
+
+@pytest.fixture()
+def pipeline_with_crashing_audit(
+    tmp_path: Path,
+) -> tuple[Pipeline, RaisingAuditStoreFake]:
+    """Pipeline whose audit store raises a programming error on every publish.
+
+    The store raises TypeError, not AuditLogError: a deterministic bug, not a
+    recoverable store failure. _emit must not swallow it (ADR-027,
+    failure-routing rule), so it propagates out of run(). Used to assert that
+    the hard-failure class is routed differently from the recoverable one.
+    """
+    crashing_store = RaisingAuditStoreFake(
+        error=TypeError("programming error in the audit publish path")
     )
-    return pipeline, raising_store
+    return _build_pipeline(tmp_path, crashing_store), crashing_store

@@ -44,16 +44,30 @@ class JsonLinesAuditStore:
             event: The audit event to record.
 
         Raises:
-            AuditLogError: If event_id already exists (duplicate prevention).
+            AuditLogError: If event_id already exists (duplicate prevention) or
+                if an I/O failure prevents reading or appending. Raw OSErrors are
+                wrapped so callers (Pipeline._emit, ADR-027) can route a store
+                failure as the recoverable class without depending on stdlib
+                exception types.
         """
         # TODO(post-skeleton): replace O(n) duplicate check with in-memory set
-        existing = self._read_all()
+        try:
+            existing = self._read_all()
+        except OSError as exc:
+            raise AuditLogError(
+                f"failed to read the audit store at {self._path}"
+            ) from exc
         for existing_event in existing:
             if existing_event.event_id == event.event_id:
                 raise AuditLogError(f"Duplicate event_id: {event.event_id}")
 
-        with self._path.open("a", encoding="utf-8") as f:
-            f.write(event.model_dump_json() + "\n")
+        try:
+            with self._path.open("a", encoding="utf-8") as f:
+                f.write(event.model_dump_json() + "\n")
+        except OSError as exc:
+            raise AuditLogError(
+                f"failed to append audit event {event.event_id}"
+            ) from exc
 
     def query(
         self,
