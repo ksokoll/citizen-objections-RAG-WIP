@@ -18,6 +18,7 @@ from pathlib import Path
 import pytest
 import structlog
 
+from app.observability.correlation import correlation_scope
 from app.observability.events import AUDIT_APPEND_FAILED, UnregisteredLogEventError
 from app.observability.logging_config import (
     ALLOWED_KEYS,
@@ -189,3 +190,52 @@ def test_sweep_deletes_only_expired_rotated_files(tmp_path: Path) -> None:
     assert not expired.exists()
     assert fresh.exists()
     assert active.exists()
+
+
+def test_foreign_extra_cannot_spoof_correlation_id_or_inject_a_key(
+    log_sink: Callable[[], list[dict]],
+) -> None:
+    """A foreign record's extras never reach the sink (default-deny by origin).
+
+    Given a run anchored on a known correlation id, when a third-party record is
+    logged with an extra spoofing ``correlation_id`` and an extra carrying an
+    allowlisted key (``survivor_count``), then the sink line shows the
+    ContextVar correlation id, not the spoofed one, and the injected
+    allowlisted key is absent: foreign extras are not lifted into the event dict
+    at all.
+    """
+    with correlation_scope("doc-truth-0001"):
+        logging.getLogger("presidio-analyzer").error(
+            "presidio analysis complete",
+            extra={"correlation_id": "spoofed-foreign-id", "survivor_count": 999},
+        )
+
+    lines = log_sink()
+
+    assert len(lines) == 1
+    record = lines[0]
+    assert record["correlation_id"] == "doc-truth-0001"
+    assert "spoofed-foreign-id" not in json.dumps(record)
+    assert "survivor_count" not in record
+
+
+def test_own_code_kwarg_correlation_id_is_overwritten_by_the_contextvar(
+    log_sink: Callable[[], list[dict]],
+) -> None:
+    """An own-code correlation_id kwarg cannot override the ContextVar truth.
+
+    Given a run anchored on a known correlation id, when our own structlog call
+    passes a conflicting ``correlation_id`` kwarg, then the authoritative
+    correlation processor stamps the ContextVar value unconditionally and the
+    kwarg value never reaches the sink.
+    """
+    log = structlog.get_logger()
+    with correlation_scope("doc-truth-0002"):
+        log.error(AUDIT_APPEND_FAILED, correlation_id="spoofed-by-kwarg")
+
+    lines = log_sink()
+
+    assert len(lines) == 1
+    record = lines[0]
+    assert record["correlation_id"] == "doc-truth-0002"
+    assert "spoofed-by-kwarg" not in json.dumps(record)

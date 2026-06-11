@@ -2,8 +2,16 @@
 
 All log output, from our structlog calls and from third-party stdlib loggers
 alike, passes through a single shared processor chain into a single
-TimedRotatingFileHandler. The chain enforces three controls at the sink:
+TimedRotatingFileHandler. The chain enforces default-deny by both key and
+origin, following lift-stamp-filter ordering (ADR-026): foreign data is lifted
+first or not at all, authoritative truth is stamped after, filtering is last.
+The controls at the sink:
 
+- default-deny by origin: the chain has no extra-merging processor, so a
+  foreign record's ``extra`` fields are never lifted into the event dict at all;
+- authoritative stamps (correlation id, level, timestamp) assign
+  unconditionally, so a pre-existing key from an own-code kwarg cannot spoof
+  them;
 - a default-deny key allowlist (ALLOWED_KEYS), so a field is invisible until
   it is allowlisted on purpose;
 - a registered event vocabulary (events.REGISTERED_EVENTS), so a structlog
@@ -200,9 +208,12 @@ def _filter_allowlist(
 ) -> EventDict:
     """Default-deny: keep only allowlisted keys and the formatter meta keys.
 
-    Every key not in ALLOWED_KEYS is dropped, including foreign ``extra``
-    fields that ExtraAdder pulled in. The two ProcessorFormatter meta keys are
-    preserved so the formatter can strip them itself after this point.
+    Every key not in ALLOWED_KEYS is dropped. Foreign ``extra`` fields are not
+    lifted into the event dict in the first place (default-deny by origin: the
+    chain has no extra-merging processor), so this is the key control's backstop
+    for own-code and structlog-internal keys rather than the foreign-extra gate.
+    The two ProcessorFormatter meta keys are preserved so the formatter can
+    strip them itself after this point.
     """
     return {
         key: value
@@ -214,9 +225,13 @@ def _filter_allowlist(
 def _build_shared_processors() -> list[Processor]:
     """Build the shared chain used for both structlog and foreign records.
 
-    Order (ADR-026, plan step 7): self-check, contextvars merge, correlation,
-    log level, timestamp, ExtraAdder, vocabulary enforcement, exception
-    reduction, allowlist last before handoff.
+    Order (ADR-026, lift-stamp-filter): self-check, contextvars merge, then the
+    authoritative stamps (correlation, log level, timestamp) that assign
+    unconditionally and so cannot be spoofed by a pre-existing key, then
+    vocabulary enforcement and exception reduction, then the allowlist last
+    before handoff. The chain has no extra-merging processor: foreign ``extra``
+    data is default-denied by origin and never lifted into the event dict at
+    all.
     """
     return [
         _self_check,
@@ -224,7 +239,6 @@ def _build_shared_processors() -> list[Processor]:
         add_correlation_id,
         structlog.processors.add_log_level,
         structlog.processors.TimeStamper(fmt="iso", utc=True),
-        structlog.stdlib.ExtraAdder(),
         _enforce_event_vocabulary,
         _reduce_exception,
         _filter_allowlist,

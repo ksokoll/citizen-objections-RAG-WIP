@@ -70,11 +70,15 @@ def correlation_scope(document_id: str) -> Iterator[None]:
 def add_correlation_id(
     logger: WrappedLogger, method_name: str, event_dict: EventDict
 ) -> EventDict:
-    """structlog processor: attach the active correlation id to the event.
+    """structlog processor: stamp the active correlation id onto the event.
 
-    Adds the ``correlation_id`` key when a correlation id is set. When none is
-    set the key is omitted rather than emitted as null, so events outside a run
-    are honestly distinguishable from events inside one.
+    The ContextVar is the single source of truth (default-deny by origin,
+    ADR-026). When a correlation id is set the key is assigned unconditionally,
+    overwriting any pre-existing ``correlation_id`` that an own-code kwarg or a
+    foreign record placed in the event dict. When none is set any pre-existing
+    value is removed and the key is omitted rather than emitted as null, so an
+    untrusted id can never survive and events outside a run stay honestly
+    distinguishable from events inside one.
 
     Args:
         logger: The wrapped logger (unused).
@@ -82,9 +86,12 @@ def add_correlation_id(
         event_dict: The structlog event dict to enrich.
 
     Returns:
-        The event dict, with ``correlation_id`` added when one is active.
+        The event dict, with ``correlation_id`` set to the ContextVar truth
+        when one is active and absent otherwise.
     """
     correlation_id = _CORRELATION_ID.get()
     if correlation_id is not None:
         event_dict["correlation_id"] = correlation_id
+    else:
+        event_dict.pop("correlation_id", None)
     return event_dict
