@@ -30,6 +30,11 @@ AUDIT_APPEND_FAILED: Final[str] = "audit.append_failed"
 #: A misconfiguration, not a masking outcome: logged, processing continues.
 INGESTION_RAW_STORE_WORLD_READABLE: Final[str] = "ingestion.raw_store_world_readable"
 
+#: The log sink directory is world-accessible on POSIX (observability). The
+#: logs are a third store of pseudonymous data (ADR-026); the check mirrors the
+#: raw-store world-readable check (ADR-025). Logged as a mode count only.
+LOG_SINK_WORLD_READABLE: Final[str] = "observability.log_sink_world_readable"
+
 #: Deterministic anchor name tokens survived masking in their own zone
 #: (DocumentIngestion). An internal contradiction; logged as a count only,
 #: never the surviving tokens, so the anomaly signal carries no PII.
@@ -39,6 +44,7 @@ REGISTERED_EVENTS: Final[frozenset[str]] = frozenset(
     {
         AUDIT_APPEND_FAILED,
         INGESTION_RAW_STORE_WORLD_READABLE,
+        LOG_SINK_WORLD_READABLE,
         INGESTION_PII_COVERAGE_ANOMALY,
     }
 )

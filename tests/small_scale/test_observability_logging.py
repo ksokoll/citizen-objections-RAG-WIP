@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import stat
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -24,9 +25,15 @@ from app.observability.logging_config import (
     ALLOWED_KEYS,
     LOG_FILENAME,
     ProcessorChainError,
+    _OwnerOnlyTimedRotatingFileHandler,
     _self_check,
     configure_logging,
     sweep_expired_logs,
+)
+
+_POSIX_ONLY = pytest.mark.skipif(
+    os.name != "posix",
+    reason="POSIX mode bits do not apply on Windows (ADR-026 limitation)",
 )
 
 
@@ -239,3 +246,56 @@ def test_own_code_kwarg_correlation_id_is_overwritten_by_the_contextvar(
     record = lines[0]
     assert record["correlation_id"] == "doc-truth-0002"
     assert "spoofed-by-kwarg" not in json.dumps(record)
+
+
+@_POSIX_ONLY
+def test_sink_file_and_directory_are_owner_only_after_first_write(
+    log_sink: Callable[[], list[dict]],
+    tmp_path: Path,
+) -> None:
+    """The sink file is 0o600 and its directory 0o700 after the first write.
+
+    The logs are a third store of pseudonymous data (ADR-026); the sink is held
+    to the same owner-only posture as the raw store (ADR-025). Asserted at the
+    filesystem on POSIX, skipped on Windows.
+    """
+    structlog.get_logger().error(AUDIT_APPEND_FAILED)
+    log_sink()
+
+    log_file = tmp_path / LOG_FILENAME
+    assert stat.S_IMODE(log_file.stat().st_mode) == 0o600
+    assert stat.S_IMODE(tmp_path.stat().st_mode) == 0o700
+
+
+@_POSIX_ONLY
+def test_sink_modes_survive_a_forced_rollover(
+    log_sink: Callable[[], list[dict]],
+    tmp_path: Path,
+) -> None:
+    """A rotated file inherits the owner-only mode and the new active file too.
+
+    Given a written sink, when a rollover is forced and another event is
+    written, then both the rotated file and the fresh active file are 0o600 and
+    the directory stays 0o700.
+    """
+    log = structlog.get_logger()
+    log.error(AUDIT_APPEND_FAILED)
+    log_sink()
+
+    handler = next(
+        h
+        for h in logging.getLogger().handlers
+        if isinstance(h, _OwnerOnlyTimedRotatingFileHandler)
+    )
+    handler.doRollover()
+
+    log.error(AUDIT_APPEND_FAILED)
+    log_sink()
+
+    log_file = tmp_path / LOG_FILENAME
+    rotated = list(tmp_path.glob(f"{LOG_FILENAME}.*"))
+    assert rotated
+    assert stat.S_IMODE(log_file.stat().st_mode) == 0o600
+    for rotated_file in rotated:
+        assert stat.S_IMODE(rotated_file.stat().st_mode) == 0o600
+    assert stat.S_IMODE(tmp_path.stat().st_mode) == 0o700

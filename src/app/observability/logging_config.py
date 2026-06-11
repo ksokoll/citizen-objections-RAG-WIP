@@ -29,12 +29,19 @@ asserts the allowlist is still in the active chain on every event.
 Retention is time-based: the handler rotates at midnight UTC and keeps
 RETENTION_DAYS backups; sweep_expired_logs() removes over-age rotated files by
 mtime, covering boundaries the process was not alive for.
+
+The sink is owner-only on POSIX (directory 0o700, files 0o600, rotated files
+inherit the mode) to match the raw store (ADR-025), with a world-readable
+self-check; on Windows POSIX modes do not map to ACLs (documented limitation,
+ADR-026).
 """
 
 from __future__ import annotations
 
+import io
 import logging
 import os
+import stat
 from datetime import UTC, datetime, timedelta
 from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
@@ -43,7 +50,15 @@ import structlog
 from structlog.typing import EventDict, Processor, WrappedLogger
 
 from app.observability.correlation import add_correlation_id
-from app.observability.events import REGISTERED_EVENTS, UnregisteredLogEventError
+from app.observability.events import (
+    LOG_SINK_WORLD_READABLE,
+    REGISTERED_EVENTS,
+    UnregisteredLogEventError,
+)
+
+#: Module logger for the sink self-checks. Routes through the same governed
+#: chain as every other event.
+_log = structlog.get_logger()
 
 #: Documented placeholder retention. The legal determination of the period is
 #: out of scope (ADR-026, Retention).
@@ -55,6 +70,12 @@ LOG_FILENAME: str = "observability.log"
 
 ENV_LOG_DIR: str = "OBSERVABILITY_LOG_DIR"
 ENV_FORMAT: str = "OBSERVABILITY_FORMAT"
+
+#: Owner-only modes for the sink, matching the raw store (ADR-025, ADR-026).
+#: Enforced on POSIX; on Windows POSIX modes do not map to ACLs (documented
+#: limitation, ADR-026).
+_LOG_DIR_MODE: int = 0o700
+_LOG_FILE_MODE: int = 0o600
 
 #: The frozen key allowlist (ADR-026). Default-deny: every other key is dropped
 #: before the record is rendered. Frozen by a golden test; a key cannot be
@@ -252,6 +273,54 @@ def _build_renderer(fmt: str) -> Processor:
     return structlog.processors.JSONRenderer()
 
 
+class _OwnerOnlyTimedRotatingFileHandler(TimedRotatingFileHandler):
+    """TimedRotatingFileHandler that creates sink files owner-only on POSIX.
+
+    The base handler opens the active log file with the process umask, which
+    routinely yields a world-readable file. The logs are a third store of
+    pseudonymous data (ADR-026), so the sink is held to the same owner-only
+    posture as the raw store (ADR-025). ``_open`` is overridden to create the
+    file via ``os.open`` with mode 0o600 and to chmod it on every open, so the
+    active file and every rotated file (created by renaming the active file)
+    end up owner-only. On Windows POSIX modes do not map to ACLs, so the base
+    behavior is used unchanged (documented limitation, ADR-026).
+    """
+
+    def _open(self) -> io.TextIOWrapper:
+        if os.name != "posix":
+            return super()._open()
+        open_flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND
+        file_descriptor = os.open(self.baseFilename, open_flags, _LOG_FILE_MODE)
+        # os.open's mode is masked by umask and does not touch a pre-existing
+        # file; chmod unconditionally so a reopened or inherited file is bounded.
+        os.chmod(self.baseFilename, _LOG_FILE_MODE)
+        return os.fdopen(
+            file_descriptor,
+            self.mode,
+            encoding=self.encoding,
+            errors=self.errors,
+        )
+
+
+def _warn_if_sink_world_readable(log_dir: Path) -> None:
+    """Warn on POSIX if the sink directory is world-accessible.
+
+    Mirrors the raw-store world-readable check (ADR-025): verifies the design's
+    access claim against what the filesystem actually enforces. A world-readable
+    sink is a misconfiguration, not a logging outcome, so it is logged (mode
+    count only, never the path) and processing continues. Skipped on Windows,
+    where POSIX mode bits do not apply.
+    """
+    if os.name != "posix" or not log_dir.exists():
+        return
+    mode = log_dir.stat().st_mode
+    if mode & (stat.S_IROTH | stat.S_IWOTH | stat.S_IXOTH):
+        _log.warning(
+            LOG_SINK_WORLD_READABLE,
+            store_mode=f"{stat.S_IMODE(mode):#o}",
+        )
+
+
 def configure_logging(
     log_dir: Path | None = None,
     fmt: str | None = None,
@@ -275,6 +344,9 @@ def configure_logging(
     resolved_dir = log_dir or Path(os.environ.get(ENV_LOG_DIR, str(DEFAULT_LOG_DIR)))
     resolved_fmt = (fmt or os.environ.get(ENV_FORMAT, "json")).lower()
     resolved_dir.mkdir(parents=True, exist_ok=True)
+    if os.name == "posix":
+        # mkdir's mode is masked by umask, so set it explicitly afterwards.
+        os.chmod(resolved_dir, _LOG_DIR_MODE)
 
     shared = _build_shared_processors()
 
@@ -295,7 +367,7 @@ def configure_logging(
         ],
     )
 
-    handler = TimedRotatingFileHandler(
+    handler = _OwnerOnlyTimedRotatingFileHandler(
         filename=resolved_dir / LOG_FILENAME,
         when="midnight",
         utc=True,
@@ -315,6 +387,9 @@ def configure_logging(
 
     for name in _THIRD_PARTY_LOGGERS:
         logging.getLogger(name).setLevel(logging.WARNING)
+
+    # Sink is configured; verify its access posture through the governed chain.
+    _warn_if_sink_world_readable(resolved_dir)
 
 
 def sweep_expired_logs(
