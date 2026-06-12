@@ -25,6 +25,7 @@ import structlog
 from app.audit_log.service import AuditLogService
 from app.briefing.entities import ResolvedNormEntry, WuerdigungsBriefing
 from app.briefing.service import BriefingService
+from app.core.entities import ExtrahiertesArgument
 from app.core.events import AuditEvent, AuditEventType
 from app.core.failures import (
     AuditLogError,
@@ -107,9 +108,8 @@ class Pipeline:
                 {"argument_count": len(triage_result.extracted_arguments)},
             )
 
-            arguments, norms_by_argument = self._resolve_norms(
-                triage_result.extracted_arguments
-            )
+            arguments = self._map_arguments(triage_result.extracted_arguments)
+            norms_by_argument = self._resolve_norms(triage_result.extracted_arguments)
             resolved_total = sum(
                 sum(1 for n in norms if n.resolved)
                 for norms in norms_by_argument.values()
@@ -152,39 +152,51 @@ class Pipeline:
             if correlation_token is not None:
                 reset_correlation_id(correlation_token)
 
-    def _resolve_norms(
-        self,
-        extracted_arguments: list,
-    ) -> tuple[list[dict[str, Any]], dict[str, list[ResolvedNormEntry]]]:
-        """Resolve each argument's citations and map across the BC boundary.
+    @staticmethod
+    def _map_arguments(
+        extracted_arguments: list[ExtrahiertesArgument],
+    ) -> list[dict[str, Any]]:
+        """Map Triage arguments into the plain dicts the Briefing consumes.
 
-        For each extracted argument, resolves its canonical citations via
-        the Retrieval context and maps the returned NormWithSource values
-        into Briefing-context ResolvedNormEntry objects. Also builds the
-        plain-dict argument representation the Briefing service consumes,
-        so the Briefing context does not depend on the Triage domain model.
+        Cross-context mapping owned by the Coordinator: the Briefing service
+        receives plain dicts so it does not depend on the Triage domain model.
 
         Args:
             extracted_arguments: The Triage ExtrahiertesArgument objects.
 
         Returns:
-            A tuple of (arguments_as_dicts, norms_by_argument), where
-            norms_by_argument maps each argument_id to its resolved norms.
+            One dict per argument with the five fields the Briefing reads.
         """
-        arguments: list[dict[str, Any]] = []
+        return [
+            {
+                "argument_id": arg.argument_id,
+                "argument_text": arg.argument_text,
+                "original_zitat": arg.original_zitat,
+                "einwendungs_typ": arg.einwendungs_typ.value,
+                "catalog_id": arg.catalog_id,
+            }
+            for arg in extracted_arguments
+        ]
+
+    def _resolve_norms(
+        self,
+        extracted_arguments: list[ExtrahiertesArgument],
+    ) -> dict[str, list[ResolvedNormEntry]]:
+        """Resolve each argument's citations and map across the BC boundary.
+
+        For each extracted argument, resolves its canonical citations via
+        the Retrieval context and maps the returned NormWithSource values
+        into Briefing-context ResolvedNormEntry objects, so neither context
+        imports the other's domain model.
+
+        Args:
+            extracted_arguments: The Triage ExtrahiertesArgument objects.
+
+        Returns:
+            A map from each argument_id to its resolved norms.
+        """
         norms_by_argument: dict[str, list[ResolvedNormEntry]] = {}
-
         for arg in extracted_arguments:
-            arguments.append(
-                {
-                    "argument_id": arg.argument_id,
-                    "argument_text": arg.argument_text,
-                    "original_zitat": arg.original_zitat,
-                    "einwendungs_typ": arg.einwendungs_typ.value,
-                    "catalog_id": arg.catalog_id,
-                }
-            )
-
             resolved = self._retrieval.resolve(arg.zitierte_normen)
             norms_by_argument[arg.argument_id] = [
                 ResolvedNormEntry(
@@ -195,8 +207,7 @@ class Pipeline:
                 )
                 for n in resolved
             ]
-
-        return arguments, norms_by_argument
+        return norms_by_argument
 
     def _emit(
         self,
