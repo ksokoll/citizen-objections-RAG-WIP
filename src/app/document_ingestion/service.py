@@ -24,7 +24,10 @@ import structlog
 from app.core.failures import IngestionError
 from app.core.results import IngestionResult
 from app.document_ingestion.protocols import PiiMasker
-from app.observability.events import INGESTION_RAW_STORE_WORLD_READABLE
+from app.observability.events import (
+    INGESTION_RAW_STORE_WORLD_READABLE,
+    RAW_DOCUMENT_ACCESSED,
+)
 from app.observability.tracing import traced
 
 _log = structlog.get_logger()
@@ -55,6 +58,10 @@ def load_raw_document(raw_store_path: Path, document_id: str) -> str:
     boundary rather than turned into a filesystem path (path-traversal
     guard).
 
+    Every successful read emits the governed raw_document_accessed event with
+    the document_id only, never content (H4/S4): a read of unmasked PII must
+    leave a trace. The chain-level read audit event is Round C work (ADR-027).
+
     Args:
         raw_store_path: The raw store directory.
         document_id: The ingestion-assigned document identifier.
@@ -76,11 +83,13 @@ def load_raw_document(raw_store_path: Path, document_id: str) -> str:
     if not path.exists():
         raise IngestionError(f"no stored raw document for id '{document_id}'")
     try:
-        return path.read_text(encoding="utf-8")
+        raw_text = path.read_text(encoding="utf-8")
     except OSError as exc:
         raise IngestionError(
             f"failed to read the raw document for id '{document_id}'"
         ) from exc
+    _log.info(RAW_DOCUMENT_ACCESSED, document_id=document_id)
+    return raw_text
 
 
 # Upper bound on raw_text length, enforced at the ingest boundary. This is

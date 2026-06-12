@@ -5,8 +5,11 @@ documented. Timing must not depend on tracing: the @traced decorator always
 emits a governed timing event (observability.stage_timing), whether or not a
 span is opened. And spans must never be created without a destination: the
 tracer provider is built only when OBSERVABILITY_TRACING=1, and when it is,
-spans land in an in-memory exporter that is cleared whenever a new root span
-starts, so span memory is bounded per run and cannot accumulate across runs.
+spans land in an in-memory exporter that the run owner clears explicitly at
+run start (clear_finished_spans, called by the Coordinator), so span memory
+is bounded per run and cannot accumulate across runs. The run owner defines
+the run; the earlier root-span heuristic in this module guessed it from span
+parentage and was removed (M5, Round 16.1).
 
 The span structure is flat (ADR-023): pipeline.run is the root, one child
 span per stage. Production tracing is a configuration change, not a rewrite:
@@ -77,6 +80,18 @@ def get_finished_spans() -> tuple[Any, ...]:
     return _EXPORTER.get_finished_spans()
 
 
+def clear_finished_spans() -> None:
+    """Discard the finished spans of the previous run.
+
+    Called by the run owner (the Coordinator) at run() start: the owner of
+    the run defines where a run begins, rather than this module guessing it
+    from span parentage (M5, Round 16.1). Bounds span memory to one run. A
+    no-op when tracing is disabled or no exporter exists yet.
+    """
+    if _EXPORTER is not None:
+        _EXPORTER.clear()
+
+
 def reset_tracing() -> None:
     """Tear down the tracing backend (test hook).
 
@@ -112,17 +127,15 @@ def _ensure_tracer() -> trace.Tracer:
 def _stage_span(stage: str) -> Iterator[Span | None]:
     """Open a span for the stage when tracing is enabled, else yield None.
 
-    A span with no active parent starts a new run, so the in-memory exporter
-    is cleared at that moment: span memory is explicitly bounded to one run
-    and cannot accumulate across requests (ADR-023).
+    Exporter clearing is not done here: the run owner (the Coordinator)
+    clears explicitly at run start via clear_finished_spans, because the run
+    owner defines the run; a parentage heuristic in the instrumentation
+    layer would guess it (M5, Round 16.1).
     """
     if not tracing_enabled():
         yield None
         return
     tracer = _ensure_tracer()
-    if not trace.get_current_span().get_span_context().is_valid:
-        assert _EXPORTER is not None  # _ensure_tracer just built it
-        _EXPORTER.clear()
     with tracer.start_as_current_span(stage) as span:
         yield span
 

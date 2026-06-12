@@ -168,6 +168,9 @@ ALLOWED_KEYS: frozenset[str] = frozenset(
         "log_dir",
         "raw_store",
         "audit_log",
+        # The raw-document access trace (Round 16.1, H4/S4): the pseudonymous
+        # id of the document read back out of the raw store, never content.
+        "document_id",
     }
 )
 

@@ -45,7 +45,7 @@ from app.observability.metrics import (
     inc_objection_processed,
     observe_arguments_per_objection,
 )
-from app.observability.tracing import traced
+from app.observability.tracing import clear_finished_spans, traced
 from app.triage.service import TriageService
 
 _log = structlog.get_logger()
@@ -97,6 +97,12 @@ class Pipeline:
         """
         einwendungs_id: str | None = None
         correlation_token = None
+        # The run owner defines the run (M5): discard the previous run's
+        # finished spans here at run start, not via a parentage heuristic in
+        # the instrumentation layer. Runs inside the body, after the @traced
+        # root span has opened but before any child span finishes, so only
+        # prior-run spans are dropped.
+        clear_finished_spans()
 
         try:
             ingestion_result = self._ingestion.ingest(raw_text)

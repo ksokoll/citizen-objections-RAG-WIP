@@ -143,7 +143,8 @@ def test_allowlist_is_the_frozen_golden_set() -> None:
     timing fields of the @traced decorator (stage, duration_ms, status) and
     the seven startup_config provenance fields of the CLI composition root.
     Round 16.1 widened it by the four resolved store paths in startup_config
-    (app_home, log_dir, raw_store, audit_log; S5).
+    (app_home, log_dir, raw_store, audit_log; S5) and the document_id of the
+    raw-document access trace (H4/S4).
     """
     assert ALLOWED_KEYS == frozenset(
         {
@@ -174,6 +175,7 @@ def test_allowlist_is_the_frozen_golden_set() -> None:
             "log_dir",
             "raw_store",
             "audit_log",
+            "document_id",
         }
     )
 

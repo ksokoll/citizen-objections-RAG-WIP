@@ -40,6 +40,13 @@ LOG_SINK_WORLD_READABLE: Final[str] = "observability.log_sink_world_readable"
 #: never the surviving tokens, so the anomaly signal carries no PII.
 INGESTION_PII_COVERAGE_ANOMALY: Final[str] = "ingestion.pii_coverage_anomaly"
 
+#: A stored raw document (unmasked PII) was read back out of the raw store
+#: (DocumentIngestion, Round 16.1, H4/S4). Emitted on every successful
+#: load_raw_document call with the document_id only, never content: the read
+#: path on raw PII leaves an operational trace. The chain-level read audit
+#: event (custody, not telemetry) is Round C work (ADR-027).
+RAW_DOCUMENT_ACCESSED: Final[str] = "ingestion.raw_document_accessed"
+
 #: Size in bytes of the active log sink, emitted once after configuration
 #: (observability). Surfaces the Windows rotation failure mode: if a second
 #: handle on the active file blocks the midnight rename, the file grows without
@@ -88,6 +95,7 @@ REGISTERED_EVENTS: Final[frozenset[str]] = frozenset(
         INGESTION_RAW_STORE_WORLD_READABLE,
         LOG_SINK_WORLD_READABLE,
         INGESTION_PII_COVERAGE_ANOMALY,
+        RAW_DOCUMENT_ACCESSED,
         LOG_SINK_SIZE_BYTES,
         PROCESSOR_FAILED,
         STAGE_TIMING,

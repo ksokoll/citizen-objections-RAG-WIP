@@ -3,14 +3,15 @@
 Timing must not depend on tracing: every traced call emits the governed
 stage_timing event whether or not spans exist (ADR-023). Spans exist only
 under OBSERVABILITY_TRACING=1, land in a bounded in-memory exporter, and the
-exporter is cleared when the next run starts. Asserted at the sink and at the
-exporter, never at the call site.
+run owner (the Coordinator) clears the exporter explicitly at run start (M5).
+Asserted at the sink and at the exporter, never at the call site.
 """
 
 from __future__ import annotations
 
 import json
 import logging
+from collections import Counter
 from collections.abc import Callable
 from pathlib import Path
 
@@ -250,10 +251,11 @@ def test_exporter_is_cleared_when_the_next_run_starts(
     log_sink: Callable[[], list[dict]],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Span memory is bounded to one run and cannot accumulate.
+    """Each run sees only its own spans; memory cannot accumulate.
 
-    Given tracing is enabled, when a second run starts, then the in-memory
-    exporter is cleared, so after two runs only the second run's spans exist.
+    Given tracing is enabled, when a second run starts, then the Coordinator
+    clears the in-memory exporter at run start (M5: the run owner defines
+    the run), so after two runs only the second run's spans exist.
     """
     monkeypatch.setenv("OBSERVABILITY_TRACING", "1")
     pipeline = _real_pipeline(tmp_path)
@@ -264,6 +266,28 @@ def test_exporter_is_cleared_when_the_next_run_starts(
     pipeline.run(_SAMPLE_EINWENDUNG)
 
     assert len(get_finished_spans()) == spans_after_first_run
+
+
+def test_one_wired_run_emits_exactly_one_timing_event_per_stage(
+    tmp_path: Path,
+    log_sink: Callable[[], list[dict]],
+) -> None:
+    """Fitness function: no stage decorator is silently lost (M2).
+
+    Given a pipeline wired with the real traced services, when one document
+    is processed, then the sink carries exactly one stage_timing event per
+    linear stage plus the run root, and one per custody publish for the
+    audit_log stage. A decorator dropped by a refactor (for example a
+    wrapper class whose method no longer carries @traced) fails this count.
+    """
+    pipeline = _real_pipeline(tmp_path)
+
+    pipeline.run(_SAMPLE_EINWENDUNG)
+
+    counts = Counter(line["stage"] for line in log_sink())
+    for stage in _SINGLE_SPAN_STAGES:
+        assert counts[stage] == 1, stage
+    assert counts["audit_log"] == 4
 
 
 def test_no_tracer_provider_is_built_when_tracing_is_disabled(

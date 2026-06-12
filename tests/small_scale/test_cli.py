@@ -23,7 +23,11 @@ from app.document_ingestion.service import (
     MAX_RAW_TEXT_CHARS,
     DocumentIngestionService,
 )
-from app.observability.events import CLI_UNHANDLED_ERROR, STARTUP_CONFIG
+from app.observability.events import (
+    CLI_UNHANDLED_ERROR,
+    RAW_DOCUMENT_ACCESSED,
+    STARTUP_CONFIG,
+)
 from app.observability.logging_config import LOG_FILENAME
 from tests.conftest import FakePiiMasker
 
@@ -101,6 +105,44 @@ def test_show_document_round_trips_a_stored_document(
     captured = capsys.readouterr()
     assert exit_code == 0
     assert _ORIGINAL_TEXT in captured.out
+
+
+def test_show_document_leaves_exactly_one_access_trace_without_content(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Reading raw PII back out leaves a governed trace, id only (H4/S4).
+
+    Given a stored document, when show-document reads it, then the sink
+    carries exactly one raw_document_accessed event with the document_id and
+    the document's content appears nowhere in the sink.
+    """
+    raw_store = tmp_path / "raw"
+    ingestion = DocumentIngestionService(
+        raw_store_path=raw_store,
+        masker=FakePiiMasker(),
+    )
+    stored = ingestion.ingest(_ORIGINAL_TEXT)
+    log_dir = tmp_path / "logs"
+
+    exit_code = main(
+        [
+            "--log-dir",
+            str(log_dir),
+            "show-document",
+            stored.document_id,
+            "--raw-store",
+            str(raw_store),
+        ]
+    )
+
+    capsys.readouterr()
+    assert exit_code == 0
+    lines = _read_sink(log_dir)
+    accesses = [line for line in lines if line["event"] == RAW_DOCUMENT_ACCESSED]
+    assert len(accesses) == 1
+    assert accesses[0]["document_id"] == stored.document_id
+    assert _ORIGINAL_TEXT not in json.dumps(lines)
 
 
 def test_show_document_with_unknown_id_errors_clearly(
