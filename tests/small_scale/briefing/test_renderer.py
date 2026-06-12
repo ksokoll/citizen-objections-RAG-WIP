@@ -6,6 +6,8 @@ observable content of the rendered Markdown for one named behaviour.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 from app.briefing.entities import (
     BriefingEntry,
     BriefingStatus,
@@ -43,6 +45,8 @@ def _briefing(entries: list[BriefingEntry]) -> WuerdigungsBriefing:
     return WuerdigungsBriefing(
         document_id="doc-1",
         einwendungs_typ="TYP_2",
+        corpus_id="corpus-id-for-renderer-tests",
+        created_at=datetime(2026, 6, 12, 9, 30, tzinfo=UTC),
         entries=entries,
     )
 

@@ -286,7 +286,7 @@ class NormWithSource:
 ## Context 4: Briefing
 
 ### 1. Responsibility
-Assemble a per-argument briefing for the Sachbearbeiter. For each extracted argument, pair the argument with the source Gesetzestext of its resolved norms and derive a status, then aggregate the per-argument entries into a single `WuerdigungsBriefing`. This is a deterministic assembly: no LLM call, no generation, no §-reference verification gate. The briefing supports the human assessment; it does not perform it.
+Assemble a per-argument briefing for the Sachbearbeiter. For each extracted argument, pair the argument with the source Gesetzestext of its resolved norms and derive a status, then aggregate the per-argument entries into a single `WuerdigungsBriefing`. This is a deterministic assembly: no LLM call, no generation, no §-reference verification gate. The briefing supports the human assessment; it does not perform it. The Briefing context delivers the structured `WuerdigungsBriefing` as the system's contract; it does not render it. Presentation happens in a frontend beyond the system boundary (ADR-028).
 
 ### 2. Why It's Separate
 Briefing owns the deterministic assembly of arguments and their resolved norm text into a Sachbearbeiter-facing artifact. Its concern (presentation and status derivation) has a distinct change axis from citation resolution (Retrieval) and argument extraction (Triage). It can evolve the briefing shape and the status rules without touching either neighbour.
@@ -301,6 +301,8 @@ def assemble(
     einwendungs_typ: str,
     arguments: list[dict],
     norms_by_argument: dict[str, list[ResolvedNormEntry]],
+    corpus_id: str,
+    created_at: datetime,
 ) -> WuerdigungsBriefing:
     """Assemble a per-argument briefing from arguments and resolved norms.
 
@@ -317,6 +319,8 @@ def assemble(
         arguments is a list of plain dicts with keys argument_id,
         argument_text, original_zitat, einwendungs_typ, catalog_id.
         norms_by_argument maps each argument_id to its resolved norms.
+        corpus_id and created_at are supplied by the Coordinator
+        (provenance, ADR-028); the context only places them.
 
     Does NOT check:
         Whether arguments were correctly extracted.
@@ -349,6 +353,8 @@ norms_by_argument: dict[str, list[ResolvedNormEntry]]  # resolved norms per argu
 class WuerdigungsBriefing:
     document_id: str
     einwendungs_typ: str
+    corpus_id: str                  # statute-corpus content hash (ADR-028)
+    created_at: datetime            # tz-aware UTC creation time (ADR-028)
     entries: list[BriefingEntry]
     limitation_note: str            # states the Akte is outside the boundary
 

@@ -178,6 +178,12 @@ class RaisingAuditStoreFake:
         return []
 
 
+# Corpus identifier wired into the pipeline fixtures. A recognizable constant
+# rather than a real hash: provenance tests assert the briefing carries exactly
+# the id the composition root supplied (ADR-028).
+TEST_CORPUS_ID = "corpus-id-wired-by-test-fixture"
+
+
 # Default LLMTriageOutput for pipeline-level fixtures: a single TYP_2 argument
 # whose original_zitat is a substring of the smoke-test SAMPLE_EINWENDUNG.
 # Pre-configuring this on the triage FakeLLMClient keeps the smoke test
@@ -218,6 +224,7 @@ def _build_pipeline(tmp_path: Path, audit_publisher: Any) -> Pipeline:
         retrieval=FakeRetriever(),
         briefing=BriefingService(),
         audit=AuditLogService(store=audit_publisher),
+        corpus_id=TEST_CORPUS_ID,
     )
 
 

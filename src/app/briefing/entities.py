@@ -19,6 +19,7 @@ Pure domain: no I/O, no external dependencies beyond the standard library.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime
 from enum import StrEnum
 
 
@@ -108,9 +109,17 @@ class WuerdigungsBriefing:
     entry via requires_case_context) and as a human-readable note here,
     so it is auditable and visible.
 
+    The briefing is the system's delivery contract (ADR-028): its fields
+    are a public interface for the consuming frontend, and provenance
+    travels inside the artifact because rendering happens beyond the
+    boundary and logs are retention-bound.
+
     Attributes:
         document_id: The ingestion-assigned document identifier.
         einwendungs_typ: The document-level classification from Triage.
+        corpus_id: Content-based identifier of the statute corpus the
+            briefing was resolved against (ADR-028, provenance).
+        created_at: Creation time of the briefing, timezone-aware UTC.
         entries: One BriefingEntry per extracted argument.
         limitation_note: Human-readable statement of the scope boundary
             (no case-file-grounded assessment produced here).
@@ -118,6 +127,8 @@ class WuerdigungsBriefing:
 
     document_id: str
     einwendungs_typ: str
+    corpus_id: str
+    created_at: datetime
     entries: list[BriefingEntry] = field(default_factory=list)
     limitation_note: str = (
         "Dieses Briefing ordnet jedem Argument die einschlägige Norm und "

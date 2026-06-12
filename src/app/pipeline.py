@@ -18,6 +18,7 @@ ResolvedNormEntry, so neither context imports the other's domain model.
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime
 from typing import Any
 
 import structlog
@@ -51,6 +52,10 @@ class Pipeline:
         _retrieval: Retrieval BC (via the Retriever Protocol).
         _briefing: Briefing BC.
         _audit: AuditLog BC.
+        _corpus_id: Identifier of the statute corpus behind the injected
+            retriever, stamped into every briefing (ADR-028). Supplied by
+            the composition root, which loads the corpus and computes the
+            id once at index build.
     """
 
     def __init__(
@@ -60,12 +65,14 @@ class Pipeline:
         retrieval: Retriever,
         briefing: BriefingService,
         audit: AuditLogService,
+        corpus_id: str,
     ) -> None:
         self._ingestion = ingestion
         self._triage = triage
         self._retrieval = retrieval
         self._briefing = briefing
         self._audit = audit
+        self._corpus_id = corpus_id
 
     def run(self, raw_text: str) -> WuerdigungsBriefing:
         """Process a raw Einwendung through the full pipeline.
@@ -125,6 +132,8 @@ class Pipeline:
                 einwendungs_typ=triage_result.einwendungs_typ.value,
                 arguments=arguments,
                 norms_by_argument=norms_by_argument,
+                corpus_id=self._corpus_id,
+                created_at=datetime.now(UTC),
             )
 
             event_type = (

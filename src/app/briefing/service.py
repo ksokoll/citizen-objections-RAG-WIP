@@ -12,6 +12,8 @@ the bounded-context boundary clean.
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from app.briefing.entities import (
     BriefingEntry,
     BriefingStatus,
@@ -35,6 +37,8 @@ class BriefingService:
         einwendungs_typ: str,
         arguments: list[dict],
         norms_by_argument: dict[str, list[ResolvedNormEntry]],
+        corpus_id: str,
+        created_at: datetime,
     ) -> WuerdigungsBriefing:
         """Build the briefing for one objection document.
 
@@ -49,6 +53,11 @@ class BriefingService:
             norms_by_argument: Map from argument_id to its resolved norm
                 entries. An argument with no catalog match maps to an
                 empty list.
+            corpus_id: Content-based identifier of the statute corpus the
+                norms were resolved against, supplied by the Coordinator
+                (ADR-028, provenance).
+            created_at: Creation time of the briefing, timezone-aware UTC,
+                supplied by the Coordinator.
 
         Returns:
             The assembled WuerdigungsBriefing.
@@ -74,6 +83,8 @@ class BriefingService:
         return WuerdigungsBriefing(
             document_id=document_id,
             einwendungs_typ=einwendungs_typ,
+            corpus_id=corpus_id,
+            created_at=created_at,
             entries=entries,
         )
 

@@ -88,6 +88,7 @@ class TestPipelineSmoke:
             retrieval=FakeRetriever(),
             briefing=BriefingService(),
             audit=AuditLogService(store=audit_store),
+            corpus_id="corpus-id-kein-treffer-test",
         )
 
         # When the pipeline runs with text that yields no arguments

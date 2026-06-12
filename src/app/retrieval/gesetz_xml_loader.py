@@ -29,6 +29,7 @@ preserved; see ADR-020 for the rationale.
 
 from __future__ import annotations
 
+import hashlib
 import re
 from pathlib import Path
 from xml.etree import ElementTree
@@ -189,6 +190,38 @@ def load_gesetz(xml_path: Path) -> list[GesetzParagraph]:
         )
 
     return paragraphs
+
+
+def compute_corpus_id(paragraphs: list[GesetzParagraph]) -> str:
+    """Compute the content-based identifier of a loaded statute corpus.
+
+    SHA-256 over the sorted (canonical_key, text) pairs of the parsed
+    paragraphs, with a NUL byte after each part so adjacent fields cannot
+    be confused. Sorting makes the id independent of load order; hashing
+    both key and text means a missing or corrupt paragraph and a pure text
+    amendment each change the id (ADR-028, provenance).
+
+    Deliberately content-based: the input is the parsed paragraphs, not the
+    file bytes, and no tool or parser version is folded in, so the id is
+    stable across reformatting of the XML and across toolchain upgrades
+    that do not change the extracted legal content.
+
+    Computed once where the corpus is loaded and the exact-match index is
+    built (the composition root), then carried into every briefing.
+
+    Args:
+        paragraphs: The parsed corpus paragraphs.
+
+    Returns:
+        The hex-encoded SHA-256 corpus identifier.
+    """
+    hasher = hashlib.sha256()
+    for canonical_key, text in sorted((p.canonical_key, p.text) for p in paragraphs):
+        hasher.update(canonical_key.encode("utf-8"))
+        hasher.update(b"\x00")
+        hasher.update(text.encode("utf-8"))
+        hasher.update(b"\x00")
+    return hasher.hexdigest()
 
 
 def load_all_gesetze(xml_dir: Path) -> list[GesetzParagraph]:

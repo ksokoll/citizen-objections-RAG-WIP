@@ -7,11 +7,37 @@ returned state, not on internal calls.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 from app.briefing.entities import (
     BriefingStatus,
     ResolvedNormEntry,
+    WuerdigungsBriefing,
 )
 from app.briefing.service import BriefingService
+
+# Provenance inputs (ADR-028): supplied by the Coordinator in production,
+# fixed values here so assertions can compare against them literally.
+_CORPUS_ID = "corpus-id-for-briefing-tests"
+_CREATED_AT = datetime(2026, 6, 12, 9, 30, tzinfo=UTC)
+
+
+def _assemble(
+    service: BriefingService,
+    document_id: str,
+    einwendungs_typ: str,
+    arguments: list[dict],
+    norms: dict[str, list[ResolvedNormEntry]],
+) -> WuerdigungsBriefing:
+    """Call assemble, defaulting the provenance fields irrelevant to the test."""
+    return service.assemble(
+        document_id,
+        einwendungs_typ,
+        arguments,
+        norms,
+        corpus_id=_CORPUS_ID,
+        created_at=_CREATED_AT,
+    )
 
 
 def _argument(
@@ -53,7 +79,7 @@ def test_argument_with_match_and_resolved_norm_is_briefing_ready():
     norms = {"arg-1": [_resolved_norm(resolved=True)]}
 
     # When: the briefing is assembled
-    briefing = service.assemble("doc-1", "TYP_2", arguments, norms)
+    briefing = _assemble(service, "doc-1", "TYP_2", arguments, norms)
 
     # Then: the entry is ready and flags that case context is still needed
     entry = briefing.entries[0]
@@ -68,7 +94,7 @@ def test_argument_with_unresolved_norm_is_norm_unresolved():
     norms = {"arg-1": [_resolved_norm(resolved=False)]}
 
     # When: the briefing is assembled
-    briefing = service.assemble("doc-1", "TYP_2", arguments, norms)
+    briefing = _assemble(service, "doc-1", "TYP_2", arguments, norms)
 
     # Then: the entry is flagged unresolved and needs no case-context flag
     entry = briefing.entries[0]
@@ -83,7 +109,7 @@ def test_argument_without_catalog_match_is_kein_treffer():
     norms = {"arg-1": []}
 
     # When: the briefing is assembled
-    briefing = service.assemble("doc-1", "TYP_1", arguments, norms)
+    briefing = _assemble(service, "doc-1", "TYP_1", arguments, norms)
 
     # Then: the entry is KEIN_TREFFER and carries no norms
     entry = briefing.entries[0]
@@ -98,7 +124,7 @@ def test_argument_with_one_unresolved_among_resolved_is_norm_unresolved():
     norms = {"arg-1": [_resolved_norm(resolved=True), _resolved_norm(resolved=False)]}
 
     # When: the briefing is assembled
-    briefing = service.assemble("doc-1", "TYP_2", arguments, norms)
+    briefing = _assemble(service, "doc-1", "TYP_2", arguments, norms)
 
     # Then: any unresolved norm downgrades the whole entry
     assert briefing.entries[0].status == BriefingStatus.NORM_UNRESOLVED
@@ -119,7 +145,7 @@ def test_assembled_briefing_preserves_argument_order():
     }
 
     # When: the briefing is assembled
-    briefing = service.assemble("doc-1", "TYP_2", arguments, norms)
+    briefing = _assemble(service, "doc-1", "TYP_2", arguments, norms)
 
     # Then: the entries appear in the input order
     assert [e.argument_id for e in briefing.entries] == ["arg-1", "arg-2", "arg-3"]
@@ -132,7 +158,7 @@ def test_briefing_carries_document_metadata():
     norms = {"arg-1": [_resolved_norm()]}
 
     # When: the briefing is assembled
-    briefing = service.assemble("doc-42", "TYP_2", arguments, norms)
+    briefing = _assemble(service, "doc-42", "TYP_2", arguments, norms)
 
     # Then: the document-level fields are set
     assert briefing.document_id == "doc-42"
@@ -146,7 +172,7 @@ def test_briefing_includes_case_context_limitation_note():
     norms = {"arg-1": [_resolved_norm()]}
 
     # When: the briefing is assembled
-    briefing = service.assemble("doc-1", "TYP_2", arguments, norms)
+    briefing = _assemble(service, "doc-1", "TYP_2", arguments, norms)
 
     # Then: the limitation note names the case file as out of scope
     assert "Projektakte" in briefing.limitation_note
@@ -157,7 +183,28 @@ def test_empty_argument_list_yields_empty_briefing():
     service = BriefingService()
 
     # When: the briefing is assembled with no arguments
-    briefing = service.assemble("doc-1", "TYP_1", [], {})
+    briefing = _assemble(service, "doc-1", "TYP_1", [], {})
 
     # Then: the briefing has no entries
     assert briefing.entries == []
+
+
+def test_briefing_carries_the_supplied_provenance():
+    # Given: corpus id and creation time supplied by the Coordinator (ADR-028)
+    service = BriefingService()
+    arguments = [_argument(argument_id="arg-1")]
+    norms = {"arg-1": [_resolved_norm()]}
+
+    # When: the briefing is assembled with explicit provenance
+    briefing = service.assemble(
+        "doc-1",
+        "TYP_2",
+        arguments,
+        norms,
+        corpus_id=_CORPUS_ID,
+        created_at=_CREATED_AT,
+    )
+
+    # Then: the artifact carries both fields unchanged
+    assert briefing.corpus_id == _CORPUS_ID
+    assert briefing.created_at == _CREATED_AT
