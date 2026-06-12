@@ -53,6 +53,13 @@ LOG_SINK_SIZE_BYTES: Final[str] = "observability.log_sink_size_bytes"
 #: processor that failed mid-chain may hold half-processed, untrusted data.
 PROCESSOR_FAILED: Final[str] = "observability.processor_failed"
 
+#: Timing of one instrumented stage, emitted by the @traced decorator on
+#: every invocation regardless of the tracing flag (observability, Round B).
+#: Carries the stage name, duration_ms, and status ok or error; on error the
+#: exception is reduced to type plus location by the chain. Timing must not
+#: depend on tracing (ADR-023).
+STAGE_TIMING: Final[str] = "observability.stage_timing"
+
 #: An own-code structlog event whose name was not a registered constant, seen
 #: in production mode (observability). The original name is discarded entirely
 #: (it is potential payload) and replaced by this constant plus the caller
@@ -69,6 +76,7 @@ REGISTERED_EVENTS: Final[frozenset[str]] = frozenset(
         INGESTION_PII_COVERAGE_ANOMALY,
         LOG_SINK_SIZE_BYTES,
         PROCESSOR_FAILED,
+        STAGE_TIMING,
         UNREGISTERED_LOG_EVENT,
     }
 )

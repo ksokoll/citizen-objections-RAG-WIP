@@ -24,6 +24,7 @@ from app.core.failures import IngestionError
 from app.core.results import IngestionResult
 from app.document_ingestion.protocols import PiiMasker
 from app.observability.events import INGESTION_RAW_STORE_WORLD_READABLE
+from app.observability.tracing import traced
 
 _log = structlog.get_logger()
 
@@ -55,6 +56,7 @@ class DocumentIngestionService:
         self._masker = masker
         self._warn_if_world_readable()
 
+    @traced(stage="document_ingestion")
     def ingest(self, raw_text: str) -> IngestionResult:
         """Accept raw text, store the original, mask PII, and return a result.
 

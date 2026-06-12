@@ -147,6 +147,12 @@ ALLOWED_KEYS: frozenset[str] = frozenset(
         "sink_size_bytes",
         "failed_processor",
         "caller_location",
+        # Stage timing from the @traced decorator (Round B): the stage name,
+        # the measured duration, and the ok/error status. Operational
+        # metadata only; argument values are never captured by default.
+        "stage",
+        "duration_ms",
+        "status",
     }
 )
 

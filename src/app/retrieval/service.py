@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import re
 
+from app.observability.tracing import traced
 from app.retrieval.entities import GesetzParagraph, NormWithSource
 
 # Parses a canonical citation into its paragraph and Gesetz components.
@@ -44,6 +45,7 @@ class NormRetrievalService:
         """
         self._exact = {p.canonical_key: p for p in paragraphs}
 
+    @traced(stage="retrieval")
     def resolve(self, citations: list[str]) -> list[NormWithSource]:
         """Resolve each citation to its source text via exact match.
 

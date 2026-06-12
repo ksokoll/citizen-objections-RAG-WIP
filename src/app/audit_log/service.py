@@ -6,6 +6,7 @@ from datetime import datetime
 
 from app.core.events import AuditEvent, AuditEventType
 from app.core.protocols import AuditEventPublisherProtocol
+from app.observability.tracing import traced
 
 
 class AuditLogService:
@@ -25,8 +26,12 @@ class AuditLogService:
         """
         self._store = store
 
+    @traced(stage="audit_log")
     def publish(self, event: AuditEvent) -> None:
         """Delegate publish to the backing store.
+
+        Traced per invocation: a run emits one audit_log timing event and,
+        when tracing is enabled, one span per published custody event.
 
         Args:
             event: The audit event to record.

@@ -38,6 +38,7 @@ from app.core.protocols import Retriever
 from app.document_ingestion.service import DocumentIngestionService
 from app.observability import reset_correlation_id, set_correlation_id
 from app.observability.events import AUDIT_APPEND_FAILED
+from app.observability.tracing import traced
 from app.triage.service import TriageService
 
 _log = structlog.get_logger()
@@ -74,6 +75,7 @@ class Pipeline:
         self._audit = audit
         self._corpus_id = corpus_id
 
+    @traced(stage="pipeline.run")
     def run(self, raw_text: str) -> WuerdigungsBriefing:
         """Process a raw Einwendung through the full pipeline.
 

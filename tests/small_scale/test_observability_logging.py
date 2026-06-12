@@ -103,11 +103,12 @@ def test_foreign_stdlib_extra_field_never_reaches_the_sink(
 
 
 def test_allowlist_is_the_frozen_golden_set() -> None:
-    """The allowlist is exactly the Round A golden set.
+    """The allowlist is exactly the golden set of Rounds A and B.
 
     A change-detector golden test: a new allowlisted key cannot be added
     without this assertion changing, so widening the default-deny surface is a
-    deliberate, reviewable act.
+    deliberate, reviewable act. Round B widened the set by the three stage
+    timing fields of the @traced decorator (stage, duration_ms, status).
     """
     assert ALLOWED_KEYS == frozenset(
         {
@@ -124,6 +125,9 @@ def test_allowlist_is_the_frozen_golden_set() -> None:
             "sink_size_bytes",
             "failed_processor",
             "caller_location",
+            "stage",
+            "duration_ms",
+            "status",
         }
     )
 

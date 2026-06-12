@@ -20,6 +20,7 @@ from app.briefing.entities import (
     ResolvedNormEntry,
     WuerdigungsBriefing,
 )
+from app.observability.tracing import traced
 
 
 class BriefingService:
@@ -31,6 +32,7 @@ class BriefingService:
     derives each argument's status.
     """
 
+    @traced(stage="briefing")
     def assemble(
         self,
         document_id: str,

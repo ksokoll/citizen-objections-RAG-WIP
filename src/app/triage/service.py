@@ -24,6 +24,7 @@ import uuid
 from app.core.entities import ExtrahiertesArgument
 from app.core.protocols import LLMClientProtocol
 from app.core.results import TriageResult
+from app.observability.tracing import traced
 
 from .catalog import KATALOG
 from .classification import classify_einwendungs_typ
@@ -42,6 +43,7 @@ class TriageService:
     def __init__(self, llm: LLMClientProtocol) -> None:
         self._llm = llm
 
+    @traced(stage="triage")
     def triage(self, clean_text: str) -> TriageResult:
         """Extract legal arguments and classify against catalog.
 
