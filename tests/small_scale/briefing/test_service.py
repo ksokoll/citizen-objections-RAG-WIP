@@ -44,6 +44,7 @@ def _argument(
     argument_id: str = "arg-1",
     catalog_id: str | None = "CAT_VERSIEGELUNG",
     einwendungs_typ: str = "TYP_2",
+    argument_verified: bool = True,
 ) -> dict:
     """Build an extracted-argument dict, defaulting the irrelevant fields."""
     return {
@@ -52,6 +53,7 @@ def _argument(
         "original_zitat": "Die Grundfläche wird zu stark versiegelt.",
         "einwendungs_typ": einwendungs_typ,
         "catalog_id": catalog_id,
+        "argument_verified": argument_verified,
     }
 
 
@@ -100,6 +102,38 @@ def test_argument_with_unresolved_norm_is_norm_unresolved():
     entry = briefing.entries[0]
     assert entry.status == BriefingStatus.NORM_UNRESOLVED
     assert entry.requires_case_context is False
+
+
+def test_unverified_argument_is_zitat_nicht_verifiziert_never_ready():
+    # Given an argument whose quote failed the substring check, even though
+    # it has a catalog match and a resolved norm (the strongest other signals)
+    service = BriefingService()
+    arguments = [_argument(argument_id="arg-1", argument_verified=False)]
+    norms = {"arg-1": [_resolved_norm(resolved=True)]}
+
+    # When the briefing is assembled
+    briefing = _assemble(service, "doc-1", "TYP_2", arguments, norms)
+
+    # Then the verification verdict dominates: the entry is flagged as a
+    # potentially fabricated quote and is not BRIEFING_READY (S2, ADR-028)
+    entry = briefing.entries[0]
+    assert entry.status == BriefingStatus.ZITAT_NICHT_VERIFIZIERT
+    assert entry.status != BriefingStatus.BRIEFING_READY
+    assert entry.argument_verified is False
+    assert entry.requires_case_context is False
+
+
+def test_verified_argument_carries_the_verdict_in_the_entry():
+    # Given a verified argument with a catalog match and a resolved norm
+    service = BriefingService()
+    arguments = [_argument(argument_id="arg-1", argument_verified=True)]
+    norms = {"arg-1": [_resolved_norm(resolved=True)]}
+
+    # When the briefing is assembled
+    briefing = _assemble(service, "doc-1", "TYP_2", arguments, norms)
+
+    # Then the verdict travels in the delivery contract (ADR-028)
+    assert briefing.entries[0].argument_verified is True
 
 
 def test_argument_without_catalog_match_is_kein_treffer():

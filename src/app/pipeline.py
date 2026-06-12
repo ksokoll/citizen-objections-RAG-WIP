@@ -195,12 +195,15 @@ class Pipeline:
 
         Cross-context mapping owned by the Coordinator: the Briefing service
         receives plain dicts so it does not depend on the Triage domain model.
+        This seam is a contract site (ADR-028): a field dropped here would
+        silently vanish from the delivery contract, so a mapping-seam test
+        asserts this field list against BriefingEntry.
 
         Args:
             extracted_arguments: The Triage ExtrahiertesArgument objects.
 
         Returns:
-            One dict per argument with the five fields the Briefing reads.
+            One dict per argument with the six fields the Briefing reads.
         """
         return [
             {
@@ -209,6 +212,7 @@ class Pipeline:
                 "original_zitat": arg.original_zitat,
                 "einwendungs_typ": arg.einwendungs_typ.value,
                 "catalog_id": arg.catalog_id,
+                "argument_verified": arg.argument_verified,
             }
             for arg in extracted_arguments
         ]

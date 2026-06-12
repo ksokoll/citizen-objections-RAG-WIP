@@ -25,12 +25,9 @@ pipeline error), 2 startup abort (logging bootstrap, missing configuration).
 from __future__ import annotations
 
 import argparse
-import dataclasses
-import json
 import os
 import subprocess
 import sys
-from datetime import datetime
 from importlib import metadata
 from pathlib import Path
 
@@ -38,7 +35,7 @@ import structlog
 
 from app.audit_log.service import AuditLogService
 from app.audit_log.store import JsonLinesAuditStore
-from app.briefing.entities import WuerdigungsBriefing
+from app.briefing.serialization import to_json
 from app.briefing.service import BriefingService
 from app.core.failures import (
     IngestionError,
@@ -165,25 +162,6 @@ def _emit_startup_config(
     if model_id is not None:
         fields["model_id"] = model_id
     _log.info(STARTUP_CONFIG, **fields)
-
-
-def _serialize_briefing(briefing: WuerdigungsBriefing) -> str:
-    """Serialize the briefing per the delivery contract (ADR-028).
-
-    JSON with ISO-8601 UTC datetimes. The serialized form is what the
-    consumer parses, so its stability matters as much as the field set.
-    """
-
-    def _default(value: object) -> str:
-        if isinstance(value, datetime):
-            return value.isoformat()
-        raise TypeError(f"not JSON serializable: {type(value).__name__}")
-
-    return json.dumps(
-        dataclasses.asdict(briefing),
-        ensure_ascii=False,
-        default=_default,
-    )
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -316,7 +294,7 @@ def _run_process(args: argparse.Namespace) -> int:
         print(f"processing failed: {exc}", file=sys.stderr)
         return 1
 
-    print(_serialize_briefing(briefing))
+    print(to_json(briefing))
     return 0
 
 

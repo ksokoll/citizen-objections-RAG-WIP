@@ -27,7 +27,8 @@ class BriefingStatus(StrEnum):
     """Per-argument status in the briefing.
 
     Values:
-        BRIEFING_READY: The argument has a catalog match and at least one
+        BRIEFING_READY: The argument's quote is verified against the
+            source document, it has a catalog match, and at least one
             resolved norm with source text. Ready for the Sachbearbeiter
             to assess against the case file.
         NORM_UNRESOLVED: The argument has a catalog match but one or more
@@ -36,11 +37,17 @@ class BriefingStatus(StrEnum):
         KEIN_TREFFER: The argument had no catalog match (catalog_id was
             None). It was skipped for norm resolution and carries no
             source text.
+        ZITAT_NICHT_VERIFIZIERT: The argument's original_zitat failed the
+            deterministic substring check against the source document
+            (ADR-006 Layer 1): a potentially fabricated quote. The entry
+            is included so the Sachbearbeiter sees it, but it is never
+            BRIEFING_READY (S2, contract change recorded in ADR-028).
     """
 
     BRIEFING_READY = "BRIEFING_READY"
     NORM_UNRESOLVED = "NORM_UNRESOLVED"
     KEIN_TREFFER = "KEIN_TREFFER"
+    ZITAT_NICHT_VERIFIZIERT = "ZITAT_NICHT_VERIFIZIERT"
 
 
 @dataclass(frozen=True)
@@ -84,6 +91,10 @@ class BriefingEntry:
         original_zitat: The verbatim citizen quote.
         einwendungs_typ: TYP_1 or TYP_2, as classified by Triage.
         catalog_id: The matched catalog entry, None if no match.
+        argument_verified: Whether original_zitat passed the deterministic
+            substring check against the source document (ADR-006 Layer 1).
+            Part of the delivery contract (ADR-028): the consumer must be
+            able to tell a verified quote from a potentially fabricated one.
         norms: The cited norms with their resolved source text.
         status: The per-argument briefing status.
         requires_case_context: True when a case-file-grounded assessment
@@ -95,6 +106,7 @@ class BriefingEntry:
     original_zitat: str
     einwendungs_typ: str
     catalog_id: str | None
+    argument_verified: bool
     norms: list[ResolvedNormEntry]
     status: BriefingStatus
     requires_case_context: bool
