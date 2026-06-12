@@ -1,8 +1,14 @@
 # Observability and Defensibility Implementation Plan
 
-Status: Round A implemented (structured logging, PII discipline, AuditEvent
-layout). Rounds B and C planned. See the Round A status note under Step 1.
-Date: 2026-06-02 (revised, third review pass: reliability)
+Status: Rounds A and B implemented. Round A: structured logging, PII
+discipline, AuditEvent layout. Round B: @traced timing, off-by-default
+tracing scaffold, the six metrics, the corpus identifier on the briefing
+(ADR-028), and the CLI composition root (python -m app) that retired the
+import-time configuration stopgap. Round C planned. See the status note
+under Step 1; Round B deviations are recorded in the pre-registration's
+Deviations Log (docs/pre-registrations/round-15.md).
+Date: 2026-06-02 (revised, third review pass: reliability; Round B status
+update 2026-06-12)
 Scope: Non-functional layer for the citizen-objections pipeline
 (DocumentIngestion -> Triage -> Retrieval -> Briefing -> AuditLog). Adds
 operational observability and strengthens the technical integrity of the audit
@@ -73,9 +79,21 @@ model. (Decision: ADR-023.)
 Round A status (implemented): items 1 (structured logging plus time-based
 rotation), 2 (correlation id on document_id), 6 (PII discipline), and the
 AuditEvent layout fields (serialization_version, event_hash) are done and
-tested at the sink. Items 3, 4, 5, and 7 (tracing, the @traced decorator,
-metrics, the corpus identifier) are Round B; Step 2 (the hash chain, single
-writer, fail-closed _emit) is Round C.
+tested at the sink.
+
+Round B status (implemented): items 3, 4, 5, and 7 are done. The @traced
+decorator sits on the five context service methods and Pipeline.run(),
+always emitting the governed stage_timing event and feeding
+stage_duration_seconds; the tracer provider exists only under
+OBSERVABILITY_TRACING=1 with a per-run-cleared in-memory exporter; the six
+metrics live in observability/metrics.py with contained writes and the
+initial alert thresholds as comments; the corpus identifier (content hash,
+see the Round B deviations log on the dropped standangabe component) and
+created_at travel inside WuerdigungsBriefing (ADR-028). The CLI composition
+root (python -m app) wires the production pipeline, owns strict bootstrap,
+and emits startup_config; the import-time configuration stopgap is retired
+(ADR-026, phase separation). Step 2 (the hash chain, single writer,
+fail-closed _emit) is Round C.
 
 Review-driven additions beyond the original Step 1, all in Round A (ADR-026):
 - One sink, not a structlog-only allowlist: structlog and foreign stdlib
@@ -96,12 +114,13 @@ Review-driven additions beyond the original Step 1, all in Round A (ADR-026):
   events (counts only); one of them had been interpolating surviving citizen
   NAME tokens to stderr.
 
-Round B backlog (security review, Round 15.1): the sink directory is currently
-read from the OBSERVABILITY_LOG_DIR environment variable at logging-module
-import time. Round B moves it to an explicit composition-root parameter so the
-sink path is not attacker-influenceable through the process environment (finding
-5, path injection via the composition root CLI). Nothing else from finding 5
-changes in Round A.
+Round B backlog (security review, Round 15.1), done in Round B: the sink
+directory was read from the OBSERVABILITY_LOG_DIR environment variable at
+logging-module import time. configure_logging now takes the sink path as a
+required parameter resolved at the CLI entrypoint, and the module reads no
+path from the environment, so the sink path is not attacker-influenceable
+through the process environment (finding 5, path injection via the
+composition root CLI).
 
 The numbers below are reference labels, not an execution order. The PII
 processor (item 6) is no longer ordered relative to the other items; it is
@@ -166,12 +185,13 @@ window in which items 1 to 5 could log unsafely.
    Inert without an exporter, by design. In this phase the registry is
    in-process with no scrape endpoint, so the metrics are instrumentation
    readiness, not live signals. To keep them from being decorative, the alert
-   thresholds are defined now as documentation (for example: unresolved-norm
-   ratio sustained above a set fraction; verification-failure rate above a set
-   fraction; any nonzero audit_write_failures_total), so that adding a scrape
-   endpoint and alert rules in production is a wiring step against a defined
-   target. Building the scrape endpoint and the alerting backend stays deferred
-   to production (see Out of scope); defining the thresholds does not.
+   thresholds are defined now as documentation in observability/metrics.py
+   (initial values: unresolved-norm ratio above 0.20 sustained one hour;
+   verification-failure rate above 0.10 sustained one hour; any nonzero
+   audit_write_failures_total pages), so that adding a scrape endpoint and
+   alert rules in production is a wiring step against a defined target.
+   Building the scrape endpoint and the alerting backend stays deferred to
+   production (see Out of scope); defining the thresholds does not.
 
    Discipline kept: one purpose per metric, cardinality under 100, in-process
    registry.
