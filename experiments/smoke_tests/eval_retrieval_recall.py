@@ -35,7 +35,7 @@ from app.retrieval.service import (  # noqa: E402
 )
 from app.retrieval.entities import NormWithSource  # noqa: E402
 from app.retrieval.gesetz_xml_loader import (  # noqa: E402
-    load_all_gesetze,
+    load_corpus,
 )
 
 
@@ -77,8 +77,9 @@ def main() -> None:
             sys.exit(1)
 
     print("Loading corpus...")
-    paragraphs = load_all_gesetze(xml_dir)
-    service = NormRetrievalService(paragraphs)
+    corpus = load_corpus(xml_dir)
+    paragraphs = corpus.paragraphs
+    service = NormRetrievalService(corpus)
     print(f"  corpus size={len(paragraphs)}\n")
 
     citations = collect_citations(gt_dir)

@@ -34,7 +34,7 @@ import re
 from pathlib import Path
 from xml.etree import ElementTree
 
-from app.retrieval.entities import GesetzParagraph
+from app.retrieval.entities import GesetzParagraph, LoadedCorpus
 
 # Matches a paragraph enbez such as "§ 9", "§ 9a", "§ 135a". The section
 # sign may be followed by variable whitespace in the source.
@@ -243,3 +243,27 @@ def load_all_gesetze(xml_dir: Path) -> list[GesetzParagraph]:
     for xml_path in sorted(xml_dir.glob("*.xml")):
         all_paragraphs.extend(load_gesetz(xml_path))
     return all_paragraphs
+
+
+def load_corpus(xml_dir: Path) -> LoadedCorpus:
+    """Parse a statute directory and bind the corpus to its identifier.
+
+    The one place where paragraphs and corpus id come into existence
+    together, so the pairing is constructed, not asserted: a retriever built
+    from the returned value cannot carry an id computed over different
+    content (ADR-028, provenance).
+
+    Args:
+        xml_dir: Directory containing the statute XML files.
+
+    Returns:
+        The parsed corpus with its content-based identifier.
+
+    Raises:
+        FileNotFoundError: If the directory does not exist.
+    """
+    paragraphs = load_all_gesetze(xml_dir)
+    return LoadedCorpus(
+        paragraphs=paragraphs,
+        corpus_id=compute_corpus_id(paragraphs),
+    )

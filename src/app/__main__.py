@@ -7,7 +7,19 @@ resolved here at the entrypoint and passed as a parameter (security finding
 a bootstrap failure aborts startup with an actionable message and no
 traceback, and after a successful bootstrap the registered startup_config
 event records the active toolset: git_sha, model_id, package versions,
-corpus_id, allowlist size, tracing flag, and log format.
+corpus_id, allowlist size, tracing flag, log format, and the resolved store
+paths.
+
+Persistent store paths (raw store, audit log, log sink) have no CWD-relative
+defaults (S5, Round 16.1): they default to locations under the app home
+(--app-home, default ~/.citizen_objections) and every path, given or
+defaulted, is resolved to an absolute path here at the entrypoint, so the
+stores a run hits do not depend on the directory it was started from. The
+resolved paths are recorded in startup_config.
+
+The log format is a CLI decision only (--log-format, default json); there is
+no environment fallback, console output is an explicit opt-in, and the
+active format is recorded in startup_config (ADR-026).
 
 Commands (ADR-028):
 
@@ -25,7 +37,6 @@ pipeline error), 2 startup abort (logging bootstrap, missing configuration).
 from __future__ import annotations
 
 import argparse
-import os
 import subprocess
 import sys
 from importlib import metadata
@@ -45,6 +56,7 @@ from app.core.failures import (
 from app.core.protocols import LLMClientProtocol
 from app.document_ingestion.protocols import PiiMasker
 from app.document_ingestion.service import (
+    MAX_RAW_TEXT_CHARS,
     DocumentIngestionService,
     load_raw_document,
 )
@@ -57,7 +69,7 @@ from app.observability.events import CLI_UNHANDLED_ERROR, STARTUP_CONFIG
 from app.observability.logging_config import ALLOWED_KEYS
 from app.observability.tracing import tracing_enabled
 from app.pipeline import Pipeline
-from app.retrieval.gesetz_xml_loader import compute_corpus_id, load_all_gesetze
+from app.retrieval.gesetz_xml_loader import load_corpus
 from app.retrieval.service import NormRetrievalService
 from app.services.llm.mistral_client import MistralClient
 from app.triage.service import TriageService
@@ -67,6 +79,13 @@ _log = structlog.get_logger()
 #: The production Triage model (the only LLM call in the pipeline). Recorded
 #: in startup_config so every run's output is attributable to its model.
 TRIAGE_MODEL_ID: str = "mistral-large-latest"
+
+#: Default app home for the persistent stores (raw store, audit log, log
+#: sink): a fixed, absolute, user-owned location. The persistent stores must
+#: never default to CWD-relative paths (S5): a run started from a different
+#: directory would silently write a second raw store and a second audit
+#: trail. Override with --app-home for tests and multi-instance setups.
+DEFAULT_APP_HOME: Path = Path.home() / ".citizen_objections"
 
 #: Packages whose versions shape the pipeline's output or its telemetry;
 #: recorded in startup_config via importlib.metadata.
@@ -140,6 +159,7 @@ def _package_versions() -> dict[str, str]:
 
 def _emit_startup_config(
     log_format: str,
+    paths: dict[str, Path],
     corpus_id: str | None = None,
     model_id: str | None = None,
 ) -> None:
@@ -148,7 +168,9 @@ def _emit_startup_config(
     Records the active toolset that produces this process's output. corpus_id
     and model_id apply only to commands that load the corpus and wire the
     LLM (process); show-document omits them rather than reporting stale or
-    invented values.
+    invented values. paths carries the resolved absolute store paths under
+    their allowlisted keys (app_home, log_dir, raw_store, audit_log), so
+    which stores a run actually hit is determinable afterward (S5).
     """
     fields: dict[str, object] = {
         "git_sha": _git_short_sha(),
@@ -157,6 +179,8 @@ def _emit_startup_config(
         "tracing_enabled": tracing_enabled(),
         "log_format": log_format,
     }
+    for name, path in paths.items():
+        fields[name] = str(path)
     if corpus_id is not None:
         fields["corpus_id"] = corpus_id
     if model_id is not None:
@@ -170,20 +194,30 @@ def _build_parser() -> argparse.ArgumentParser:
     The sink options are accepted both before and after the subcommand. The
     main parser carries the real defaults; the per-command copies default to
     SUPPRESS so a value given before the subcommand is not overwritten by a
-    subparser default.
+    subparser default. Store paths default to None here and are derived from
+    the app home in _resolve_paths, so no persistent store ever has a
+    CWD-relative default (S5).
     """
     sink_options = argparse.ArgumentParser(add_help=False)
+    sink_options.add_argument(
+        "--app-home",
+        type=Path,
+        default=argparse.SUPPRESS,
+        help="base directory for the persistent stores (raw store, audit "
+        "log, log sink)",
+    )
     sink_options.add_argument(
         "--log-dir",
         type=Path,
         default=argparse.SUPPRESS,
-        help="governed log sink directory (resolved here at the entrypoint)",
+        help="governed log sink directory (default: <app-home>/logs)",
     )
     sink_options.add_argument(
         "--log-format",
         choices=("json", "console"),
         default=argparse.SUPPRESS,
-        help="log output format (default: OBSERVABILITY_FORMAT or json)",
+        help="log output format (default: json; console is a developer "
+        "opt-in, ADR-026)",
     )
 
     parser = argparse.ArgumentParser(
@@ -195,16 +229,24 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--app-home",
+        type=Path,
+        default=DEFAULT_APP_HOME,
+        help="base directory for the persistent stores (raw store, audit "
+        f"log, log sink); default: {DEFAULT_APP_HOME}",
+    )
+    parser.add_argument(
         "--log-dir",
         type=Path,
-        default=Path("logs"),
-        help="governed log sink directory (resolved here at the entrypoint)",
+        default=None,
+        help="governed log sink directory (default: <app-home>/logs)",
     )
     parser.add_argument(
         "--log-format",
         choices=("json", "console"),
-        default=os.environ.get("OBSERVABILITY_FORMAT", "json"),
-        help="log output format (default: OBSERVABILITY_FORMAT or json)",
+        default="json",
+        help="log output format (default: json; console is a developer "
+        "opt-in, ADR-026)",
     )
     commands = parser.add_subparsers(dest="command", required=True)
 
@@ -218,19 +260,19 @@ def _build_parser() -> argparse.ArgumentParser:
         "--xml-dir",
         type=Path,
         default=Path("data") / "XML",
-        help="statute XML corpus directory",
+        help="statute XML corpus directory (read-only input)",
     )
     process.add_argument(
         "--raw-store",
         type=Path,
-        default=Path("data") / "raw_store",
-        help="raw document store directory",
+        default=None,
+        help="raw document store directory (default: <app-home>/raw_store)",
     )
     process.add_argument(
         "--audit-log",
         type=Path,
-        default=Path("data") / "audit.jsonl",
-        help="append-only audit log file",
+        default=None,
+        help="append-only audit log file (default: <app-home>/audit.jsonl)",
     )
 
     show = commands.add_parser(
@@ -242,14 +284,74 @@ def _build_parser() -> argparse.ArgumentParser:
     show.add_argument(
         "--raw-store",
         type=Path,
-        default=Path("data") / "raw_store",
-        help="raw document store directory",
+        default=None,
+        help="raw document store directory (default: <app-home>/raw_store)",
     )
     return parser
 
 
-def _run_process(args: argparse.Namespace) -> int:
+def _resolve_paths(args: argparse.Namespace) -> dict[str, Path]:
+    """Resolve every persistent store path to an absolute location.
+
+    A given path is resolved against the CWD once, here at the entrypoint; a
+    defaulted path is derived from the app home. Either way the paths the
+    process works with are absolute from this point on, so a later relative
+    CWD change cannot redirect which stores are hit (S5). The resolved map
+    feeds startup_config.
+
+    Args:
+        args: The parsed CLI namespace; its path attributes are replaced by
+            their resolved absolute values.
+
+    Returns:
+        The resolved paths keyed by their startup_config field names.
+    """
+    app_home = args.app_home.resolve()
+    args.app_home = app_home
+    args.log_dir = (
+        args.log_dir.resolve() if args.log_dir is not None else app_home / "logs"
+    )
+    resolved: dict[str, Path] = {"app_home": app_home, "log_dir": args.log_dir}
+    if hasattr(args, "raw_store"):
+        args.raw_store = (
+            args.raw_store.resolve()
+            if args.raw_store is not None
+            else app_home / "raw_store"
+        )
+        resolved["raw_store"] = args.raw_store
+    if hasattr(args, "audit_log"):
+        args.audit_log = (
+            args.audit_log.resolve()
+            if args.audit_log is not None
+            else app_home / "audit.jsonl"
+        )
+        resolved["audit_log"] = args.audit_log
+    return resolved
+
+
+def _run_process(args: argparse.Namespace, paths: dict[str, Path]) -> int:
     """Wire the production pipeline and process one document."""
+    # Size guard before read (S5): the ingestion limit is enforced on the
+    # file size via stat, so an oversized document is refused before its
+    # content is ever loaded into the process. UTF-8 stores every character
+    # in at least one byte, so a file within the byte bound is also within
+    # the character bound the service enforces; a multibyte-heavy file near
+    # the limit may be refused here that the service would accept, which is
+    # the conservative side of a pre-read guard.
+    try:
+        document_size = args.document.stat().st_size
+    except OSError as exc:
+        print(f"could not read document '{args.document}': {exc}", file=sys.stderr)
+        return 1
+    if document_size > MAX_RAW_TEXT_CHARS:
+        print(
+            f"document '{args.document}' exceeds the {MAX_RAW_TEXT_CHARS}-character "
+            f"ingestion limit ({document_size} bytes); reject at the boundary "
+            "rather than drive the masker unboundedly",
+            file=sys.stderr,
+        )
+        return 1
+
     try:
         raw_text = args.document.read_text(encoding="utf-8")
     except OSError as exc:
@@ -265,14 +367,15 @@ def _run_process(args: argparse.Namespace) -> int:
         )
         return 2
     try:
-        paragraphs = load_all_gesetze(args.xml_dir)
+        corpus = load_corpus(args.xml_dir)
     except FileNotFoundError as exc:
         print(f"startup aborted: {exc}", file=sys.stderr)
         return 2
-    corpus_id = compute_corpus_id(paragraphs)
+    retrieval = NormRetrievalService(corpus)
     _emit_startup_config(
         log_format=args.log_format,
-        corpus_id=corpus_id,
+        paths=paths,
+        corpus_id=retrieval.corpus_id,
         model_id=TRIAGE_MODEL_ID,
     )
 
@@ -282,10 +385,9 @@ def _run_process(args: argparse.Namespace) -> int:
             masker=_build_masker(),
         ),
         triage=TriageService(llm=llm),
-        retrieval=NormRetrievalService(paragraphs),
+        retrieval=retrieval,
         briefing=BriefingService(),
         audit=AuditLogService(store=JsonLinesAuditStore(args.audit_log)),
-        corpus_id=corpus_id,
     )
 
     try:
@@ -298,9 +400,9 @@ def _run_process(args: argparse.Namespace) -> int:
     return 0
 
 
-def _run_show_document(args: argparse.Namespace) -> int:
+def _run_show_document(args: argparse.Namespace, paths: dict[str, Path]) -> int:
     """Look up one stored raw document by id."""
-    _emit_startup_config(log_format=args.log_format)
+    _emit_startup_config(log_format=args.log_format, paths=paths)
     try:
         raw_text = load_raw_document(args.raw_store, args.document_id)
     except IngestionError as exc:
@@ -324,6 +426,7 @@ def main(argv: list[str] | None = None) -> int:
         The process exit code (0 success, 1 run failure, 2 startup abort).
     """
     args = _build_parser().parse_args(argv)
+    paths = _resolve_paths(args)
 
     try:
         configure_logging(log_dir=args.log_dir, fmt=args.log_format)
@@ -333,8 +436,8 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         if args.command == "process":
-            return _run_process(args)
-        return _run_show_document(args)
+            return _run_process(args, paths)
+        return _run_show_document(args, paths)
     except Exception as exc:
         # Dispatch catch-all (S1/M4): an unexpected exception becomes a
         # governed ERROR event (the chain reduces it to type plus location)

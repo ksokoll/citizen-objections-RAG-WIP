@@ -123,17 +123,29 @@ class FakePiiMasker:
         return MaskingResult(text=masked, entity_counts=counts)
 
 
+# Corpus identifier exposed by the FakeRetriever wired into the pipeline
+# fixtures. A recognizable constant rather than a real hash: provenance tests
+# assert the briefing carries exactly the id of the wired retriever (ADR-028).
+TEST_CORPUS_ID = "corpus-id-of-the-wired-fake-retriever"
+
+
 class FakeRetriever:
-    """Fake Retriever implementing the resolve() contract.
+    """Fake Retriever implementing the resolve() and corpus_id contract.
 
     Resolves every citation to a fixed source text, so pipeline
     orchestration tests exercise the resolved path without a vector index
     or embedding model. Tests that need an unresolved citation can set
-    resolve_all to False.
+    resolve_all to False. The retriever owns the corpus identity (ADR-028),
+    so the fake carries a corpus_id like the production service.
     """
 
-    def __init__(self, resolve_all: bool = True) -> None:
+    def __init__(
+        self,
+        resolve_all: bool = True,
+        corpus_id: str = TEST_CORPUS_ID,
+    ) -> None:
         self.resolve_all = resolve_all
+        self.corpus_id = corpus_id
 
     def resolve(self, citations: list[str]) -> list[NormWithSource]:
         results: list[NormWithSource] = []
@@ -192,12 +204,6 @@ class RaisingAuditStoreFake:
         return []
 
 
-# Corpus identifier wired into the pipeline fixtures. A recognizable constant
-# rather than a real hash: provenance tests assert the briefing carries exactly
-# the id the composition root supplied (ADR-028).
-TEST_CORPUS_ID = "corpus-id-wired-by-test-fixture"
-
-
 # Default LLMTriageOutput for pipeline-level fixtures: a single TYP_2 argument
 # whose original_zitat is a substring of the smoke-test SAMPLE_EINWENDUNG.
 # Pre-configuring this on the triage FakeLLMClient keeps the smoke test
@@ -238,7 +244,6 @@ def _build_pipeline(tmp_path: Path, audit_publisher: Any) -> Pipeline:
         retrieval=FakeRetriever(),
         briefing=BriefingService(),
         audit=AuditLogService(store=audit_publisher),
-        corpus_id=TEST_CORPUS_ID,
     )
 
 

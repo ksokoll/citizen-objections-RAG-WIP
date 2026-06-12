@@ -85,10 +85,9 @@ class TestPipelineSmoke:
                 masker=FakePiiMasker(),
             ),
             triage=EmptyTriageService(llm=FakeLLMClient()),
-            retrieval=FakeRetriever(),
+            retrieval=FakeRetriever(corpus_id="corpus-id-kein-treffer-test"),
             briefing=BriefingService(),
             audit=AuditLogService(store=audit_store),
-            corpus_id="corpus-id-kein-treffer-test",
         )
 
         # When the pipeline runs with text that yields no arguments

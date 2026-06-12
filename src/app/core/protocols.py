@@ -36,7 +36,17 @@ class Retriever(Protocol):
     Implemented by the Retrieval context's NormRetrievalService. The
     Coordinator depends on this Protocol rather than the concrete service,
     so tests can substitute a fake without a statute corpus.
+
+    The retriever owns the corpus identity: corpus_id is the content
+    identifier of the statute corpus it actually resolves against, and the
+    Coordinator reads the provenance it stamps into briefings from here
+    rather than taking a free string parameter that could lie (ADR-028).
     """
+
+    @property
+    def corpus_id(self) -> str:
+        """Content identifier of the corpus this retriever resolves against."""
+        ...
 
     def resolve(self, citations: list[str]) -> list[NormWithSource]:
         """Resolve canonical norm citations to their source Gesetzestext."""

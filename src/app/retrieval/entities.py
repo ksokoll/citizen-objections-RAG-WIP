@@ -49,6 +49,27 @@ class GesetzParagraph:
 
 
 @dataclass(frozen=True)
+class LoadedCorpus:
+    """A parsed statute corpus bound to its content-based identifier.
+
+    Produced by the loader (gesetz_xml_loader.load_corpus), the one place
+    where the paragraphs and the id provably belong together. The retriever
+    is built from this value type and exposes the id, so the provenance a
+    briefing carries is structurally bound to the corpus actually resolved
+    against: there is no free-floating corpus_id string to pair with the
+    wrong paragraphs (ADR-028, H2 in the Round 16.1 review).
+
+    Attributes:
+        paragraphs: The parsed corpus paragraphs.
+        corpus_id: SHA-256 content identifier computed over the paragraphs
+            (see compute_corpus_id).
+    """
+
+    paragraphs: list[GesetzParagraph]
+    corpus_id: str
+
+
+@dataclass(frozen=True)
 class NormWithSource:
     """A canonical citation paired with its resolved source text.
 

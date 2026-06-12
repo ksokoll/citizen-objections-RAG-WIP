@@ -96,10 +96,9 @@ def test_failed_zitat_check_increments_the_verification_failure_counter(
             masker=FakePiiMasker(),
         ),
         triage=TriageService(llm=FakeLLMClient(parse_response=hallucinated)),
-        retrieval=FakeRetriever(),
+        retrieval=FakeRetriever(corpus_id="corpus-id-metrics-test"),
         briefing=BriefingService(),
         audit=AuditLogService(store=JsonLinesAuditStore(tmp_path / "audit.jsonl")),
-        corpus_id="corpus-id-metrics-test",
     )
     before = _sample("argument_verification_failures_total")
 

@@ -135,13 +135,15 @@ def test_foreign_stdlib_extra_field_never_reaches_the_sink(
 
 
 def test_allowlist_is_the_frozen_golden_set() -> None:
-    """The allowlist is exactly the golden set of Rounds A and B.
+    """The allowlist is exactly the golden set of Rounds A, B, and 16.1.
 
     A change-detector golden test: a new allowlisted key cannot be added
     without this assertion changing, so widening the default-deny surface is a
     deliberate, reviewable act. Round B widened the set by the three stage
     timing fields of the @traced decorator (stage, duration_ms, status) and
     the seven startup_config provenance fields of the CLI composition root.
+    Round 16.1 widened it by the four resolved store paths in startup_config
+    (app_home, log_dir, raw_store, audit_log; S5).
     """
     assert ALLOWED_KEYS == frozenset(
         {
@@ -168,6 +170,10 @@ def test_allowlist_is_the_frozen_golden_set() -> None:
             "allowlist_size",
             "tracing_enabled",
             "log_format",
+            "app_home",
+            "log_dir",
+            "raw_store",
+            "audit_log",
         }
     )
 

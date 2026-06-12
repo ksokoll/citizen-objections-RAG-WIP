@@ -90,8 +90,10 @@ def load_raw_document(raw_store_path: Path, document_id: str) -> str:
 # the evaluation corpus is ~9,800 characters; 100,000 leaves an order of
 # magnitude of headroom for a long multi-submitter objection while still
 # bounding the work. Characters, not bytes: it is the unit the downstream
-# regex and NER actually scan.
-_MAX_RAW_TEXT_CHARS = 100_000
+# regex and NER actually scan. Public: the CLI composition root applies the
+# same bound as a stat-based pre-read guard (S5), so an oversized file is
+# refused before its content is ever loaded.
+MAX_RAW_TEXT_CHARS = 100_000
 
 
 class DocumentIngestionService:
@@ -128,9 +130,9 @@ class DocumentIngestionService:
         """
         if not raw_text or not raw_text.strip():
             raise IngestionError("raw_text must not be empty")
-        if len(raw_text) > _MAX_RAW_TEXT_CHARS:
+        if len(raw_text) > MAX_RAW_TEXT_CHARS:
             raise IngestionError(
-                f"raw_text exceeds the {_MAX_RAW_TEXT_CHARS}-character limit "
+                f"raw_text exceeds the {MAX_RAW_TEXT_CHARS}-character limit "
                 f"({len(raw_text)} characters); reject at the boundary rather "
                 "than drive the masker unboundedly"
             )

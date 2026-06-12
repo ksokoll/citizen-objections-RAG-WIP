@@ -161,6 +161,13 @@ ALLOWED_KEYS: frozenset[str] = frozenset(
         "allowlist_size",
         "tracing_enabled",
         "log_format",
+        # The resolved absolute store paths in startup_config (Round 16.1,
+        # S5): which raw store, audit log, and log sink a run actually hit.
+        # Operator-chosen filesystem locations, never document content.
+        "app_home",
+        "log_dir",
+        "raw_store",
+        "audit_log",
     }
 )
 

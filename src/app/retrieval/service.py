@@ -19,7 +19,7 @@ from __future__ import annotations
 import re
 
 from app.observability.tracing import traced
-from app.retrieval.entities import GesetzParagraph, NormWithSource
+from app.retrieval.entities import LoadedCorpus, NormWithSource
 
 # Parses a canonical citation into its paragraph and Gesetz components.
 # Captures the section (with optional letter suffix) and the trailing
@@ -34,16 +34,28 @@ class NormRetrievalService:
 
     Attributes:
         _exact: Map from paragraph-level canonical key to its paragraph.
+        _corpus_id: Content identifier of the corpus behind _exact.
     """
 
-    def __init__(self, paragraphs: list[GesetzParagraph]) -> None:
-        """Build the exact-match lookup from the corpus paragraphs.
+    def __init__(self, corpus: LoadedCorpus) -> None:
+        """Build the exact-match lookup from a loaded corpus.
+
+        The service is built from the LoadedCorpus value type, never from a
+        bare paragraph list plus a separate id string, so the corpus_id it
+        exposes is the one computed over exactly the paragraphs it resolves
+        against (ADR-028, provenance).
 
         Args:
-            paragraphs: The corpus paragraphs, keyed by their
+            corpus: The loaded corpus whose paragraphs are keyed by their
                 canonical_key (e.g. "§ 9 BauGB") for exact-match lookup.
         """
-        self._exact = {p.canonical_key: p for p in paragraphs}
+        self._exact = {p.canonical_key: p for p in corpus.paragraphs}
+        self._corpus_id = corpus.corpus_id
+
+    @property
+    def corpus_id(self) -> str:
+        """Content identifier of the statute corpus this service resolves against."""
+        return self._corpus_id
 
     @traced(stage="retrieval")
     def resolve(self, citations: list[str]) -> list[NormWithSource]:

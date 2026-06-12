@@ -30,7 +30,7 @@ from app.observability.tracing import (
     tracer_provider_is_built,
 )
 from app.pipeline import Pipeline
-from app.retrieval.entities import GesetzParagraph
+from app.retrieval.entities import GesetzParagraph, LoadedCorpus
 from app.retrieval.service import NormRetrievalService
 from app.triage.llm_schema import LLMArgument, LLMTriageOutput
 from app.triage.service import TriageService
@@ -111,15 +111,18 @@ def _real_pipeline(tmp_path: Path) -> Pipeline:
             ),
         ]
     )
-    corpus = [
-        GesetzParagraph(
-            gesetz="BauGB",
-            paragraph="§ 1a",
-            canonical_key="§ 1a BauGB",
-            title="Ergänzende Vorschriften zum Umweltschutz",
-            text="Mit Grund und Boden soll sparsam umgegangen werden.",
-        )
-    ]
+    corpus = LoadedCorpus(
+        paragraphs=[
+            GesetzParagraph(
+                gesetz="BauGB",
+                paragraph="§ 1a",
+                canonical_key="§ 1a BauGB",
+                title="Ergänzende Vorschriften zum Umweltschutz",
+                text="Mit Grund und Boden soll sparsam umgegangen werden.",
+            )
+        ],
+        corpus_id="corpus-id-tracing-test",
+    )
     return Pipeline(
         ingestion=DocumentIngestionService(
             raw_store_path=tmp_path / "raw",
@@ -129,7 +132,6 @@ def _real_pipeline(tmp_path: Path) -> Pipeline:
         retrieval=NormRetrievalService(corpus),
         briefing=BriefingService(),
         audit=AuditLogService(store=JsonLinesAuditStore(tmp_path / "audit.jsonl")),
-        corpus_id="corpus-id-tracing-test",
     )
 
 

@@ -7,7 +7,7 @@ from tests.conftest import FakePiiMasker
 
 from app.core.failures import IngestionError
 from app.document_ingestion.service import (
-    _MAX_RAW_TEXT_CHARS,
+    MAX_RAW_TEXT_CHARS,
     DocumentIngestionService,
 )
 
@@ -144,7 +144,7 @@ class TestRawTextLengthBound:
         service = DocumentIngestionService(
             raw_store_path=tmp_path, masker=FakePiiMasker()
         )
-        over_limit = "a" * (_MAX_RAW_TEXT_CHARS + 1)
+        over_limit = "a" * (MAX_RAW_TEXT_CHARS + 1)
 
         # When ingest is called with over-limit text
         # Then IngestionError is raised (input validation at the edge)
@@ -156,7 +156,7 @@ class TestRawTextLengthBound:
         service = DocumentIngestionService(
             raw_store_path=tmp_path, masker=FakePiiMasker()
         )
-        at_limit = "a" * _MAX_RAW_TEXT_CHARS
+        at_limit = "a" * MAX_RAW_TEXT_CHARS
 
         # When ingest is called with text at the limit
         result = service.ingest(at_limit)
