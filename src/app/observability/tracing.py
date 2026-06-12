@@ -39,6 +39,7 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
 from opentelemetry.trace import Span, StatusCode
 
 from app.observability.events import STAGE_TIMING
+from app.observability.metrics import observe_stage_duration
 
 _log = structlog.get_logger()
 
@@ -163,6 +164,9 @@ def traced(
     exception is attached via exc_info, reduced by the logging chain to type
     plus location, and then re-raised unchanged. A span is opened only when
     OBSERVABILITY_TRACING=1; its status is set to ERROR on the error path.
+    The measured duration also feeds the stage_duration_seconds metric, so
+    the metric needs no module-global start-time state of its own; the
+    metrics write is contained and cannot abort the business path.
 
     No argument values are captured by default. capture_fields is the
     explicit opt-in for named safe fields (unused in Round B).
@@ -185,6 +189,7 @@ def traced(
                     result = func(*args, **kwargs)
                 except Exception:
                     duration_ms = round((time.perf_counter() - start) * 1000, 3)
+                    observe_stage_duration(stage, duration_ms / 1000)
                     if span is not None:
                         span.set_status(StatusCode.ERROR)
                     _log.error(
@@ -197,6 +202,7 @@ def traced(
                     )
                     raise
                 duration_ms = round((time.perf_counter() - start) * 1000, 3)
+                observe_stage_duration(stage, duration_ms / 1000)
                 _log.info(
                     STAGE_TIMING,
                     stage=stage,

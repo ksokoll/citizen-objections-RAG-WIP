@@ -22,6 +22,7 @@ dependencies = [
     "structlog==26.1.0",
     "opentelemetry-api==1.39.1",
     "opentelemetry-sdk==1.39.1",
+    "prometheus_client==0.25.0",
     "de_core_news_md @ https://github.com/explosion/spacy-models/releases/download/de_core_news_md-3.8.0/de_core_news_md-3.8.0-py3-none-any.whl",
 ]
 

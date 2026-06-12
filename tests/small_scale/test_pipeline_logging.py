@@ -14,6 +14,7 @@ from pathlib import Path
 
 import pytest
 
+from app.observability import metrics
 from app.observability.events import AUDIT_APPEND_FAILED
 from app.observability.logging_config import LOG_FILENAME, configure_logging
 from app.pipeline import Pipeline
@@ -78,16 +79,21 @@ def test_emit_failure_is_logged_at_error_and_swallowed(
     pipeline_with_failing_audit: tuple[Pipeline, RaisingAuditStoreFake],
     log_sink: Callable[[], list[dict]],
 ) -> None:
-    """A failed audit publish is logged at ERROR and does not abort the run.
+    """A failed audit publish is logged at ERROR, counted, and swallowed.
 
     Interim Round A policy (ADR-027): the run still returns a briefing and each
     failed publish is a governed AUDIT_APPEND_FAILED ERROR event carrying only
-    the audit_event_type, never the exception message.
+    the audit_event_type, never the exception message. Round B addition: each
+    failed publish also increments audit_write_failures_total, the
+    sink-independent visibility for the interim double-failure risk.
 
     Round C mutation: when fail-closed lands, this assertion flips to
     pytest.raises(AuditWriteError) and the run returns no briefing.
     """
     pipeline, raising_store = pipeline_with_failing_audit
+    failures_before = (
+        metrics.REGISTRY.get_sample_value("audit_write_failures_total") or 0
+    )
 
     briefing = pipeline.run(_SAMPLE_EINWENDUNG)
 
@@ -101,6 +107,9 @@ def test_emit_failure_is_logged_at_error_and_swallowed(
     assert all("audit_event_type" in line for line in failures)
     rendered = json.dumps(failures)
     assert "simulated audit store write failure" not in rendered
+
+    failures_after = metrics.REGISTRY.get_sample_value("audit_write_failures_total")
+    assert failures_after - failures_before == raising_store.publish_calls
 
 
 def test_store_programming_error_propagates_out_of_run(

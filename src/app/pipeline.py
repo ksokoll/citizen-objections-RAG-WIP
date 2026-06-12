@@ -38,6 +38,13 @@ from app.core.protocols import Retriever
 from app.document_ingestion.service import DocumentIngestionService
 from app.observability import reset_correlation_id, set_correlation_id
 from app.observability.events import AUDIT_APPEND_FAILED
+from app.observability.metrics import (
+    inc_argument_verification_failures,
+    inc_audit_write_failure,
+    inc_norm_resolutions,
+    inc_objection_processed,
+    observe_arguments_per_objection,
+)
 from app.observability.tracing import traced
 from app.triage.service import TriageService
 
@@ -111,6 +118,16 @@ class Pipeline:
             )
 
             triage_result = self._triage.triage(ingestion_result.clean_text)
+            # Domain metrics live in the Coordinator, which already owns the
+            # cross-context view; the contained helpers cannot abort the run.
+            observe_arguments_per_objection(len(triage_result.extracted_arguments))
+            inc_argument_verification_failures(
+                sum(
+                    1
+                    for arg in triage_result.extracted_arguments
+                    if not arg.argument_verified
+                )
+            )
             self._emit(
                 einwendungs_id,
                 AuditEventType.TRIAGE,
@@ -122,6 +139,11 @@ class Pipeline:
             resolved_total = sum(
                 sum(1 for n in norms if n.resolved)
                 for norms in norms_by_argument.values()
+            )
+            norm_total = sum(len(norms) for norms in norms_by_argument.values())
+            inc_norm_resolutions(
+                resolved=resolved_total,
+                unresolved=norm_total - resolved_total,
             )
             self._emit(
                 einwendungs_id,
@@ -143,6 +165,7 @@ class Pipeline:
                 if not triage_result.extracted_arguments
                 else AuditEventType.BRIEFING_ERSTELLT
             )
+            inc_objection_processed(status=event_type.value)
             self._emit(
                 einwendungs_id,
                 event_type,
@@ -152,6 +175,7 @@ class Pipeline:
             return briefing
 
         except (IngestionError, TriageError, RetrievalError):
+            inc_objection_processed(status=AuditEventType.PIPELINE_FEHLER.value)
             if einwendungs_id:
                 self._emit(
                     einwendungs_id,
@@ -248,8 +272,10 @@ class Pipeline:
         never written. The _log.error call is itself guarded: by the
         never-raises contract of this interim emit, a failure in the logging
         path (a sabotaged or degraded sink) must not turn into a raise either.
-        Independent failure-visibility for that double failure is Round B's
-        metric (ADR-027 interim section).
+        The audit_write_failures_total increment before it is the
+        sink-independent visibility for that double failure (ADR-027 interim
+        section): it counts even when the log sink is also down, and the
+        contained metrics helper cannot raise.
 
         Args:
             einwendungs_id: ID of the objection being processed.
@@ -266,6 +292,7 @@ class Pipeline:
                 )
             )
         except (AuditLogError, OSError):
+            inc_audit_write_failure()
             try:
                 _log.error(
                     AUDIT_APPEND_FAILED,
@@ -274,6 +301,6 @@ class Pipeline:
                 )
             except Exception:
                 # Never-raises contract: even a failing sink must not abort the
-                # run from inside the interim emit. The only remaining trace is
-                # stdlib handleError stderr; the Round B metric closes the gap.
+                # run from inside the interim emit. The metric increment above
+                # already counted the failure, sink-independently.
                 pass
