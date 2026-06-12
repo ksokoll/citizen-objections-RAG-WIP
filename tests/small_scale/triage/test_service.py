@@ -143,6 +143,79 @@ class TestArgumentVerification:
         assert all(a.zitierte_normen == [] for a in result.extracted_arguments)
 
 
+class TestPromptDataFencing:
+    """The Einwendung travels as fenced data with a precedence rule (S3)."""
+
+    def test_prompt_wraps_the_einwendung_in_delimiters_with_precedence(
+        self,
+    ) -> None:
+        # Given a triage service over a recording fake LLM
+        fake_llm = FakeLLMClient(parse_response=LLMTriageOutput(argumente=[]))
+        service = TriageService(llm=fake_llm)
+        einwendung = "Der Plan verstößt gegen § 1 Abs. 7 BauGB."
+
+        # When triage runs
+        service.triage(einwendung)
+
+        # Then the prompt fences the document between the start and end
+        # markers (rindex: the preamble names the markers once before the
+        # actual fence) and states the precedence rule before the fence
+        prompt = fake_llm.parse_calls[0]["prompt"]
+        start = prompt.rindex("<<<EINWENDUNG_START>>>")
+        end = prompt.rindex("<<<EINWENDUNG_ENDE>>>")
+        assert start < prompt.index(einwendung) < end
+        assert "werden nicht befolgt" in prompt[:start]
+
+
+class TestContradictionCheck:
+    """Norms present with an empty argument list is a flagged contradiction (S3)."""
+
+    def test_norms_present_with_empty_arguments_sets_the_flag(self) -> None:
+        # Given a document citing a norm and an LLM returning no arguments
+        fake_llm = FakeLLMClient(parse_response=LLMTriageOutput(argumente=[]))
+        service = TriageService(llm=fake_llm)
+
+        # When triage runs over a text with a deterministic norm citation
+        result = service.triage("Der Plan verstößt gegen § 1 Abs. 7 BauGB.")
+
+        # Then the contradiction is flagged on the result
+        assert result.contradiction_detected is True
+
+    def test_no_norms_with_empty_arguments_is_not_a_contradiction(self) -> None:
+        # Given a text without norm citations and an LLM returning no arguments
+        fake_llm = FakeLLMClient(parse_response=LLMTriageOutput(argumente=[]))
+        service = TriageService(llm=fake_llm)
+
+        # When triage runs (a legitimate TYP_1 no-substance document)
+        result = service.triage("Ich bin einfach dagegen.")
+
+        # Then no contradiction is flagged
+        assert result.contradiction_detected is False
+
+    def test_norms_present_with_arguments_is_not_a_contradiction(self) -> None:
+        # Given a text citing a norm and an LLM extracting an argument from it
+        quote = "Der Plan verstößt gegen § 1 Abs. 7 BauGB."
+        fake_llm = FakeLLMClient(
+            parse_response=LLMTriageOutput(
+                argumente=[
+                    LLMArgument(
+                        catalog_id="baugb",
+                        einwendungs_typ=EinwendungsTyp.TYP_2,
+                        argument_text="Verstoß gegen das Abwägungsgebot",
+                        original_zitat=quote,
+                    ),
+                ]
+            )
+        )
+        service = TriageService(llm=fake_llm)
+
+        # When triage runs
+        result = service.triage(quote)
+
+        # Then no contradiction is flagged
+        assert result.contradiction_detected is False
+
+
 class _RaisingLLMClient:
     """LLMClientProtocol double whose parse raises a configured failure.
 

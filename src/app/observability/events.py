@@ -73,6 +73,13 @@ STARTUP_CONFIG: Final[str] = "app.startup_config"
 #: user sees carries the type only, no detail and no traceback.
 CLI_UNHANDLED_ERROR: Final[str] = "app.unhandled_error"
 
+#: The deterministic extractor found norm citations but the LLM returned an
+#: empty argument list (Triage, Round 16.1, S3). An internal contradiction
+#: and the observable signature of a prompt-injected suppression: a document
+#: that cites norms has legal substance by the prompt's own definition.
+#: Logged as the event only, no fields; the document text never travels.
+TRIAGE_CONTRADICTION_DETECTED: Final[str] = "triage.contradiction_detected"
+
 #: Timing of one instrumented stage, emitted by the @traced decorator on
 #: every invocation regardless of the tracing flag (observability, Round B).
 #: Carries the stage name, duration_ms, and status ok or error; on error the
@@ -100,6 +107,7 @@ REGISTERED_EVENTS: Final[frozenset[str]] = frozenset(
         PROCESSOR_FAILED,
         STAGE_TIMING,
         STARTUP_CONFIG,
+        TRIAGE_CONTRADICTION_DETECTED,
         UNREGISTERED_LOG_EVENT,
     }
 )

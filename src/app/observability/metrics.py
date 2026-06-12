@@ -1,11 +1,14 @@
 """In-process Prometheus metrics for the pipeline (ADR-023, ADR-027).
 
 Logs tell the story of one run; metrics count the fleet across runs. Exactly
-the six metrics defined in docs/OBSERVABILITY_IMPLEMENTATION.md exist, one
-purpose each, cardinality far under 100. The registry is in-process with no
-scrape endpoint in this phase: the metrics are instrumentation readiness, not
-live signals. Production adds a scrape endpoint and alert rules against the
-thresholds documented below; that is a wiring step, not a redesign (ADR-023).
+seven metrics exist, one purpose each, cardinality far under 100: the six
+defined in docs/OBSERVABILITY_IMPLEMENTATION.md plus the Round 16.1
+triage-contradiction counter (S3; a deliberate widening of the committed
+six, recorded in the round-15 deviations log). The registry is in-process
+with no scrape endpoint in this phase: the metrics are instrumentation
+readiness, not live signals. Production adds a scrape endpoint and alert
+rules against the thresholds documented below; that is a wiring step, not a
+redesign (ADR-023).
 
 Norm resolution is one counter family with a result label (resolved or
 unresolved): the quality signal is the ratio unresolved / total, and both
@@ -36,6 +39,9 @@ Alert thresholds, defined now as documentation and wired in production
 - audit_write_failures_total: any nonzero value pages immediately. A
   degrading audit store must be visible regardless of the failure policy and
   independently of the log sink (ADR-027, interim double-failure risk).
+- triage_contradictions_total: a sustained increase warrants reviewing the
+  affected documents; a single increment is a quality signal, not an alarm.
+  The observable signature of a prompt-injected argument suppression (S3).
 """
 
 from __future__ import annotations
@@ -48,10 +54,10 @@ from prometheus_client import CollectorRegistry, Counter, Histogram
 
 P = ParamSpec("P")
 
-#: In-process registry holding exactly the six pipeline metrics. Deliberately
-#: not the prometheus_client global REGISTRY, so importing this module twice
-#: under test never trips duplicate registration and nothing third-party can
-#: leak into our metric namespace.
+#: In-process registry holding exactly the seven pipeline metrics.
+#: Deliberately not the prometheus_client global REGISTRY, so importing this
+#: module twice under test never trips duplicate registration and nothing
+#: third-party can leak into our metric namespace.
 REGISTRY = CollectorRegistry()
 
 OBJECTIONS_PROCESSED = Counter(
@@ -95,6 +101,13 @@ AUDIT_WRITE_FAILURES = Counter(
     "audit_write_failures_total",
     "Swallowed-or-handled audit publish failures; sink-independent "
     "visibility for a degrading audit store (ADR-027).",
+    registry=REGISTRY,
+)
+
+TRIAGE_CONTRADICTIONS = Counter(
+    "triage_contradictions_total",
+    "Documents whose deterministic norm extraction found citations while "
+    "the LLM returned no arguments; the prompt-injection signature (S3).",
     registry=REGISTRY,
 )
 
@@ -151,3 +164,9 @@ def inc_argument_verification_failures(count: int) -> None:
 def inc_audit_write_failure() -> None:
     """Count one handled audit publish failure (ADR-027 visibility)."""
     AUDIT_WRITE_FAILURES.inc()
+
+
+@_contained
+def inc_triage_contradiction() -> None:
+    """Count one norms-present-but-no-arguments contradiction (S3)."""
+    TRIAGE_CONTRADICTIONS.inc()

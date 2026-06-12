@@ -135,7 +135,10 @@ class Pipeline:
             self._emit(
                 einwendungs_id,
                 AuditEventType.TRIAGE,
-                {"argument_count": len(triage_result.extracted_arguments)},
+                {
+                    "argument_count": len(triage_result.extracted_arguments),
+                    "contradiction_detected": triage_result.contradiction_detected,
+                },
             )
 
             arguments = self._map_arguments(triage_result.extracted_arguments)

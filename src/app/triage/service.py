@@ -21,10 +21,14 @@ from __future__ import annotations
 
 import uuid
 
+import structlog
+
 from app.core.entities import ExtrahiertesArgument
 from app.core.failures import LLMError, LLMParseError, TriageError
 from app.core.protocols import LLMClientProtocol
 from app.core.results import TriageResult
+from app.observability.events import TRIAGE_CONTRADICTION_DETECTED
+from app.observability.metrics import inc_triage_contradiction
 from app.observability.tracing import traced
 
 from .catalog import KATALOG
@@ -32,6 +36,8 @@ from .classification import classify_einwendungs_typ
 from .llm_schema import LLMArgument, LLMTriageOutput
 from .norm_extractor import ExtractedNorm, extract_norms
 from .prompts import ARGUMENT_EXTRACTION_PROMPT
+
+_log = structlog.get_logger()
 
 
 class TriageService:
@@ -51,16 +57,17 @@ class TriageService:
         Pipeline:
             1. LLM extraction returns four-field LLMArgument objects.
             2. Single pass of deterministic norm extraction over clean_text.
-            3. Per argument: verify original_zitat and assign norms positionally.
-            4. Derive document-level EinwendungsTyp from per-argument types.
+            3. Contradiction check: norms present but no arguments (S3).
+            4. Per argument: verify original_zitat and assign norms positionally.
+            5. Derive document-level EinwendungsTyp from per-argument types.
 
         Args:
             clean_text: PII-masked Einwendung text from DocumentIngestion.
 
         Returns:
-            TriageResult with extracted arguments and document-level
-            EinwendungsTyp. Empty argument list is valid for TYP_1 documents
-            with no legal arguments.
+            TriageResult with extracted arguments, document-level
+            EinwendungsTyp, and the contradiction flag. Empty argument list
+            is valid for TYP_1 documents with no legal arguments.
 
         Raises:
             TriageError: If the LLM call fails or its output does not parse.
@@ -77,6 +84,16 @@ class TriageService:
                 f"LLM argument extraction failed: {type(exc).__name__}"
             ) from exc
         all_norms = extract_norms(clean_text)
+        # Deterministic contradiction check (S3): a document that cites norms
+        # has legal substance by the prompt's own Vorpruefung definition, so
+        # an empty LLM argument list contradicts the deterministic evidence.
+        # This is the observable signature of a prompt-injected suppression;
+        # the document is not failed, but the signal is logged, counted, and
+        # carried to the Coordinator for the TRIAGE audit payload.
+        contradiction_detected = bool(all_norms) and not raw_arguments
+        if contradiction_detected:
+            _log.warning(TRIAGE_CONTRADICTION_DETECTED)
+            inc_triage_contradiction()
         extracted_arguments = [
             self._build_extrahiertes_argument(raw, clean_text, all_norms)
             for raw in raw_arguments
@@ -85,6 +102,7 @@ class TriageService:
         return TriageResult(
             einwendungs_typ=einwendungs_typ,
             extracted_arguments=extracted_arguments,
+            contradiction_detected=contradiction_detected,
         )
 
     def _extract_arguments(self, clean_text: str) -> list[LLMArgument]:

@@ -1,10 +1,12 @@
-"""Behaviour tests for the six in-process pipeline metrics.
+"""Behaviour tests for the seven in-process pipeline metrics.
 
-Logs tell one run's story; metrics count the fleet. Exactly the six metrics
-from docs/OBSERVABILITY_IMPLEMENTATION.md exist, every write is contained (a
-failing metrics call never aborts the business path), and the domain counters
-increment on their defined triggers. The registry is module-global, so every
-assertion works on before/after deltas, never on absolute values.
+Logs tell one run's story; metrics count the fleet. Exactly seven metrics
+exist (the six from docs/OBSERVABILITY_IMPLEMENTATION.md plus the Round 16.1
+triage-contradiction counter, a deliberate widening recorded in the round-15
+deviations log), every write is contained (a failing metrics call never
+aborts the business path), and the domain counters increment on their
+defined triggers. The registry is module-global, so every assertion works on
+before/after deltas, never on absolute values.
 """
 
 from __future__ import annotations
@@ -35,11 +37,13 @@ def _sample(name: str, labels: dict[str, str] | None = None) -> float:
     return metrics.REGISTRY.get_sample_value(name, labels) or 0
 
 
-def test_exactly_the_six_metrics_exist_and_no_seventh() -> None:
-    """The registry holds the six planned metrics, nothing else.
+def test_exactly_the_seven_metrics_exist_and_no_eighth() -> None:
+    """The registry holds exactly the seven decided metrics, nothing else.
 
-    A change-detector: a seventh metric (the named scope-creep risk of
-    Round B) cannot appear without this assertion changing.
+    A change-detector: its purpose is visibility, not prohibition. The
+    Round 16.1 contradiction counter widened the committed six to seven as
+    a deliberate, deviation-logged act; the next metric must again change
+    this assertion to exist.
     """
     families = {family.name for family in metrics.REGISTRY.collect()}
     assert families == {
@@ -49,6 +53,7 @@ def test_exactly_the_six_metrics_exist_and_no_seventh() -> None:
         "arguments_per_objection",
         "argument_verification_failures",
         "audit_write_failures",
+        "triage_contradictions",
     }
 
 
@@ -153,6 +158,7 @@ def test_a_sabotaged_registry_does_not_abort_the_run(
         "ARGUMENTS_PER_OBJECTION",
         "ARGUMENT_VERIFICATION_FAILURES",
         "AUDIT_WRITE_FAILURES",
+        "TRIAGE_CONTRADICTIONS",
     ):
         monkeypatch.setattr(metrics, name, SabotagedMetric())
     pipeline, _ = pipeline_and_audit
