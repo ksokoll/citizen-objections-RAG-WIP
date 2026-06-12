@@ -22,6 +22,7 @@ from __future__ import annotations
 import uuid
 
 from app.core.entities import ExtrahiertesArgument
+from app.core.failures import LLMError, LLMParseError, TriageError
 from app.core.protocols import LLMClientProtocol
 from app.core.results import TriageResult
 from app.observability.tracing import traced
@@ -62,9 +63,19 @@ class TriageService:
             with no legal arguments.
 
         Raises:
-            TriageError: If the LLM call fails.
+            TriageError: If the LLM call fails or its output does not parse.
         """
-        raw_arguments = self._extract_arguments(clean_text)
+        try:
+            raw_arguments = self._extract_arguments(clean_text)
+        except (LLMError, LLMParseError) as exc:
+            # Context boundary translation (S1): the infrastructure failure
+            # class never leaves this context. The TriageError message carries
+            # the failure type only; the provider message may interpolate
+            # input fragments and travels solely on the chained cause, where
+            # the logging chain reduces it to type plus location (ADR-026).
+            raise TriageError(
+                f"LLM argument extraction failed: {type(exc).__name__}"
+            ) from exc
         all_norms = extract_norms(clean_text)
         extracted_arguments = [
             self._build_extrahiertes_argument(raw, clean_text, all_norms)
@@ -92,6 +103,9 @@ class TriageService:
 
         Raises:
             LLMError: If the LLM provider call fails.
+            LLMParseError: If the provider output does not parse into the
+                schema. Both are translated into TriageError by triage(),
+                the context boundary; they never leave this context.
         """
         catalog_entries = "\n".join(
             f"- {c.catalog_id}: {c.beschreibung}" for c in KATALOG.values()

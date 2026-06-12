@@ -56,7 +56,7 @@ from app.observability import (
     ProcessorChainError,
     configure_logging,
 )
-from app.observability.events import STARTUP_CONFIG
+from app.observability.events import CLI_UNHANDLED_ERROR, STARTUP_CONFIG
 from app.observability.logging_config import ALLOWED_KEYS
 from app.observability.tracing import tracing_enabled
 from app.pipeline import Pipeline
@@ -353,9 +353,19 @@ def main(argv: list[str] | None = None) -> int:
         print(f"startup aborted: {exc}", file=sys.stderr)
         return 2
 
-    if args.command == "process":
-        return _run_process(args)
-    return _run_show_document(args)
+    try:
+        if args.command == "process":
+            return _run_process(args)
+        return _run_show_document(args)
+    except Exception as exc:
+        # Dispatch catch-all (S1/M4): an unexpected exception becomes a
+        # governed ERROR event (the chain reduces it to type plus location)
+        # and one clean stderr line carrying the type only. The exception
+        # message is foreign-authored text and never reaches stderr or the
+        # sink; a traceback would be the richest leak channel of all.
+        _log.error(CLI_UNHANDLED_ERROR, exc_info=True)
+        print(f"unexpected error: {type(exc).__name__}", file=sys.stderr)
+        return 1
 
 
 if __name__ == "__main__":

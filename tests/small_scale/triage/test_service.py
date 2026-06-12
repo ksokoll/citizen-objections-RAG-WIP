@@ -7,7 +7,11 @@ configuring `FakeLLMClient.parse_response` with an explicit
 describe what each block verifies.
 """
 
+import pytest
+from pydantic import BaseModel
+
 from app.core import EinwendungsTyp
+from app.core.failures import LLMError, LLMParseError, TriageError
 from app.triage.classification import classify_einwendungs_typ
 from app.triage.llm_schema import LLMArgument, LLMTriageOutput
 from app.triage.service import TriageService
@@ -137,3 +141,54 @@ class TestArgumentVerification:
         # Then all arguments are unverified and carry no norms
         assert all(not a.argument_verified for a in result.extracted_arguments)
         assert all(a.zitierte_normen == [] for a in result.extracted_arguments)
+
+
+class _RaisingLLMClient:
+    """LLMClientProtocol double whose parse raises a configured failure.
+
+    Models the documented seam contract: concrete clients translate every
+    provider failure into LLMError or LLMParseError before it leaves the
+    client (core/failures.py).
+    """
+
+    def __init__(self, error: Exception) -> None:
+        self._error = error
+
+    def generate(self, prompt: str, system_prompt: str = "") -> str:
+        raise self._error
+
+    def parse(
+        self,
+        prompt: str,
+        response_format: type[BaseModel],
+        system_prompt: str = "",
+    ) -> BaseModel:
+        raise self._error
+
+
+class TestContextBoundaryTranslation:
+    """Infrastructure failures never leave the Triage context untranslated (S1)."""
+
+    @pytest.mark.parametrize(
+        "seam_error",
+        [
+            LLMError("provider failed: fragment of citizen input leaked here"),
+            LLMParseError("schema mismatch: fragment of citizen input leaked here"),
+        ],
+        ids=["llm_error", "llm_parse_error"],
+    )
+    def test_should_translate_llm_failure_into_triage_error(
+        self, seam_error: Exception
+    ) -> None:
+        # Given an LLM client that raises the documented seam failure class
+        service = TriageService(llm=_RaisingLLMClient(seam_error))
+
+        # When triage is called, then TriageError leaves the boundary, with
+        # the original failure chained and its message (potential input
+        # fragments) absent from the TriageError's own message
+        with pytest.raises(TriageError) as exc_info:
+            service.triage("Beliebiger Einwendungstext.")
+
+        assert exc_info.value.__cause__ is seam_error
+        assert type(seam_error).__name__ in str(exc_info.value)
+        assert "fragment of citizen input" not in str(exc_info.value)

@@ -59,6 +59,13 @@ PROCESSOR_FAILED: Final[str] = "observability.processor_failed"
 #: tracing flag, and log format. Operational provenance, never payload.
 STARTUP_CONFIG: Final[str] = "app.startup_config"
 
+#: An unexpected exception reached the CLI dispatch boundary (Round 16.1,
+#: S1/M4). Emitted at ERROR by the entrypoint catch-all before the process
+#: exits 1; the exception is reduced to type plus location by the chain and
+#: its message (foreign-authored text) is never written. The stderr line the
+#: user sees carries the type only, no detail and no traceback.
+CLI_UNHANDLED_ERROR: Final[str] = "app.unhandled_error"
+
 #: Timing of one instrumented stage, emitted by the @traced decorator on
 #: every invocation regardless of the tracing flag (observability, Round B).
 #: Carries the stage name, duration_ms, and status ok or error; on error the
@@ -77,6 +84,7 @@ UNREGISTERED_LOG_EVENT: Final[str] = "observability.unregistered_log_event"
 REGISTERED_EVENTS: Final[frozenset[str]] = frozenset(
     {
         AUDIT_APPEND_FAILED,
+        CLI_UNHANDLED_ERROR,
         INGESTION_RAW_STORE_WORLD_READABLE,
         LOG_SINK_WORLD_READABLE,
         INGESTION_PII_COVERAGE_ANOMALY,

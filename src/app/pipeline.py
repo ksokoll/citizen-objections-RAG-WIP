@@ -258,10 +258,12 @@ class Pipeline:
         in Round C behind this same log line, once the chain invariants that
         make an abort diagnosable exist (ADR-024).
 
-        Only the recoverable store-failure class is swallowed: AuditLogError
-        (the store's own write/duplicate error) and OSError (raw I/O). A
-        programming error (TypeError, ValueError, a bug in the publish path) is
-        not an expected store failure and propagates, so it surfaces in
+        Only the recoverable store-failure class is swallowed: AuditLogError.
+        The publisher contract (core/protocols.py) obliges every store
+        implementation to translate raw I/O failures into AuditLogError, so a
+        raw OSError arriving here is a contract violation, not an expected
+        store failure. It propagates, like every programming error (TypeError,
+        ValueError, a bug in the publish path), so the violation surfaces in
         development instead of being silently treated like a transient I/O
         hiccup (failure-routing rule, ADR-027).
 
@@ -291,7 +293,7 @@ class Pipeline:
                     payload=payload,
                 )
             )
-        except (AuditLogError, OSError):
+        except AuditLogError:
             inc_audit_write_failure()
             try:
                 _log.error(

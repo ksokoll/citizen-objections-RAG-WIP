@@ -56,6 +56,26 @@ def test_publish_appends(tmp_path: Path) -> None:
     assert event_b.event_id in ids
 
 
+def test_publish_translates_io_failure_into_audit_log_error(tmp_path: Path) -> None:
+    """No raw OSError escapes publish (the publisher failure contract).
+
+    Given a store whose backing path has become unreadable as a file (a
+    directory sits at the path), when publish hits the resulting I/O failure,
+    then the store raises AuditLogError with the OSError chained, never the
+    raw OSError: callers route the recoverable store-failure class on exactly
+    one exception type (core/protocols.py, ADR-027).
+    """
+    path = tmp_path / "audit.jsonl"
+    store = JsonLinesAuditStore(path)
+    path.unlink()
+    path.mkdir()
+
+    with pytest.raises(AuditLogError) as exc_info:
+        store.publish(_make_event())
+
+    assert isinstance(exc_info.value.__cause__, OSError)
+
+
 def test_publish_duplicate_event_id_raises(tmp_path: Path) -> None:
     store = JsonLinesAuditStore(tmp_path / "audit.jsonl")
     event = _make_event()

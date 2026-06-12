@@ -17,9 +17,10 @@ from pathlib import Path
 
 import pytest
 
+import app.__main__ as cli
 from app.__main__ import main
 from app.document_ingestion.service import DocumentIngestionService
-from app.observability.events import STARTUP_CONFIG
+from app.observability.events import CLI_UNHANDLED_ERROR, STARTUP_CONFIG
 from app.observability.logging_config import LOG_FILENAME
 from tests.conftest import FakePiiMasker
 
@@ -142,6 +143,53 @@ def test_show_document_rejects_a_path_shaped_id_at_the_boundary(
     captured = capsys.readouterr()
     assert exit_code == 1
     assert "not a valid document id" in captured.err
+
+
+def test_unexpected_exception_is_one_clean_line_and_a_governed_error(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An unexpected exception exits 1 with one clean line, no traceback.
+
+    Given a command path that raises an exception outside the routed failure
+    classes, when the CLI runs, then stderr carries exactly one line naming
+    the exception type but not its message, no traceback is dumped, the exit
+    code is 1, and the sink carries a governed app.unhandled_error ERROR
+    event with the exception reduced to type plus location.
+    """
+    log_dir = tmp_path / "logs"
+
+    def boom(raw_store_path: Path, document_id: str) -> str:
+        raise RuntimeError("secret detail that must not reach stderr or sink")
+
+    monkeypatch.setattr(cli, "load_raw_document", boom)
+
+    exit_code = main(
+        [
+            "--log-dir",
+            str(log_dir),
+            "show-document",
+            str(uuid.uuid4()),
+            "--raw-store",
+            str(tmp_path / "raw"),
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 1
+    assert captured.err.strip().splitlines() == ["unexpected error: RuntimeError"]
+    assert "Traceback" not in captured.err
+    assert "secret detail" not in captured.err
+    assert captured.out == ""
+
+    errors = [
+        line for line in _read_sink(log_dir) if line["event"] == CLI_UNHANDLED_ERROR
+    ]
+    assert len(errors) == 1
+    assert errors[0]["level"] == "error"
+    assert errors[0]["exc_type"] == "RuntimeError"
+    assert "secret detail" not in json.dumps(errors)
 
 
 def test_cli_run_emits_startup_config_into_the_sink(

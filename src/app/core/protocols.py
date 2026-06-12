@@ -49,6 +49,13 @@ class AuditEventPublisherProtocol(Protocol):
     All state changes must be audited via `publish`. The store must enforce
     immutability: duplicate event_ids raise AuditLogError. `query` is for
     retrieving historical events; it returns empty list on no match, never raises.
+
+    Failure contract: implementations translate every I/O failure on the
+    publish path into AuditLogError. No raw OSError may escape publish, so
+    callers (Pipeline._emit, ADR-027) can route the recoverable store-failure
+    class on exactly one exception type without depending on stdlib exception
+    types. A contract test against each store implementation proves the
+    translation.
     """
 
     def publish(self, event: AuditEvent) -> None:
@@ -58,7 +65,9 @@ class AuditEventPublisherProtocol(Protocol):
             event: The audit event to record.
 
         Raises:
-            AuditLogError: If event_id already exists (duplicate prevention).
+            AuditLogError: If event_id already exists (duplicate prevention)
+                or if an I/O failure prevents the append. Raw OSErrors are
+                translated, never propagated.
         """
         ...
 
