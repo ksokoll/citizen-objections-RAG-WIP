@@ -12,6 +12,8 @@ import json
 import logging
 import os
 import stat
+import subprocess
+import sys
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -77,6 +79,36 @@ def log_sink(tmp_path: Path) -> Callable[[], list[dict]]:
     configure_logging(log_dir=tmp_path, fmt="json")
 
 
+def test_importing_observability_has_no_side_effects(tmp_path: Path) -> None:
+    """Importing the package configures nothing (the 15.2 stopgap is retired).
+
+    Given a clean interpreter in an empty working directory, when
+    app.observability is imported, then no handler is installed on the root
+    logger and no logs directory appears: configuration is an explicit
+    composition-root act, not an import side effect (ADR-026, Round B).
+    """
+    code = (
+        "import logging\n"
+        "import pathlib\n"
+        "import app.observability\n"
+        "assert logging.getLogger().handlers == [], logging.getLogger().handlers\n"
+        "assert not pathlib.Path('logs').exists()\n"
+        "print('clean-import')\n"
+    )
+
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "clean-import" in result.stdout
+    assert not (tmp_path / "logs").exists()
+
+
 def test_foreign_stdlib_extra_field_never_reaches_the_sink(
     log_sink: Callable[[], list[dict]],
 ) -> None:
@@ -108,7 +140,8 @@ def test_allowlist_is_the_frozen_golden_set() -> None:
     A change-detector golden test: a new allowlisted key cannot be added
     without this assertion changing, so widening the default-deny surface is a
     deliberate, reviewable act. Round B widened the set by the three stage
-    timing fields of the @traced decorator (stage, duration_ms, status).
+    timing fields of the @traced decorator (stage, duration_ms, status) and
+    the seven startup_config provenance fields of the CLI composition root.
     """
     assert ALLOWED_KEYS == frozenset(
         {
@@ -128,6 +161,13 @@ def test_allowlist_is_the_frozen_golden_set() -> None:
             "stage",
             "duration_ms",
             "status",
+            "git_sha",
+            "model_id",
+            "package_versions",
+            "corpus_id",
+            "allowlist_size",
+            "tracing_enabled",
+            "log_format",
         }
     )
 

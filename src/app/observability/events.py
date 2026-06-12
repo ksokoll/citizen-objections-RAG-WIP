@@ -53,6 +53,12 @@ LOG_SINK_SIZE_BYTES: Final[str] = "observability.log_sink_size_bytes"
 #: processor that failed mid-chain may hold half-processed, untrusted data.
 PROCESSOR_FAILED: Final[str] = "observability.processor_failed"
 
+#: The active toolset at startup, emitted once by the CLI composition root
+#: after a successful bootstrap (Round B). Records what produced the run's
+#: output: git_sha, model_id, package versions, corpus_id, allowlist size,
+#: tracing flag, and log format. Operational provenance, never payload.
+STARTUP_CONFIG: Final[str] = "app.startup_config"
+
 #: Timing of one instrumented stage, emitted by the @traced decorator on
 #: every invocation regardless of the tracing flag (observability, Round B).
 #: Carries the stage name, duration_ms, and status ok or error; on error the
@@ -77,6 +83,7 @@ REGISTERED_EVENTS: Final[frozenset[str]] = frozenset(
         LOG_SINK_SIZE_BYTES,
         PROCESSOR_FAILED,
         STAGE_TIMING,
+        STARTUP_CONFIG,
         UNREGISTERED_LOG_EVENT,
     }
 )

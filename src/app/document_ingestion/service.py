@@ -17,6 +17,7 @@ import os
 import stat
 import uuid
 from pathlib import Path
+from uuid import UUID
 
 import structlog
 
@@ -27,6 +28,60 @@ from app.observability.events import INGESTION_RAW_STORE_WORLD_READABLE
 from app.observability.tracing import traced
 
 _log = structlog.get_logger()
+
+
+def raw_document_path(raw_store_path: Path, document_id: str) -> Path:
+    """Return the raw-store file path for a document id.
+
+    The store layout (one ``<document_id>.txt`` per document) is this
+    context's private convention; writers and readers both resolve paths
+    through this function so the convention has exactly one home.
+
+    Args:
+        raw_store_path: The raw store directory.
+        document_id: The ingestion-assigned document identifier.
+
+    Returns:
+        The path of the stored raw document.
+    """
+    return raw_store_path / f"{document_id}.txt"
+
+
+def load_raw_document(raw_store_path: Path, document_id: str) -> str:
+    """Read one stored raw document by its document id.
+
+    The id is validated as a UUID before any path is built: document ids are
+    always uuid4 (minted in ingest), so anything else is rejected at the
+    boundary rather than turned into a filesystem path (path-traversal
+    guard).
+
+    Args:
+        raw_store_path: The raw store directory.
+        document_id: The ingestion-assigned document identifier.
+
+    Returns:
+        The stored raw document text.
+
+    Raises:
+        IngestionError: If the id is not a valid document id or no document
+            is stored under it.
+    """
+    try:
+        UUID(document_id)
+    except ValueError as exc:
+        raise IngestionError(
+            f"'{document_id}' is not a valid document id (expected a UUID)"
+        ) from exc
+    path = raw_document_path(raw_store_path, document_id)
+    if not path.exists():
+        raise IngestionError(f"no stored raw document for id '{document_id}'")
+    try:
+        return path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise IngestionError(
+            f"failed to read the raw document for id '{document_id}'"
+        ) from exc
+
 
 # Upper bound on raw_text length, enforced at the ingest boundary. This is
 # input validation at the edge, not a masking decision: a single oversized
@@ -81,14 +136,14 @@ class DocumentIngestionService:
             )
 
         document_id = str(uuid.uuid4())
-        raw_document_path = self._store_raw(document_id, raw_text)
+        stored_path = self._store_raw(document_id, raw_text)
 
         masking_result = self._masker.mask(raw_text)
 
         return IngestionResult(
             document_id=document_id,
             clean_text=masking_result.text,
-            raw_document_path=str(raw_document_path),
+            raw_document_path=str(stored_path),
             entity_counts=masking_result.entity_counts,
         )
 
@@ -114,7 +169,7 @@ class DocumentIngestionService:
         if os.name == "posix":
             # mkdir's mode is masked by umask, so set it explicitly afterwards.
             os.chmod(self._raw_store_path, 0o700)
-        path = self._raw_store_path / f"{document_id}.txt"
+        path = raw_document_path(self._raw_store_path, document_id)
         try:
             path.write_text(raw_text, encoding="utf-8")
         except OSError as e:

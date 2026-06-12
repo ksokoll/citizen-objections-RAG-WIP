@@ -15,12 +15,26 @@ from app.core.events import AuditEvent, AuditEventType
 from app.core.failures import AuditLogError
 from app.document_ingestion.entities import MaskingResult
 from app.document_ingestion.service import DocumentIngestionService
+from app.observability import configure_logging
 from app.pipeline import Pipeline
 from app.retrieval.entities import NormWithSource
 from app.triage.llm_schema import LLMArgument, LLMTriageOutput
 from app.triage.service import TriageService
 
 load_dotenv()
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _configured_log_sink(tmp_path_factory: pytest.TempPathFactory) -> None:
+    """Configure the governed sink once for the whole suite (ADR-026).
+
+    Round B retired the import-time configuration stopgap: importing the
+    observability package installs nothing, and configuration is an explicit
+    composition-root act. For the test suite that composition root is this
+    fixture. Tests that assert at the sink reconfigure to their own tmp path
+    via their local log_sink fixtures; configure_logging is idempotent.
+    """
+    configure_logging(log_dir=tmp_path_factory.mktemp("observability-logs"))
 
 
 @pytest.fixture(autouse=True)

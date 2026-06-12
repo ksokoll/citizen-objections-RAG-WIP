@@ -29,9 +29,12 @@ ADR-026).
 
 structlog routes into stdlib via ProcessorFormatter.wrap_for_formatter; foreign
 stdlib records route through the same shared processors via
-ProcessorFormatter(foreign_pre_chain=shared). Configuration runs as an
-import-time side effect (configure_logging() at module bottom) so there is no
-bootstrap window before the controls are installed.
+ProcessorFormatter(foreign_pre_chain=shared). Configuration is an explicit
+composition-root call: the CLI entrypoint calls configure_logging(log_dir=...)
+before any pipeline work, with the sink path passed as a parameter resolved at
+the entrypoint, never read from the process environment here (security finding
+5; the Round 15.2 import-time stopgap is retired, ADR-026 phase separation).
+The test suite configures via an explicit session fixture in conftest.
 
 The two enforcement phases are deliberately separated (ADR-026, phase
 separation): strict at configuration time, unbreakable at request time.
@@ -90,12 +93,7 @@ _log = structlog.get_logger()
 #: out of scope (ADR-026, Retention).
 RETENTION_DAYS: int = 30
 
-#: Default sink directory, overridable via OBSERVABILITY_LOG_DIR.
-DEFAULT_LOG_DIR: Path = Path("logs")
 LOG_FILENAME: str = "observability.log"
-
-ENV_LOG_DIR: str = "OBSERVABILITY_LOG_DIR"
-ENV_FORMAT: str = "OBSERVABILITY_FORMAT"
 
 #: When set to "1", the runtime enforcement is strict: an unregistered event
 #: name raises and a processor exception propagates, so CI catches every typo
@@ -153,6 +151,16 @@ ALLOWED_KEYS: frozenset[str] = frozenset(
         "stage",
         "duration_ms",
         "status",
+        # The startup_config event of the CLI composition root (Round B):
+        # the active toolset that produced a run's output. Static
+        # configuration provenance, never document content.
+        "git_sha",
+        "model_id",
+        "package_versions",
+        "corpus_id",
+        "allowlist_size",
+        "tracing_enabled",
+        "log_format",
     }
 )
 
@@ -471,7 +479,7 @@ def _build_shared_processors() -> list[Processor]:
 
 
 def _build_renderer(fmt: str) -> Processor:
-    """Return the final renderer for the resolved OBSERVABILITY_FORMAT.
+    """Return the final renderer for the resolved output format.
 
     JSON is the default and the mandatory renderer in security-relevant
     environments (ADR-026); the console renderer is a developer convenience
@@ -545,8 +553,8 @@ def _emit_log_sink_size(log_dir: Path) -> None:
 
 
 def configure_logging(
-    log_dir: Path | None = None,
-    fmt: str | None = None,
+    log_dir: Path,
+    fmt: str = "json",
     retention_days: int = RETENTION_DAYS,
 ) -> None:
     """Install the one-sink, default-deny logging configuration.
@@ -556,14 +564,13 @@ def configure_logging(
     actionable message, and a missing allowlist raises ProcessorChainError. No
     degradation to a NullHandler or bare stderr. Idempotent: a second call
     replaces the handler this module installed rather than stacking a second
-    sink. Runs as an import-time side effect with defaults; tests call it
-    explicitly to redirect the sink to a tmp path.
+    sink. Called explicitly by the composition root (the CLI entrypoint, the
+    conftest fixture); the sink path is a parameter, never an environment
+    read in this module (security finding 5).
 
     Args:
-        log_dir: Sink directory. Defaults to OBSERVABILITY_LOG_DIR or
-            DEFAULT_LOG_DIR.
-        fmt: Output format, "json" or "console". Defaults to
-            OBSERVABILITY_FORMAT or "json".
+        log_dir: Sink directory, resolved by the caller at the entrypoint.
+        fmt: Output format, "json" or "console".
         retention_days: Rotated-backup count and sweep horizon.
 
     Raises:
@@ -574,8 +581,8 @@ def configure_logging(
     """
     global _INSTALLED_HANDLER
 
-    resolved_dir = log_dir or Path(os.environ.get(ENV_LOG_DIR, str(DEFAULT_LOG_DIR)))
-    resolved_fmt = (fmt or os.environ.get(ENV_FORMAT, "json")).lower()
+    resolved_dir = log_dir
+    resolved_fmt = fmt.lower()
 
     try:
         resolved_dir.mkdir(parents=True, exist_ok=True)
@@ -659,7 +666,7 @@ def configure_logging(
 
 
 def sweep_expired_logs(
-    log_dir: Path | None = None,
+    log_dir: Path,
     retention_days: int = RETENTION_DAYS,
     now: datetime | None = None,
 ) -> list[Path]:
@@ -671,7 +678,7 @@ def sweep_expired_logs(
     boundary.
 
     Args:
-        log_dir: Sink directory to sweep.
+        log_dir: Sink directory to sweep, resolved by the caller.
         retention_days: Files older than this many days are deleted.
         now: Reference time (UTC). Defaults to the current time; injectable for
             tests.
@@ -679,7 +686,7 @@ def sweep_expired_logs(
     Returns:
         The list of deleted file paths.
     """
-    resolved_dir = log_dir or Path(os.environ.get(ENV_LOG_DIR, str(DEFAULT_LOG_DIR)))
+    resolved_dir = log_dir
     reference = now or datetime.now(UTC)
     cutoff = reference - timedelta(days=retention_days)
 
@@ -692,7 +699,3 @@ def sweep_expired_logs(
             rotated.unlink()
             deleted.append(rotated)
     return deleted
-
-
-# Import-time side effect: install the controls before any other module logs.
-configure_logging()
