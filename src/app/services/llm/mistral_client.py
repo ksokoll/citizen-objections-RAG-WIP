@@ -67,7 +67,10 @@ class MistralClient:
     """Mistral implementation of the LLMClient protocol.
 
     Defaults to mistral-large-latest at temperature=0 for deterministic
-    behavior. Both can be overridden via constructor arguments.
+    behavior. Both can be overridden via constructor arguments. The underlying
+    SDK client can be injected directly via the `client` parameter; this is the
+    recommended path for tests where the SDK is replaced by a test double, and
+    removes the need for tests to reach into internal attributes.
     """
 
     def __init__(
@@ -76,12 +79,14 @@ class MistralClient:
         model: str = "mistral-large-latest",
         temperature: float = 0.0,
         base_url: str | None = None,
+        client: Mistral | None = None,
     ) -> None:
         """Initialize the Mistral client.
 
         Args:
-            api_key: API key for Mistral. If None, reads from the
-                MISTRAL_API_KEY environment variable.
+            api_key: API key for Mistral. If None and `client` is not provided,
+                reads from the MISTRAL_API_KEY environment variable. Ignored
+                when `client` is provided.
             model: Model identifier. Defaults to mistral-large-latest.
             temperature: Sampling temperature. Defaults to 0.0 for
                 determinism in classification and extraction tasks.
@@ -89,14 +94,20 @@ class MistralClient:
                 composition root resolves it and checks it against the
                 endpoint allowlist before constructing this client (K1,
                 check_endpoint_allowed). None falls back to the SDK default
-                (the public Mistral cloud).
+                (the public Mistral cloud). Ignored when `client` is provided.
+            client: Pre-configured Mistral SDK client. When provided, api_key
+                and base_url are ignored and no environment lookup happens.
+                Used primarily in tests where the SDK is replaced by a double.
 
         Raises:
-            KeyError: If api_key is None and MISTRAL_API_KEY is not
-                set in the environment.
+            KeyError: If `client` is None, api_key is None, and MISTRAL_API_KEY
+                is not set in the environment.
         """
-        resolved_key = api_key or os.environ["MISTRAL_API_KEY"]
-        self._client = Mistral(api_key=resolved_key, server_url=base_url)
+        if client is not None:
+            self._client = client
+        else:
+            resolved_key = api_key or os.environ["MISTRAL_API_KEY"]
+            self._client = Mistral(api_key=resolved_key, server_url=base_url)
         self._model = model
         self._temperature = temperature
 
@@ -122,7 +133,15 @@ class MistralClient:
                 messages=messages,
             )
         except Exception as exc:
-            raise LLMError(f"Mistral generate call failed: {exc}") from exc
+            # Exception policy (ADR-026, M2): the message carries the provider
+            # exception type only. The provider's own message may interpolate
+            # prompt fragments with residual PII, so it travels solely on the
+            # chained cause (from exc), where the logging chain reduces it to
+            # type plus location and never writes it to disk. The same policy
+            # applies at every raise below.
+            raise LLMError(
+                f"Mistral generate call failed: {type(exc).__name__}"
+            ) from exc
 
         content = response.choices[0].message.content
         if content is None or not isinstance(content, str):
@@ -174,7 +193,7 @@ class MistralClient:
                 response_format={"type": "json_object"},
             )
         except Exception as exc:
-            raise LLMError(f"Mistral parse call failed: {exc}") from exc
+            raise LLMError(f"Mistral parse call failed: {type(exc).__name__}") from exc
 
         content = response.choices[0].message.content
         if content is None or not isinstance(content, str):
@@ -183,12 +202,18 @@ class MistralClient:
         try:
             data = json.loads(content)
         except json.JSONDecodeError as exc:
-            raise LLMError(f"Mistral returned invalid JSON: {exc}") from exc
+            raise LLMError(
+                f"Mistral returned invalid JSON: {type(exc).__name__}"
+            ) from exc
 
         try:
             return response_format.model_validate(data)
         except Exception as exc:
-            raise LLMError(f"Mistral JSON failed schema validation: {exc}") from exc
+            # A pydantic ValidationError echoes the offending input values into
+            # its message, the rawest PII-leak channel here; the type name only.
+            raise LLMError(
+                f"Mistral JSON failed schema validation: {type(exc).__name__}"
+            ) from exc
 
     @staticmethod
     def _build_messages(prompt: str, system_prompt: str) -> list[dict[str, str]]:
