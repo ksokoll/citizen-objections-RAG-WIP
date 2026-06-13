@@ -1,5 +1,6 @@
 """Shared test fakes and fixtures for the citizen-objections-RAG test suite."""
 
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -15,7 +16,7 @@ from app.core.events import AuditEvent, AuditEventType
 from app.core.failures import AuditLogError
 from app.document_ingestion.entities import MaskingResult
 from app.document_ingestion.service import DocumentIngestionService
-from app.observability import configure_logging
+from app.observability import configure_logging, set_strict_mode
 from app.pipeline import Pipeline
 from app.retrieval.entities import NormWithSource
 from app.triage.llm_schema import LLMArgument, LLMTriageOutput
@@ -38,16 +39,21 @@ def _configured_log_sink(tmp_path_factory: pytest.TempPathFactory) -> None:
 
 
 @pytest.fixture(autouse=True)
-def _observability_strict_mode(monkeypatch: pytest.MonkeyPatch) -> None:
+def _observability_strict_mode() -> Iterator[None]:
     """Enforce strict observability mode for the whole suite (ADR-026).
 
     Runtime enforcement is mode-dependent: production substitutes degraded
     events for unregistered names and processor failures, but the test suite
-    runs strict (OBSERVABILITY_STRICT=1) so CI catches every typo and every
-    processor bug at its origin. A test that exercises production behaviour
-    opts out with ``monkeypatch.delenv("OBSERVABILITY_STRICT", raising=False)``.
+    runs strict so CI catches every typo and every processor bug at its origin.
+    Strict is a wired flag now (finding 8), set via set_strict_mode rather than
+    the ambient environment, so a chain reconfiguration to a new sink path does
+    not flip enforcement. A test that exercises production behaviour opts out
+    with ``set_strict_mode(False)`` in its body; this fixture restores the
+    default at teardown for the next test.
     """
-    monkeypatch.setenv("OBSERVABILITY_STRICT", "1")
+    set_strict_mode(True)
+    yield
+    set_strict_mode(False)
 
 
 class FakeLLMClient:

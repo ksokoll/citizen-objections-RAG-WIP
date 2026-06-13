@@ -41,6 +41,7 @@ from app.observability.logging_config import (
     _OwnerOnlyTimedRotatingFileHandler,
     configure_logging,
     never_raise,
+    set_strict_mode,
     sweep_expired_logs,
 )
 
@@ -242,17 +243,17 @@ def test_unregistered_key_on_a_registered_event_raises_in_strict_mode(
 
 def test_unregistered_key_is_dropped_in_production_and_the_line_survives(
     log_sink: Callable[[], list[dict]],
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """With strict off, a non-allowlisted key is dropped, the rest survives.
 
     Production keeps the silent default-deny drop (unbreakable runtime): the
     unallowlisted key and its value are absent, while the event and its
     allowlisted fields reach the sink. A stray key must never abort the request
-    path. The log_sink fixture is requested before monkeypatch so its teardown
-    restores a clean configuration after the monkeypatch is undone.
+    path. Strict is the wired flag now, so production is selected with
+    set_strict_mode(False); the autouse fixture restores strict for the next
+    test.
     """
-    monkeypatch.delenv("OBSERVABILITY_STRICT", raising=False)
+    set_strict_mode(False)
 
     structlog.get_logger().error(
         AUDIT_APPEND_FAILED,
@@ -385,7 +386,6 @@ def test_configure_emits_the_sink_size_event(
 
 def test_unregistered_event_is_substituted_in_production(
     log_sink: Callable[[], list[dict]],
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """With strict mode off, an unregistered event is substituted, not raised.
 
@@ -395,7 +395,7 @@ def test_unregistered_event_is_substituted_in_production(
     original interpolated text is nowhere in the sink: the unvetted name is
     discarded entirely (ADR-026, unbreakable runtime).
     """
-    monkeypatch.delenv("OBSERVABILITY_STRICT", raising=False)
+    set_strict_mode(False)
     secret = "citizen Max Mustermann leaked into an ad hoc event"
 
     structlog.get_logger().info(secret, count=1)
@@ -407,6 +407,25 @@ def test_unregistered_event_is_substituted_in_production(
     assert "caller_location" in record
     assert secret not in json.dumps(record)
     assert "Max Mustermann" not in json.dumps(record)
+
+
+def test_strict_mode_follows_the_wired_flag_not_the_environment(
+    log_sink: Callable[[], list[dict]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Strict enforcement follows the wired flag; the environment is ignored.
+
+    Given OBSERVABILITY_STRICT in the environment set to the opposite of the
+    wired value, when an unregistered event is logged, then the wired flag
+    decides: strict wired on raises regardless of the env, because the chain
+    reads the wired flag and never the environment (finding 8, flags are wiring,
+    not ambient reads).
+    """
+    monkeypatch.setenv("OBSERVABILITY_STRICT", "0")
+    set_strict_mode(True)
+
+    with pytest.raises(UnregisteredLogEventError):
+        structlog.get_logger().info("ad.hoc.unregistered.event")
 
 
 def test_a_raising_processor_is_contained_as_processor_failed(
@@ -423,7 +442,7 @@ def test_a_raising_processor_is_contained_as_processor_failed(
     The log_sink fixture is requested before monkeypatch so its teardown
     restores a clean chain after the monkeypatch is undone.
     """
-    monkeypatch.delenv("OBSERVABILITY_STRICT", raising=False)
+    set_strict_mode(False)
 
     def boom(logger: object, method_name: str, event_dict: dict) -> dict:
         raise RuntimeError("processor blew up")

@@ -26,7 +26,6 @@ from __future__ import annotations
 
 import functools
 import inspect
-import os
 import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
@@ -49,11 +48,19 @@ _log = structlog.get_logger()
 P = ParamSpec("P")
 R = TypeVar("R")
 
-#: When set to "1", the @traced decorator additionally opens OTel spans.
-#: Read live per call (like OBSERVABILITY_STRICT), so a test can toggle
-#: tracing without reconfiguring anything. Off by default: in normal
-#: single-process operation timing comes from the structured logs (ADR-023).
+#: Name of the environment variable the composition root (the CLI) reads to
+#: decide tracing. It is read only at the root and wired via set_tracing_enabled
+#: (finding 8); the decorator consults the wired _TRACING_ENABLED flag, never
+#: the environment. Off by default: in normal single-process operation timing
+#: comes from the structured logs (ADR-023).
 ENV_TRACING: str = "OBSERVABILITY_TRACING"
+
+#: The wired tracing flag, set once at the composition root via
+#: set_tracing_enabled. Off by default, so with no root opting in no provider,
+#: processor, or exporter is ever constructed (ADR-023, no spans without a
+#: destination). The CLI passes the OBSERVABILITY_TRACING reading; tracing
+#: tests set it via the wired setter.
+_TRACING_ENABLED: bool = False
 
 #: Lazily built tracing backend. Both stay None until the first traced call
 #: with tracing enabled, so with the flag unset no provider, processor, or
@@ -63,9 +70,30 @@ _TRACER_PROVIDER: TracerProvider | None = None
 _EXPORTER: InMemorySpanExporter | None = None
 
 
+def set_tracing_enabled(enabled: bool) -> None:
+    """Set the wired tracing flag (composition-root wiring, finding 8).
+
+    Tracing is resolved once at the root and set here, not read live from the
+    environment inside the decorator. The CLI reads OBSERVABILITY_TRACING and
+    passes it; tracing tests set it directly. Toggling to False does not tear
+    down an already-built provider; reset_tracing does that.
+
+    Args:
+        enabled: True to open OTel spans in addition to the always-on timing
+            event, False for timing only (the default).
+    """
+    global _TRACING_ENABLED
+    _TRACING_ENABLED = enabled
+
+
 def tracing_enabled() -> bool:
-    """Return whether span creation is enabled (read live, per call)."""
-    return os.environ.get(ENV_TRACING) == "1"
+    """Return whether span creation is enabled (the wired flag).
+
+    Span creation follows the wired _TRACING_ENABLED flag, set once at the
+    composition root via set_tracing_enabled, not read from the environment in
+    the decorator (finding 8). A test toggles it via the setter.
+    """
+    return _TRACING_ENABLED
 
 
 def tracer_provider_is_built() -> bool:
@@ -93,17 +121,18 @@ def clear_finished_spans() -> None:
 
 
 def reset_tracing() -> None:
-    """Tear down the tracing backend (test hook).
+    """Tear down the tracing backend and clear the wired flag (test hook).
 
-    Shuts down the provider so its span processor stops, then discards both
-    module references, returning the module to its import-time state in which
-    no provider exists.
+    Shuts down the provider so its span processor stops, discards both module
+    references, and resets the wired tracing flag, returning the module to its
+    import-time state in which no provider exists and tracing is off.
     """
-    global _TRACER_PROVIDER, _EXPORTER
+    global _TRACER_PROVIDER, _EXPORTER, _TRACING_ENABLED
     if _TRACER_PROVIDER is not None:
         _TRACER_PROVIDER.shutdown()
     _TRACER_PROVIDER = None
     _EXPORTER = None
+    _TRACING_ENABLED = False
 
 
 def _ensure_tracer() -> trace.Tracer:

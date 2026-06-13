@@ -29,6 +29,7 @@ from app.observability.logging_config import (
     ProcessorChainError,
     UnregisteredLogKeyError,
     configure_logging,
+    set_strict_mode,
     sweep_expired_logs,
 )
 
@@ -44,5 +45,6 @@ __all__ = [
     "get_correlation_id",
     "reset_correlation_id",
     "set_correlation_id",
+    "set_strict_mode",
     "sweep_expired_logs",
 ]

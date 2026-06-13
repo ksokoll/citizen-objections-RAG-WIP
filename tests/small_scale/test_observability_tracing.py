@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 import logging
 from collections import Counter
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from pathlib import Path
 
 import pytest
@@ -27,6 +27,7 @@ from app.observability.logging_config import LOG_FILENAME, configure_logging
 from app.observability.tracing import (
     get_finished_spans,
     reset_tracing,
+    set_tracing_enabled,
     traced,
     tracer_provider_is_built,
 )
@@ -55,14 +56,15 @@ _SINGLE_SPAN_STAGES = (
 
 
 @pytest.fixture(autouse=True)
-def _tracing_off_and_clean(monkeypatch: pytest.MonkeyPatch):
+def _tracing_off_and_clean() -> Iterator[None]:
     """Default every test to tracing disabled and reset the scaffold after.
 
-    The flag could leak in from the developer environment; tests that
-    exercise the enabled path set it explicitly. Teardown discards the
-    module-held provider so one test's backend never leaks into the next.
+    Tracing is a wired flag now (finding 8): tests that exercise the enabled
+    path set it via set_tracing_enabled. Teardown discards the module-held
+    provider and resets the flag, so one test's backend or flag never leaks
+    into the next.
     """
-    monkeypatch.delenv("OBSERVABILITY_TRACING", raising=False)
+    set_tracing_enabled(False)
     yield
     reset_tracing()
 
@@ -214,16 +216,15 @@ def test_traced_captures_no_argument_values(
 def test_each_stage_has_exactly_one_span_under_the_run_span(
     tmp_path: Path,
     log_sink: Callable[[], list[dict]],
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """With tracing enabled, the span tree is flat: run root, one per stage.
 
-    Given OBSERVABILITY_TRACING=1 and a pipeline wired with the real traced
-    services, when one document is processed, then each linear stage has
-    exactly one span, every stage span is a direct child of the pipeline.run
-    root, and the per-publish audit_log stage has one span per custody event.
+    Given tracing wired on and a pipeline wired with the real traced services,
+    when one document is processed, then each linear stage has exactly one span,
+    every stage span is a direct child of the pipeline.run root, and the
+    per-publish audit_log stage has one span per custody event.
     """
-    monkeypatch.setenv("OBSERVABILITY_TRACING", "1")
+    set_tracing_enabled(True)
     pipeline = _real_pipeline(tmp_path)
 
     pipeline.run(_SAMPLE_EINWENDUNG)
@@ -249,7 +250,6 @@ def test_each_stage_has_exactly_one_span_under_the_run_span(
 def test_exporter_is_cleared_when_the_next_run_starts(
     tmp_path: Path,
     log_sink: Callable[[], list[dict]],
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Each run sees only its own spans; memory cannot accumulate.
 
@@ -257,7 +257,7 @@ def test_exporter_is_cleared_when_the_next_run_starts(
     clears the in-memory exporter at run start (M5: the run owner defines
     the run), so after two runs only the second run's spans exist.
     """
-    monkeypatch.setenv("OBSERVABILITY_TRACING", "1")
+    set_tracing_enabled(True)
     pipeline = _real_pipeline(tmp_path)
 
     pipeline.run(_SAMPLE_EINWENDUNG)
@@ -300,6 +300,28 @@ def test_no_tracer_provider_is_built_when_tracing_is_disabled(
     traced stages, then no tracer provider was constructed: spans are never
     created without a destination (ADR-023).
     """
+    pipeline = _real_pipeline(tmp_path)
+
+    pipeline.run(_SAMPLE_EINWENDUNG)
+
+    assert tracer_provider_is_built() is False
+    assert get_finished_spans() == ()
+
+
+def test_tracing_follows_the_wired_flag_not_the_environment(
+    tmp_path: Path,
+    log_sink: Callable[[], list[dict]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Span creation follows the wired flag; the environment is ignored.
+
+    Given OBSERVABILITY_TRACING=1 in the environment but tracing wired off,
+    when a full pipeline run completes, then no tracer provider is built and no
+    spans exist: the decorator reads the wired flag, never the environment
+    (finding 8). The always-on timing events are unaffected.
+    """
+    monkeypatch.setenv("OBSERVABILITY_TRACING", "1")
+    set_tracing_enabled(False)
     pipeline = _real_pipeline(tmp_path)
 
     pipeline.run(_SAMPLE_EINWENDUNG)

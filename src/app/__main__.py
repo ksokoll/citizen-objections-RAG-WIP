@@ -37,6 +37,7 @@ pipeline error), 2 startup abort (logging bootstrap, missing configuration).
 from __future__ import annotations
 
 import argparse
+import os
 import subprocess
 import sys
 from importlib import metadata
@@ -66,8 +67,8 @@ from app.observability import (
     configure_logging,
 )
 from app.observability.events import CLI_UNHANDLED_ERROR, STARTUP_CONFIG
-from app.observability.logging_config import ALLOWED_KEYS
-from app.observability.tracing import tracing_enabled
+from app.observability.logging_config import ALLOWED_KEYS, ENV_STRICT
+from app.observability.tracing import ENV_TRACING, set_tracing_enabled, tracing_enabled
 from app.pipeline import Pipeline
 from app.retrieval.gesetz_xml_loader import load_corpus
 from app.retrieval.service import NormRetrievalService
@@ -428,8 +429,15 @@ def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
     paths = _resolve_paths(args)
 
+    # Behavior flags are resolved once here at the root and wired in, never read
+    # live from the environment deep in the observability stack (finding 8).
+    # Strict mode is forwarded to configure_logging; tracing is wired so the
+    # @traced decorator and the startup_config record see the same value.
+    strict = os.environ.get(ENV_STRICT) == "1"
+    set_tracing_enabled(os.environ.get(ENV_TRACING) == "1")
+
     try:
-        configure_logging(log_dir=args.log_dir, fmt=args.log_format)
+        configure_logging(log_dir=args.log_dir, fmt=args.log_format, strict=strict)
     except (ObservabilityBootstrapError, ProcessorChainError) as exc:
         print(f"startup aborted: {exc}", file=sys.stderr)
         return 2

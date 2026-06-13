@@ -95,12 +95,20 @@ RETENTION_DAYS: int = 30
 
 LOG_FILENAME: str = "observability.log"
 
-#: When set to "1", the runtime enforcement is strict: an unregistered event
-#: name raises and a processor exception propagates, so CI catches every typo
-#: and every processor bug. Unset (production), the same conditions are
-#: contained as substitute events and never reach the business call (ADR-026,
-#: phase separation). The test suite sets this via an autouse conftest fixture.
+#: Name of the environment variable the composition root (the CLI) reads to
+#: decide strict mode. It is read only at the root and passed to
+#: configure_logging (finding 8); the processor chain consults the wired
+#: _STRICT_MODE flag, never the environment. Strict (1): an unregistered event
+#: name or key raises and a processor exception propagates, so CI catches every
+#: typo and bug. Unset (production): the same conditions are contained and
+#: never reach the business call (ADR-026, phase separation).
 ENV_STRICT: str = "OBSERVABILITY_STRICT"
+
+#: The wired strict-mode flag, resolved once at the composition root via
+#: set_strict_mode. Production-safe default (False): the runtime is unbreakable
+#: unless a root opts into strict CI enforcement. The CLI passes the
+#: OBSERVABILITY_STRICT reading; the test conftest sets it True.
+_STRICT_MODE: bool = False
 
 #: Owner-only modes for the sink, matching the raw store (ADR-025, ADR-026).
 #: Enforced on POSIX; on Windows POSIX modes do not map to ACLs (documented
@@ -237,14 +245,34 @@ class UnregisteredLogKeyError(Exception):
     """
 
 
-def _is_strict() -> bool:
-    """Return whether runtime enforcement is strict (read live, per call).
+def set_strict_mode(enabled: bool) -> None:
+    """Set the wired strict-mode flag (composition-root wiring, finding 8).
 
-    Strict mode is governed by OBSERVABILITY_STRICT and read at call time, not
-    captured at configure time, so a test can toggle the mode and emit without
-    reconfiguring the chain (ADR-026, phase separation).
+    Strict mode is resolved once at the root and set here, not read live from
+    the environment inside the processor chain. The CLI reads OBSERVABILITY_STRICT
+    and passes it through configure_logging; the test conftest sets it True
+    directly. Independent of configure_logging so a test can toggle enforcement
+    without reconfiguring the sink (ADR-026, phase separation).
+
+    Args:
+        enabled: True for strict CI enforcement (unregistered names and keys
+            raise, processor exceptions propagate), False for the unbreakable
+            production runtime (the same conditions are contained).
     """
-    return os.environ.get(ENV_STRICT) == "1"
+    global _STRICT_MODE
+    _STRICT_MODE = enabled
+
+
+def _is_strict() -> bool:
+    """Return whether runtime enforcement is strict (the wired flag).
+
+    Strict mode is the wired _STRICT_MODE flag, set once at the composition
+    root via set_strict_mode, not read from the environment deep in the chain
+    (finding 8). A test toggles the mode by calling set_strict_mode, so a chain
+    reconfiguration to a new sink path does not flip enforcement (ADR-026,
+    phase separation).
+    """
+    return _STRICT_MODE
 
 
 #: Path substrings whose frames are skipped when locating the caller of an
@@ -606,6 +634,7 @@ def _emit_log_sink_size(log_dir: Path) -> None:
 def configure_logging(
     log_dir: Path,
     fmt: str = "json",
+    strict: bool | None = None,
     retention_days: int = RETENTION_DAYS,
 ) -> None:
     """Install the one-sink, default-deny logging configuration.
@@ -622,6 +651,11 @@ def configure_logging(
     Args:
         log_dir: Sink directory, resolved by the caller at the entrypoint.
         fmt: Output format, "json" or "console".
+        strict: When None (default) the current strict mode is left unchanged,
+            so reconfiguring the sink path does not flip enforcement; a
+            composition root passes an explicit bool (the CLI from
+            OBSERVABILITY_STRICT, the test conftest True). Forwarded to
+            set_strict_mode (finding 8).
         retention_days: Rotated-backup count and sweep horizon.
 
     Raises:
@@ -631,6 +665,9 @@ def configure_logging(
             the configured chain.
     """
     global _INSTALLED_HANDLER
+
+    if strict is not None:
+        set_strict_mode(strict)
 
     resolved_dir = log_dir
     resolved_fmt = fmt.lower()
