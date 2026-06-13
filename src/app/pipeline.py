@@ -43,6 +43,7 @@ from app.observability.metrics import (
     inc_audit_write_failure,
     inc_norm_resolutions,
     inc_objection_processed,
+    inc_triage_contradiction,
     observe_arguments_per_objection,
 )
 from app.observability.tracing import clear_finished_spans, traced
@@ -132,6 +133,12 @@ class Pipeline:
                     if not arg.argument_verified
                 )
             )
+            # The contradiction counter is the fifth domain metric the
+            # Coordinator owns, counted from the flag Triage carries on its
+            # result (single-layer ownership; the count no longer lives in the
+            # Triage context).
+            if triage_result.contradiction_detected:
+                inc_triage_contradiction()
             self._emit(
                 einwendungs_id,
                 AuditEventType.TRIAGE,

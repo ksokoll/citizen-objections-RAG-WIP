@@ -28,7 +28,6 @@ from app.core.failures import LLMError, LLMParseError, TriageError
 from app.core.protocols import LLMClientProtocol
 from app.core.results import TriageResult
 from app.observability.events import TRIAGE_CONTRADICTION_DETECTED
-from app.observability.metrics import inc_triage_contradiction
 from app.observability.tracing import traced
 
 from .catalog import KATALOG
@@ -88,12 +87,13 @@ class TriageService:
         # has legal substance by the prompt's own Vorpruefung definition, so
         # an empty LLM argument list contradicts the deterministic evidence.
         # This is the observable signature of a prompt-injected suppression;
-        # the document is not failed, but the signal is logged, counted, and
-        # carried to the Coordinator for the TRIAGE audit payload.
+        # the document is not failed. The signal is logged here and carried to
+        # the Coordinator on TriageResult, which owns the metric (it counts the
+        # contradiction) and writes the TRIAGE audit payload: domain-metric
+        # emission lives in exactly one layer (single-layer ownership).
         contradiction_detected = bool(all_norms) and not raw_arguments
         if contradiction_detected:
             _log.warning(TRIAGE_CONTRADICTION_DETECTED)
-            inc_triage_contradiction()
         extracted_arguments = [
             self._build_extrahiertes_argument(raw, clean_text, all_norms)
             for raw in raw_arguments
