@@ -34,7 +34,7 @@ from .classification import classify_einwendungs_typ
 from .events import TRIAGE_CONTRADICTION_DETECTED, TRIAGE_SUBSTANCE_THRESHOLD
 from .llm_schema import LLMArgument, LLMTriageOutput
 from .norm_extractor import ExtractedNorm, extract_norms
-from .prompts import ARGUMENT_EXTRACTION_PROMPT
+from .prompts import ARGUMENT_EXTRACTION_PROMPT, neutralize_fence_markers
 
 _log = structlog.get_logger()
 
@@ -156,9 +156,13 @@ class TriageService:
         catalog_entries = "\n".join(
             f"- {c.catalog_id}: {c.beschreibung}" for c in KATALOG.values()
         )
+        # Neutralize any literal fence markers in the citizen text before it is
+        # interpolated into the fence (H1): a planted end marker would otherwise
+        # forge a boundary and read the text after it as instructions outside
+        # the fence. A soft constraint, not a security boundary (ADR-028).
         prompt = ARGUMENT_EXTRACTION_PROMPT.prompt.format(
             catalog_entries=catalog_entries,
-            einwendung_text=clean_text,
+            einwendung_text=neutralize_fence_markers(clean_text),
         )
         output = self._llm.parse(
             prompt=prompt,

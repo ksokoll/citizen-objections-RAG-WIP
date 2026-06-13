@@ -4,6 +4,48 @@ from datetime import datetime
 
 from app.core.prompts import PromptTemplate
 
+#: The fence markers that delimit the citizen document in the extraction prompt.
+#: Code-resident delimiters (ADR-028): the canonical source of truth for the
+#: fence is here, next to the template that uses them, not split between the
+#: template and the defense that guards it. A drift test asserts the template
+#: still contains both. The fence is a soft constraint that orients the model,
+#: not a security boundary; the nonce delimiter that would make it load-bearing
+#: is named backlog (ADR-028, trigger: a non-encapsulated deployment).
+EINWENDUNG_START_MARKER = "<<<EINWENDUNG_START>>>"
+EINWENDUNG_ENDE_MARKER = "<<<EINWENDUNG_ENDE>>>"
+
+#: The defanged forms the markers are rewritten to when they appear inside
+#: citizen text: the triple-angle fence token is broken to single angles, so the
+#: token can no longer read as a fence boundary while the citizen's words stay
+#: legible.
+_DEFANGED_START_MARKER = "<EINWENDUNG_START>"
+_DEFANGED_ENDE_MARKER = "<EINWENDUNG_ENDE>"
+
+
+def neutralize_fence_markers(text: str) -> str:
+    """Defang any literal fence markers in citizen text before interpolation.
+
+    The extraction prompt wraps the citizen document between the start and end
+    fence markers. A citizen text that contains those exact tokens could forge a
+    fence boundary: a planted end marker would make the text after it read as
+    instructions outside the fence (H1). Rewriting the triple-angle tokens to a
+    single-angle, non-fence form closes that trivial forgery while leaving the
+    citizen's words visible. Only the exact literal tokens are rewritten; case
+    and whitespace variants are out of scope here. This is a soft constraint,
+    not a security boundary; the nonce delimiter is backlog (ADR-028).
+
+    Args:
+        text: The masked citizen text about to be interpolated into the fence.
+
+    Returns:
+        The text with any literal fence markers rewritten to their defanged
+        form; text without the markers is returned unchanged.
+    """
+    return text.replace(EINWENDUNG_START_MARKER, _DEFANGED_START_MARKER).replace(
+        EINWENDUNG_ENDE_MARKER, _DEFANGED_ENDE_MARKER
+    )
+
+
 ARGUMENT_EXTRACTION_PROMPT = PromptTemplate(
     name="triage_argument_extraction",
     version="3.1.0",
