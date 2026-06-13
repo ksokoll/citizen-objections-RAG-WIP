@@ -56,6 +56,15 @@ class AuditEvent(BaseModel):
             "invalidate historical events."
         ),
     )
+    sequence_number: int | None = Field(
+        default=None,
+        description=(
+            "Monotonic position in the hash chain, starting at 0 for the genesis "
+            "event. Part of the canonical bytes (ADR-024), so reordering events "
+            "changes their hashes. Assigned by the store on append from its "
+            "in-memory head; None until then, like event_hash."
+        ),
+    )
     event_hash: str | None = Field(
         default=None,
         description=(
