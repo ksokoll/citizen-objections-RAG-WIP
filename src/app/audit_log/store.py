@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
+
+from filelock import FileLock, Timeout
 
 from app.audit_log.serialization import GENESIS_PREV_HASH, compute_event_hash
 from app.core.events import AuditEvent, AuditEventType
@@ -24,34 +28,81 @@ class JsonLinesAuditStore:
     The hash is computed from the canonical serializer (serialization.py) that
     a later verify path will recompute with, so the two cannot diverge.
 
-    Durability and the chain head (ADR-030):
+    Durability, locking, and the chain head (ADR-030):
     - Durable append: each line is flushed and fsynced to stable storage before
       the in-memory head advances, so a crash can never leave the head asserting
       an event the disk lacks.
+    - Single-writer advisory lock: an advisory filelock covers open+recovery and
+      each append, so two starts cannot recover the same file concurrently and
+      two writers cannot interleave an append. It guards against accidental
+      concurrency (a retry thread, a cron replay), not a deliberate second
+      writer (ADR-027 threat model). The single-process assumption (15.2) holds:
+      no second process holds the file on the Windows host.
     - The in-memory head (last hash, last sequence) is the sole duplicate
       mechanism: publish() does not scan the file. The file is read only at
       open, to seed the head.
 
     Limitations (resolved later in this round / a later phase):
-    - No file locking yet: concurrent publish() calls are not serialized (the
-      next commit adds the single-writer advisory lock).
     - A damaged last line is not yet recovered (the recovery commit adds
       quarantine plus a recovery event).
     """
 
-    def __init__(self, path: Path) -> None:
+    def __init__(self, path: Path, lock_timeout: float = 10.0) -> None:
         """Initialize the store, ensure the backing file exists, seed the head.
+
+        Seeding reads the file under the single-writer lock, so open+recovery is
+        one critical section (ADR-030).
 
         Args:
             path: Path to the JSON Lines file. Created (including parent
                 directories) if it does not exist. Existing files are not
                 truncated.
+            lock_timeout: Seconds to wait for the single-writer lock before
+                failing loudly. A finite default surfaces accidental contention
+                as an AuditLogError rather than hanging; tests pass a small value.
+
+        Raises:
+            AuditLogError: If another writer holds the lock past lock_timeout
+                (open cannot recover concurrently with another start).
         """
         self._path = path
+        self._lock_timeout = lock_timeout
+        self._lock = FileLock(f"{path}.lock", timeout=lock_timeout)
         path.parent.mkdir(parents=True, exist_ok=True)
         if not path.exists():
             path.touch()
-        self._head_hash, self._head_sequence = self._initialize_head()
+        with self._single_writer():
+            self._head_hash, self._head_sequence = self._initialize_head()
+
+    @contextmanager
+    def _single_writer(self) -> Iterator[None]:
+        """Hold the advisory single-writer lock for one critical section.
+
+        The lock covers open+recovery and each append (ADR-030), so two starts
+        cannot recover the same file concurrently and two writers cannot
+        interleave an append. It is re-entered per critical section rather than
+        held for the store's lifetime, because two store instances on one path
+        are a supported pattern (reopen to continue the chain); a lifetime hold
+        would deadlock the second instance. The residual (a writer slipping
+        between two of this store's locked sections leaves the in-memory head
+        stale) is the accidental-concurrency limit the lock accepts, not an
+        interleaved-append race: the lock guards accident, not a deliberate
+        second writer (ADR-027 threat model, ADR-030).
+
+        Raises:
+            AuditLogError: If the lock cannot be acquired within lock_timeout,
+                translating filelock.Timeout so a contended store fails loudly on
+                the documented failure type rather than hanging or leaking a
+                third-party exception.
+        """
+        try:
+            with self._lock:
+                yield
+        except Timeout as exc:
+            raise AuditLogError(
+                f"could not acquire the audit store lock at {self._lock.lock_file}: "
+                "another writer holds it"
+            ) from exc
 
     def publish(self, event: AuditEvent) -> None:
         """Append an event to the audit log, stamping its chain position and hash.
@@ -78,9 +129,11 @@ class JsonLinesAuditStore:
             AuditLogError: If an I/O failure prevents the durable append. Raw
                 OSErrors are wrapped so callers (Pipeline._emit, ADR-027) can
                 route a store failure as the recoverable class without depending
-                on stdlib exception types.
+                on stdlib exception types, or if another writer holds the
+                single-writer lock past the timeout.
         """
-        self._append_durably(event)
+        with self._single_writer():
+            self._append_durably(event)
 
     def _append_durably(self, event: AuditEvent) -> None:
         """Chain, durably write, then advance the head: the append invariant.
