@@ -15,6 +15,14 @@ The span structure is flat (ADR-023): pipeline.run is the root, one child
 span per stage. Production tracing is a configuration change, not a rewrite:
 enable the flag and swap the in-memory exporter for an OTLP exporter.
 
+OpenTelemetry and the metrics module are imported lazily, never at module load
+(H1). Every context service imports this module for the @traced decorator, so
+an eager top-level import would pull the whole telemetry stack into the context
+import graph. The OTel imports live in the flag-guarded lazy path (the provider
+is built only when tracing is enabled); the metrics write goes through a lazy
+metrics import deferred to the first traced call. After this, importing a
+context service does not import opentelemetry or prometheus_client.
+
 The decorator captures no argument values (default-deny by origin, ADR-026,
 third application): call arguments are payload of unknown content. The
 capture_fields parameter is the explicit opt-in for named safe fields and is
@@ -29,19 +37,26 @@ import inspect
 import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
-from typing import Any, ParamSpec, TypeVar
+from typing import TYPE_CHECKING, Any, ParamSpec, TypeVar
 
 import structlog
-from opentelemetry import trace
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import SimpleSpanProcessor
-from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
-    InMemorySpanExporter,
-)
-from opentelemetry.trace import Span, StatusCode
 
 from app.observability.events import STAGE_TIMING
-from app.observability.metrics import observe_stage_duration
+
+if TYPE_CHECKING:
+    # Type-only imports: OpenTelemetry is never imported at module load (H1).
+    # Every context service imports this module for the @traced decorator, so an
+    # eager top-level OTel import would pull the whole telemetry stack into the
+    # context import graph. The runtime imports live in the flag-guarded lazy
+    # path (_ensure_tracer, _stage_span), which runs only when tracing is
+    # enabled (ADR-023, no spans without a destination). Under
+    # from __future__ import annotations these names are strings at runtime, so
+    # the module-level type annotations below cost no import.
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
+        InMemorySpanExporter,
+    )
+    from opentelemetry.trace import Span, Tracer
 
 _log = structlog.get_logger()
 
@@ -135,13 +150,22 @@ def reset_tracing() -> None:
     _TRACING_ENABLED = False
 
 
-def _ensure_tracer() -> trace.Tracer:
+def _ensure_tracer() -> Tracer:
     """Build the provider and bounded in-memory exporter once, return a tracer.
 
-    The provider is module-held, not installed as the OTel global provider:
-    span parenting works through the context regardless, and the global stays
-    untouched for a production setup that wires its own.
+    OpenTelemetry is imported here, in the flag-guarded lazy path, not at module
+    load (H1): this runs only after tracing is enabled and a span is about to be
+    opened, so importing a context service for the @traced decorator never pulls
+    the OTel stack. The provider is module-held, not installed as the OTel
+    global provider: span parenting works through the context regardless, and
+    the global stays untouched for a production setup that wires its own.
     """
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
+        InMemorySpanExporter,
+    )
+
     global _TRACER_PROVIDER, _EXPORTER
     if _TRACER_PROVIDER is None:
         exporter = InMemorySpanExporter()
@@ -167,6 +191,21 @@ def _stage_span(stage: str) -> Iterator[Span | None]:
     tracer = _ensure_tracer()
     with tracer.start_as_current_span(stage) as span:
         yield span
+
+
+def _observe_stage_duration(stage: str, seconds: float) -> None:
+    """Feed one stage duration to the metric via a lazy metrics import (H1).
+
+    The metrics module constructs the Prometheus registry at its import, so an
+    eager top-level import here would pull prometheus_client into the context
+    import graph through the @traced decorator. The import is deferred to the
+    first traced call at runtime instead; sys.modules caches it, so the cost is
+    paid once. The metrics write is itself contained and cannot abort the
+    business path (ADR-023).
+    """
+    from app.observability.metrics import observe_stage_duration
+
+    observe_stage_duration(stage, seconds)
 
 
 def _capture_safe_fields(
@@ -231,8 +270,13 @@ def traced(
                     result = func(*args, **kwargs)
                 except Exception:
                     duration_ms = round((time.perf_counter() - start) * 1000, 3)
-                    observe_stage_duration(stage, duration_ms / 1000)
+                    _observe_stage_duration(stage, duration_ms / 1000)
                     if span is not None:
+                        # Imported lazily on the error path only: a span exists
+                        # solely when tracing is enabled, so this never pulls
+                        # OTel into the no-tracing import graph (H1).
+                        from opentelemetry.trace import StatusCode
+
                         span.set_status(StatusCode.ERROR)
                     _log.error(
                         STAGE_TIMING,
@@ -244,7 +288,7 @@ def traced(
                     )
                     raise
                 duration_ms = round((time.perf_counter() - start) * 1000, 3)
-                observe_stage_duration(stage, duration_ms / 1000)
+                _observe_stage_duration(stage, duration_ms / 1000)
                 _log.info(
                     STAGE_TIMING,
                     stage=stage,
