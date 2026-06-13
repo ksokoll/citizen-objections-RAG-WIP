@@ -34,3 +34,18 @@ INGESTION_EVENTS: Final[frozenset[str]] = frozenset(
         RAW_DOCUMENT_ACCESSED,
     }
 )
+
+#: Allowlisted log field names this context emits, unioned into ALLOWED_KEYS at
+#: the composition root (ADR-026, default-deny). Counts and a mode string only,
+#: never PII: survivor_count and name_regions_masked are counts on the coverage
+#: anomaly (never the surviving tokens), store_mode is the octal mode on the
+#: world-readable check, and document_id is the pseudonymous id on the
+#: raw-document access trace (never content).
+INGESTION_KEYS: Final[frozenset[str]] = frozenset(
+    {
+        "survivor_count",
+        "name_regions_masked",
+        "store_mode",
+        "document_id",
+    }
+)

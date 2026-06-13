@@ -66,7 +66,7 @@ from app.observability import (
     ProcessorChainError,
     configure_logging,
 )
-from app.observability.logging_config import ALLOWED_KEYS, ENV_STRICT
+from app.observability.logging_config import ENV_STRICT, allowed_keys
 from app.observability.tracing import ENV_TRACING, set_tracing_enabled, tracing_enabled
 from app.observability_registry import (
     CLI_UNHANDLED_ERROR,
@@ -180,7 +180,7 @@ def _emit_startup_config(
     fields: dict[str, object] = {
         "git_sha": _git_short_sha(),
         "package_versions": _package_versions(),
-        "allowlist_size": len(ALLOWED_KEYS),
+        "allowlist_size": len(allowed_keys()),
         "tracing_enabled": tracing_enabled(),
         "log_format": log_format,
     }

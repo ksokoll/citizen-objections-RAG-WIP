@@ -31,7 +31,6 @@ from app.observability.events import (
     UnregisteredLogEventError,
 )
 from app.observability.logging_config import (
-    ALLOWED_KEYS,
     LOG_FILENAME,
     MAX_FOREIGN_EVENT_CHARS,
     ObservabilityBootstrapError,
@@ -135,52 +134,6 @@ def test_foreign_stdlib_extra_field_never_reaches_the_sink(
     assert record["event"] == "presidio analysis complete"
     assert "pii_field" not in record
     assert "Max Mustermann" not in json.dumps(record)
-
-
-def test_allowlist_is_the_frozen_golden_set() -> None:
-    """The allowlist is exactly the golden set of Rounds A, B, and 16.1.
-
-    A change-detector golden test: a new allowlisted key cannot be added
-    without this assertion changing, so widening the default-deny surface is a
-    deliberate, reviewable act. Round B widened the set by the three stage
-    timing fields of the @traced decorator (stage, duration_ms, status) and
-    the seven startup_config provenance fields of the CLI composition root.
-    Round 16.1 widened it by the four resolved store paths in startup_config
-    (app_home, log_dir, raw_store, audit_log; S5) and the document_id of the
-    raw-document access trace (H4/S4).
-    """
-    assert ALLOWED_KEYS == frozenset(
-        {
-            "event",
-            "level",
-            "timestamp",
-            "correlation_id",
-            "audit_event_type",
-            "exc_type",
-            "exc_location",
-            "survivor_count",
-            "name_regions_masked",
-            "store_mode",
-            "sink_size_bytes",
-            "failed_processor",
-            "caller_location",
-            "stage",
-            "duration_ms",
-            "status",
-            "git_sha",
-            "model_id",
-            "package_versions",
-            "corpus_id",
-            "allowlist_size",
-            "tracing_enabled",
-            "log_format",
-            "app_home",
-            "log_dir",
-            "raw_store",
-            "audit_log",
-            "document_id",
-        }
-    )
 
 
 def test_exception_is_reduced_to_type_and_location(

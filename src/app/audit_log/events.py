@@ -23,3 +23,9 @@ AUDIT_APPEND_FAILED: Final[str] = "audit.append_failed"
 #: Event constants this context emits, unioned into the registry at the
 #: composition root.
 AUDIT_EVENTS: Final[frozenset[str]] = frozenset({AUDIT_APPEND_FAILED})
+
+#: Allowlisted log field names this context emits, unioned into ALLOWED_KEYS at
+#: the composition root (ADR-026, default-deny). audit_event_type is the
+#: AuditEventType value the failed publish carried; operational metadata, never
+#: payload.
+AUDIT_KEYS: Final[frozenset[str]] = frozenset({"audit_event_type"})

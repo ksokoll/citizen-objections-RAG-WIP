@@ -15,8 +15,9 @@ The controls at the sink:
 - value normalization (sanitize_values), so control characters are stripped
   from every string value and a foreign event message is length-bounded before
   rendering;
-- a default-deny key allowlist (ALLOWED_KEYS), so a field is invisible until
-  it is allowlisted on purpose;
+- a default-deny key allowlist (allowed_keys(), the root-assembled union of
+  each context's declared keys plus the CLI keys), so a field is invisible
+  until it is allowlisted on purpose;
 - a registered event vocabulary (events.registered_events(), the root-assembled
   union of each context's declared events), so a structlog event name that is
   not a registered constant fails loudly;
@@ -69,6 +70,7 @@ import logging
 import os
 import stat
 import sys
+from collections.abc import Iterable
 from datetime import UTC, datetime, timedelta
 from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
@@ -127,61 +129,77 @@ MAX_FOREIGN_EVENT_CHARS: int = 200
 #: foreign record cannot forge log lines or inject terminal control sequences.
 _CONTROL_CHAR_TABLE: dict[int, None] = {codepoint: None for codepoint in range(0x20)}
 
-#: The frozen key allowlist (ADR-026). Default-deny: every other key is dropped
-#: before the record is rendered. Frozen by a golden test; a key cannot be
-#: added without that test changing. Rounds B and C extend this set
-#: deliberately (timing, status, metric fields).
-ALLOWED_KEYS: frozenset[str] = frozenset(
+#: The observability layer's own allowlisted log keys (ADR-026, default-deny).
+#: These are the mechanism's own fields, not domain knowledge, so they live
+#: here and seed the registry at import: the chain's authoritative stamps and
+#: exception reduction (event, level, timestamp, correlation_id, exc_type,
+#: exc_location), the self-instrumentation fields (sink_size_bytes,
+#: failed_processor, caller_location), and the @traced decorator's stage timing
+#: fields (stage, duration_ms, status). Each is operational metadata, never
+#: payload. Domain field names are declared per context in <context>/events.py
+#: and unioned in at the composition root (H3).
+OBSERVABILITY_KEYS: frozenset[str] = frozenset(
     {
         "event",
         "level",
         "timestamp",
         "correlation_id",
-        "audit_event_type",
         "exc_type",
         "exc_location",
-        # Operational counts and a mode string for the two governed
-        # DocumentIngestion warnings. Counts only: the PII coverage anomaly
-        # never carries the surviving tokens, only how many survived.
-        "survivor_count",
-        "name_regions_masked",
-        "store_mode",
-        # Observability self-instrumentation (ADR-026, unbreakable runtime):
-        # the active-sink size for the rotation-failure signal, the failing
-        # processor's name for a contained processor exception, and the caller
-        # location for an unregistered event substituted in production. Each is
-        # operational metadata, never payload.
         "sink_size_bytes",
         "failed_processor",
         "caller_location",
-        # Stage timing from the @traced decorator (Round B): the stage name,
-        # the measured duration, and the ok/error status. Operational
-        # metadata only; argument values are never captured by default.
         "stage",
         "duration_ms",
         "status",
-        # The startup_config event of the CLI composition root (Round B):
-        # the active toolset that produced a run's output. Static
-        # configuration provenance, never document content.
-        "git_sha",
-        "model_id",
-        "package_versions",
-        "corpus_id",
-        "allowlist_size",
-        "tracing_enabled",
-        "log_format",
-        # The resolved absolute store paths in startup_config (Round 16.1,
-        # S5): which raw store, audit log, and log sink a run actually hit.
-        # Operator-chosen filesystem locations, never document content.
-        "app_home",
-        "log_dir",
-        "raw_store",
-        "audit_log",
-        # The raw-document access trace (Round 16.1, H4/S4): the pseudonymous
-        # id of the document read back out of the raw store, never content.
-        "document_id",
     }
 )
+
+#: The live key allowlist the chain enforces against, assembled at runtime.
+#: Default-deny: every key not in the assembled set is dropped before the record
+#: is rendered. Seeded with the layer's own keys; the composition root adds each
+#: context's declared keys plus the CLI/self-instrumentation keys via
+#: register_keys. Mutable on purpose: the allowlist is a root-assembled union,
+#: not a frozen central god-list pinned by a golden test (H3). The reset hook
+#: returns it to the seed between tests.
+_registered_keys: set[str] = set(OBSERVABILITY_KEYS)
+
+
+def register_keys(keys: Iterable[str]) -> None:
+    """Union a set of allowlisted key names into the live allowlist.
+
+    Called by the composition root with each context's declared keys
+    (TRIAGE_KEYS, INGESTION_KEYS, ...) plus the root's own CLI keys. Idempotent:
+    registering the same keys twice is a no-op union, so two roots (the CLI and
+    the test conftest) calling it does not conflict.
+
+    Args:
+        keys: Allowlisted field-name constants to register.
+    """
+    _registered_keys.update(keys)
+
+
+def allowed_keys() -> frozenset[str]:
+    """Return the currently allowlisted log keys.
+
+    The allowlist processor consults this rather than a module-level frozen
+    set, so the allowlist is the root-assembled union of the layer's own keys
+    and the per-context declarations plus the CLI keys (H3).
+    """
+    return frozenset(_registered_keys)
+
+
+def reset_registered_keys() -> None:
+    """Reset the key allowlist to the layer's own keys (test hook).
+
+    Returns the allowlist to its import-time seed (the observability self
+    keys), discarding any context or CLI keys a root unioned in. Part of the
+    symmetric between-tests reset so a test that registers a key cannot leak it
+    into a later test.
+    """
+    _registered_keys.clear()
+    _registered_keys.update(OBSERVABILITY_KEYS)
+
 
 #: ProcessorFormatter meta keys that must survive the allowlist so the
 #: formatter's remove_processors_meta can strip them after rendering decisions.
@@ -231,14 +249,16 @@ class ObservabilityBootstrapError(Exception):
 
 class UnregisteredLogKeyError(Exception):
     """Raised in strict mode when a registered own event carries a key that is
-    not in ALLOWED_KEYS.
+    not in the assembled allowlist.
 
     The key allowlist is default-deny: a non-allowlisted key is dropped before
     the record is rendered (ADR-026). In strict mode (the test suite) that
     silent drop becomes a loud failure, the sibling of UnregisteredLogEventError
     for keys rather than for event names, so a mistyped or unallowlisted field
     fails in CI at its origin instead of vanishing from the line. The fix is to
-    allowlist the key in ALLOWED_KEYS on purpose, not to suppress the error.
+    declare the key in the emitting context's events.py (its *_KEYS set) and
+    union it at the composition root via register_keys, not to suppress the
+    error.
 
     Foreign stdlib records are exempt: their fields are governed by origin
     (extras are never merged into the event dict), so the raise is gated on our
@@ -492,7 +512,8 @@ def _filter_allowlist(
 ) -> EventDict:
     """Default-deny: keep only allowlisted keys and the formatter meta keys.
 
-    Every key not in ALLOWED_KEYS is dropped. Foreign ``extra`` fields are not
+    Every key not in the assembled allowlist (allowed_keys()) is dropped.
+    Foreign ``extra`` fields are not
     lifted into the event dict in the first place (default-deny by origin: the
     chain has no extra-merging processor), so this is the key control's backstop
     for own-code and structlog-internal keys rather than the foreign-extra gate.
@@ -512,21 +533,24 @@ def _filter_allowlist(
 
     Raises:
         UnregisteredLogKeyError: In strict mode, if an own event carries a key
-            that is not in ALLOWED_KEYS or _META_KEYS.
+            that is not in the assembled allowlist (allowed_keys()) or
+            _META_KEYS.
     """
+    allowlist = allowed_keys()
     is_own_event = event_dict.get("_from_structlog") is not False
     if _is_strict() and is_own_event:
         for key in event_dict:
-            if key not in ALLOWED_KEYS and key not in _META_KEYS:
+            if key not in allowlist and key not in _META_KEYS:
                 raise UnregisteredLogKeyError(
                     f"log key {key!r} on event {event_dict.get('event')!r} is "
-                    "not allowlisted; add it to "
-                    "observability.logging_config.ALLOWED_KEYS"
+                    "not allowlisted; declare it in the emitting context's "
+                    "events.py (its *_KEYS set) and union it at the composition "
+                    "root via register_keys"
                 )
     return {
         key: value
         for key, value in event_dict.items()
-        if key in ALLOWED_KEYS or key in _META_KEYS
+        if key in allowlist or key in _META_KEYS
     }
 
 
