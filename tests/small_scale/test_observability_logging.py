@@ -541,6 +541,30 @@ def test_own_code_kwarg_correlation_id_is_overwritten_by_the_contextvar(
     assert "spoofed-by-kwarg" not in json.dumps(record)
 
 
+def test_correlation_id_is_stamped_inside_the_scope_and_cleared_after(
+    log_sink: Callable[[], list[dict]],
+) -> None:
+    """The correlation scope stamps the id inside and clears it on exit.
+
+    The run-scoped correlation lifecycle that run() relies on is the ContextVar
+    via correlation_scope, not a value threaded into the chain: an event logged
+    inside the scope carries the id at the sink, and an event logged after the
+    scope carries none, so the id cannot leak past the run and the transport is
+    the ambient ContextVar, not a degraded attribute.
+    """
+    log = structlog.get_logger()
+
+    with correlation_scope("doc-scope-0001"):
+        log.error(AUDIT_APPEND_FAILED, audit_event_type="inside")
+    log.error(AUDIT_APPEND_FAILED, audit_event_type="after")
+
+    lines = log_sink()
+    inside = next(line for line in lines if line.get("audit_event_type") == "inside")
+    after = next(line for line in lines if line.get("audit_event_type") == "after")
+    assert inside["correlation_id"] == "doc-scope-0001"
+    assert "correlation_id" not in after
+
+
 @_POSIX_ONLY
 def test_sink_file_and_directory_are_owner_only_after_first_write(
     log_sink: Callable[[], list[dict]],

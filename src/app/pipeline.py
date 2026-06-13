@@ -35,8 +35,9 @@ from app.core.failures import (
     TriageError,
 )
 from app.core.protocols import Retriever
+from app.core.results import TriageResult
 from app.document_ingestion.service import DocumentIngestionService
-from app.observability import reset_correlation_id, set_correlation_id
+from app.observability import correlation_scope
 from app.observability.events import AUDIT_APPEND_FAILED
 from app.observability.metrics import (
     inc_argument_verification_failures,
@@ -85,6 +86,14 @@ class Pipeline:
     def run(self, raw_text: str) -> WuerdigungsBriefing:
         """Process a raw Einwendung through the full pipeline.
 
+        Reads as a stage sequence. Ingestion mints the document id (no
+        correlation id exists before it), then the run binds that id as the
+        correlation scope for every subsequent event and walks the stages,
+        aggregating the domain metrics and emitting one audit event per stage.
+        The cross-cutting bookkeeping sits behind named seams: the correlation
+        lifecycle in a context manager, the metric aggregation in the
+        _record_triage_metrics and _norm_resolution_counts mappers.
+
         Args:
             raw_text: Raw Einwendung text as received at system boundary.
 
@@ -96,110 +105,141 @@ class Pipeline:
             TriageError: If argument extraction fails.
             RetrievalError: If norm retrieval fails.
         """
-        einwendungs_id: str | None = None
-        correlation_token = None
         # The run owner defines the run (M5): discard the previous run's
         # finished spans here at run start, not via a parentage heuristic in
-        # the instrumentation layer. Runs inside the body, after the @traced
-        # root span has opened but before any child span finishes, so only
-        # prior-run spans are dropped.
+        # the instrumentation layer. Single-run assumption: the global exporter
+        # is cleared, not run-scoped (ADR-026, declared assumption).
         clear_finished_spans()
 
         try:
             ingestion_result = self._ingestion.ingest(raw_text)
-            einwendungs_id = ingestion_result.document_id
-            # Anchor every subsequent log event of this run on the document_id,
-            # the pseudonymous correlation id (ADR-026). It is set here rather
-            # than at run() entry because the id does not exist until ingestion
-            # mints it; all emitting code runs after this point.
-            correlation_token = set_correlation_id(einwendungs_id)
-            self._emit(
-                einwendungs_id,
-                AuditEventType.EINGANG,
-                {
-                    "document_id": ingestion_result.document_id,
-                    "masked_entity_counts": ingestion_result.entity_counts,
-                },
-            )
-
-            triage_result = self._triage.triage(ingestion_result.clean_text)
-            # Domain metrics live in the Coordinator, which already owns the
-            # cross-context view; the contained helpers cannot abort the run.
-            observe_arguments_per_objection(len(triage_result.extracted_arguments))
-            inc_argument_verification_failures(
-                sum(
-                    1
-                    for arg in triage_result.extracted_arguments
-                    if not arg.argument_verified
-                )
-            )
-            # The contradiction counter is the fifth domain metric the
-            # Coordinator owns, counted from the flag Triage carries on its
-            # result (single-layer ownership; the count no longer lives in the
-            # Triage context).
-            if triage_result.contradiction_detected:
-                inc_triage_contradiction()
-            self._emit(
-                einwendungs_id,
-                AuditEventType.TRIAGE,
-                {
-                    "argument_count": len(triage_result.extracted_arguments),
-                    "contradiction_detected": triage_result.contradiction_detected,
-                },
-            )
-
-            arguments = self._map_arguments(triage_result.extracted_arguments)
-            norms_by_argument = self._resolve_norms(triage_result.extracted_arguments)
-            resolved_total = sum(
-                sum(1 for n in norms if n.resolved)
-                for norms in norms_by_argument.values()
-            )
-            norm_total = sum(len(norms) for norms in norms_by_argument.values())
-            inc_norm_resolutions(
-                resolved=resolved_total,
-                unresolved=norm_total - resolved_total,
-            )
-            self._emit(
-                einwendungs_id,
-                AuditEventType.RETRIEVAL,
-                {"resolved_norm_count": resolved_total},
-            )
-
-            briefing = self._briefing.assemble(
-                document_id=einwendungs_id,
-                einwendungs_typ=triage_result.einwendungs_typ.value,
-                arguments=arguments,
-                norms_by_argument=norms_by_argument,
-                corpus_id=self._retrieval.corpus_id,
-                created_at=datetime.now(UTC),
-            )
-
-            event_type = (
-                AuditEventType.KEIN_TREFFER
-                if not triage_result.extracted_arguments
-                else AuditEventType.BRIEFING_ERSTELLT
-            )
-            inc_objection_processed(status=event_type.value)
-            self._emit(
-                einwendungs_id,
-                event_type,
-                {"entry_count": len(briefing.entries)},
-            )
-
-            return briefing
-
-        except (IngestionError, TriageError, RetrievalError):
+        except IngestionError:
+            # Ingestion failure precedes the correlation id: there is no
+            # document id to anchor events on yet, so only the terminal metric
+            # is recorded before the failure propagates.
             inc_objection_processed(status=AuditEventType.PIPELINE_FEHLER.value)
-            if einwendungs_id:
+            raise
+
+        einwendungs_id = ingestion_result.document_id
+        # Bind the document id as the correlation scope for every subsequent
+        # event of this run (ADR-026). The scope opens here, after ingestion
+        # mints the id, and the ContextVar stays the transport: the structlog
+        # correlation processor reaches it ambiently, not through any object
+        # threaded into the chain.
+        with correlation_scope(einwendungs_id):
+            try:
+                self._emit(
+                    einwendungs_id,
+                    AuditEventType.EINGANG,
+                    {
+                        "document_id": ingestion_result.document_id,
+                        "masked_entity_counts": ingestion_result.entity_counts,
+                    },
+                )
+
+                triage_result = self._triage.triage(ingestion_result.clean_text)
+                self._record_triage_metrics(triage_result)
+                self._emit(
+                    einwendungs_id,
+                    AuditEventType.TRIAGE,
+                    {
+                        "argument_count": len(triage_result.extracted_arguments),
+                        "contradiction_detected": triage_result.contradiction_detected,
+                    },
+                )
+
+                arguments = self._map_arguments(triage_result.extracted_arguments)
+                norms_by_argument = self._resolve_norms(
+                    triage_result.extracted_arguments
+                )
+                resolved_total, unresolved_total = self._norm_resolution_counts(
+                    norms_by_argument
+                )
+                inc_norm_resolutions(
+                    resolved=resolved_total,
+                    unresolved=unresolved_total,
+                )
+                self._emit(
+                    einwendungs_id,
+                    AuditEventType.RETRIEVAL,
+                    {"resolved_norm_count": resolved_total},
+                )
+
+                briefing = self._briefing.assemble(
+                    document_id=einwendungs_id,
+                    einwendungs_typ=triage_result.einwendungs_typ.value,
+                    arguments=arguments,
+                    norms_by_argument=norms_by_argument,
+                    corpus_id=self._retrieval.corpus_id,
+                    created_at=datetime.now(UTC),
+                )
+
+                event_type = (
+                    AuditEventType.KEIN_TREFFER
+                    if not triage_result.extracted_arguments
+                    else AuditEventType.BRIEFING_ERSTELLT
+                )
+                inc_objection_processed(status=event_type.value)
+                self._emit(
+                    einwendungs_id,
+                    event_type,
+                    {"entry_count": len(briefing.entries)},
+                )
+
+                return briefing
+
+            except (TriageError, RetrievalError):
+                inc_objection_processed(status=AuditEventType.PIPELINE_FEHLER.value)
                 self._emit(
                     einwendungs_id,
                     AuditEventType.PIPELINE_FEHLER,
                     {"reason": "pipeline error"},
                 )
-            raise
-        finally:
-            if correlation_token is not None:
-                reset_correlation_id(correlation_token)
+                raise
+
+    def _record_triage_metrics(self, triage_result: TriageResult) -> None:
+        """Aggregate and emit the Coordinator's triage-stage domain metrics.
+
+        Named seam for the per-argument aggregation that was inline in run().
+        The Coordinator owns domain-metric emission (single-layer ownership):
+        the arguments-per-objection histogram, the verification-failure count
+        (ADR-006 Layer 1), and the contradiction counter (counted from the flag
+        Triage carries on its result). Each helper is contained and cannot
+        abort the run.
+
+        Args:
+            triage_result: The Triage stage output for this run.
+        """
+        arguments = triage_result.extracted_arguments
+        observe_arguments_per_objection(len(arguments))
+        inc_argument_verification_failures(
+            sum(1 for arg in arguments if not arg.argument_verified)
+        )
+        if triage_result.contradiction_detected:
+            inc_triage_contradiction()
+
+    @staticmethod
+    def _norm_resolution_counts(
+        norms_by_argument: dict[str, list[ResolvedNormEntry]],
+    ) -> tuple[int, int]:
+        """Return the (resolved, unresolved) norm counts across all arguments.
+
+        Named seam for the norm aggregation that was inline in run(). The
+        quality signal is the unresolved ratio, so both counts are produced
+        here and fed to the norm-resolution metric; resolved_total also feeds
+        the RETRIEVAL audit payload.
+
+        Args:
+            norms_by_argument: Resolved norms keyed by argument id.
+
+        Returns:
+            A (resolved, unresolved) pair over every argument's norms.
+        """
+        resolved = sum(
+            sum(1 for n in norms if n.resolved) for norms in norms_by_argument.values()
+        )
+        total = sum(len(norms) for norms in norms_by_argument.values())
+        return resolved, total - resolved
 
     @staticmethod
     def _map_arguments(
