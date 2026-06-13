@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from app.audit_log.serialization import GENESIS_PREV_HASH, compute_event_hash
 from app.audit_log.store import JsonLinesAuditStore
 from app.core.events import AuditEvent, AuditEventType
 from app.core.failures import AuditLogError
@@ -165,10 +166,11 @@ def test_event_survives_roundtrip(tmp_path: Path) -> None:
     assert retrieved.timestamp == original.timestamp
     assert retrieved.timestamp.tzinfo is not None
     assert retrieved.payload == original.payload
-    # Round A hash-chain layout fields survive the JSONL roundtrip; they
-    # default until Round C populates the chain (ADR-024).
+    # The store now populates the chain fields on append (Round 18a, ADR-024):
+    # the first event is sequence 0 and carries its hash, chained from genesis.
     assert retrieved.serialization_version == 1
-    assert retrieved.event_hash is None
+    assert retrieved.sequence_number == 0
+    assert retrieved.event_hash == compute_event_hash(retrieved, GENESIS_PREV_HASH)
 
 
 def test_query_combined_filters(tmp_path: Path) -> None:
@@ -201,3 +203,134 @@ def test_query_time_filters(tmp_path: Path) -> None:
     )
     assert len(results) == 1
     assert results[0].event_id == present.event_id
+
+
+def test_genesis_event_chains_from_the_all_zero_sentinel(tmp_path: Path) -> None:
+    """Given a fresh store, when the first event is published, then it is
+    sequence 0 and its hash is computed from the all-zero genesis sentinel.
+
+    The first event has no predecessor, so its prev_hash is the documented
+    sentinel rather than a real digest (ADR-024). Pinning this anchors the whole
+    chain: every later link is only as sound as the genesis it descends from.
+    """
+    store = JsonLinesAuditStore(tmp_path / "audit.jsonl")
+    store.publish(_make_event(einwendungs_id="EW-001"))
+
+    [genesis] = store.query()
+    assert genesis.sequence_number == 0
+    assert genesis.event_hash == compute_event_hash(genesis, GENESIS_PREV_HASH)
+
+
+def test_sequence_numbers_increase_monotonically_from_zero(tmp_path: Path) -> None:
+    """Given three published events, when the log is read, then their sequence
+    numbers are 0, 1, 2 in append order.
+
+    The sequence number is the event's position in the chain and is part of its
+    hashed content, so it must advance by one per append from genesis.
+    """
+    store = JsonLinesAuditStore(tmp_path / "audit.jsonl")
+    store.publish(_make_event(einwendungs_id="EW-001"))
+    store.publish(_make_event(einwendungs_id="EW-002"))
+    store.publish(_make_event(einwendungs_id="EW-003"))
+
+    events = store.query()
+    assert [event.sequence_number for event in events] == [0, 1, 2]
+
+
+def test_a_published_chain_recomputes_consistently_from_genesis(
+    tmp_path: Path,
+) -> None:
+    """Given a chain of five events, when each hash is recomputed from its
+    predecessor, then every stored hash matches.
+
+    This is the verify property in miniature: walk from the genesis sentinel,
+    recompute H(canonical_bytes + prev_hash) per event, and confirm it equals
+    what was written. verify_chain() as a named function is 18c; the property it
+    will rely on is proven here directly.
+    """
+    store = JsonLinesAuditStore(tmp_path / "audit.jsonl")
+    for index in range(5):
+        store.publish(_make_event(einwendungs_id=f"EW-{index:03d}"))
+
+    events = store.query()
+    prev_hash = GENESIS_PREV_HASH
+    for event in events:
+        assert event.event_hash == compute_event_hash(event, prev_hash)
+        prev_hash = event.event_hash
+
+
+def test_mutating_a_past_events_payload_breaks_the_link_to_its_successor(
+    tmp_path: Path,
+) -> None:
+    """Given a recorded chain, when a past event's payload is altered, then the
+    event's own hash changes and its successor no longer chains from it.
+
+    This is the tamper-evidence property the chain exists for (ADR-024): a single
+    edited event cannot pass an honest recomputation, and because each event
+    binds its predecessor's hash, the break propagates to every successor.
+    """
+    store = JsonLinesAuditStore(tmp_path / "audit.jsonl")
+    store.publish(_make_event(einwendungs_id="EW-001"))
+    store.publish(_make_event(einwendungs_id="EW-002"))
+    first, second = store.query()
+
+    tampered_first = first.model_copy(update={"payload": {"tampered": True}})
+    recomputed_first_hash = compute_event_hash(tampered_first, GENESIS_PREV_HASH)
+
+    # The edited event no longer matches its own recorded hash.
+    assert recomputed_first_hash != first.event_hash
+    # The successor bound the original predecessor hash, so it does not chain
+    # from the edited event: the tamper is detectable at the link.
+    assert second.event_hash != compute_event_hash(second, recomputed_first_hash)
+    # The successor still chains from the original predecessor hash, proving the
+    # break is the tamper itself, not a serializer artifact.
+    assert second.event_hash == compute_event_hash(second, first.event_hash)
+
+
+def test_chain_continues_after_the_store_is_reopened(tmp_path: Path) -> None:
+    """Given events written by one store instance, when a new instance opens the
+    same file and appends, then it resumes the sequence and the hash links.
+
+    The in-memory head is seeded from the file at open this round (durable head
+    recovery is 18b), so a restart must continue the chain rather than restart at
+    genesis and orphan the events already on disk.
+    """
+    path = tmp_path / "audit.jsonl"
+    first_store = JsonLinesAuditStore(path)
+    first_store.publish(_make_event(einwendungs_id="EW-001"))
+    first_store.publish(_make_event(einwendungs_id="EW-002"))
+
+    reopened = JsonLinesAuditStore(path)
+    reopened.publish(_make_event(einwendungs_id="EW-003"))
+
+    events = reopened.query()
+    assert [event.sequence_number for event in events] == [0, 1, 2]
+    # The event appended after reopen chains from the last event on disk.
+    assert events[2].event_hash == compute_event_hash(events[2], events[1].event_hash)
+    # And the whole chain still recomputes consistently from genesis.
+    prev_hash = GENESIS_PREV_HASH
+    for event in events:
+        assert event.event_hash == compute_event_hash(event, prev_hash)
+        prev_hash = event.event_hash
+
+
+def test_store_assigns_chain_fields_and_ignores_caller_supplied_ones(
+    tmp_path: Path,
+) -> None:
+    """Given an event with a caller-set sequence_number and event_hash, when it
+    is published, then the store overwrites both with the chain's own values.
+
+    The chain fields are the store's to assign from its head; honoring
+    caller-supplied ones would let a caller forge a position or a hash. The store
+    stamps them regardless of what arrived.
+    """
+    store = JsonLinesAuditStore(tmp_path / "audit.jsonl")
+    forged = _make_event(einwendungs_id="EW-001").model_copy(
+        update={"sequence_number": 99, "event_hash": "f" * 64}
+    )
+    store.publish(forged)
+
+    [stored] = store.query()
+    assert stored.sequence_number == 0
+    assert stored.event_hash == compute_event_hash(stored, GENESIS_PREV_HASH)
+    assert stored.event_hash != "f" * 64

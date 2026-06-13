@@ -19,8 +19,10 @@ records the version that produced its bytes, and that version reproduces them.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from collections.abc import Callable
+from typing import Final
 
 from app.core.events import AuditEvent
 
@@ -90,3 +92,33 @@ def canonical_bytes(event: AuditEvent) -> bytes:
             f"{event.serialization_version!r}"
         )
     return serializer(event)
+
+
+#: prev_hash of the genesis event: 64 zero hex chars, a fixed sentinel. No event
+#: precedes genesis, so its predecessor link is a constant rather than a real
+#: digest; the width matches a SHA-256 hex digest (ADR-024).
+GENESIS_PREV_HASH: Final[str] = "0" * 64
+
+
+def compute_event_hash(event: AuditEvent, prev_hash: str) -> str:
+    """Compute an event's chained SHA-256 hex digest.
+
+    The digest covers the event's canonical bytes followed by its predecessor's
+    hash, so any change to a past event's content, or to the chain order,
+    changes that event's hash and breaks the link every successor bound. The
+    predecessor of the genesis event is GENESIS_PREV_HASH.
+
+    Args:
+        event: The event to hash. It must already carry its assigned
+            sequence_number; its event_hash is excluded from the canonical
+            bytes, so an existing value does not feed back into the digest.
+        prev_hash: The predecessor's event_hash, or GENESIS_PREV_HASH for the
+            genesis event.
+
+    Returns:
+        The 64-char SHA-256 hex digest to store in event_hash.
+    """
+    hasher = hashlib.sha256()
+    hasher.update(canonical_bytes(event))
+    hasher.update(prev_hash.encode("ascii"))
+    return hasher.hexdigest()
