@@ -16,7 +16,13 @@ from app.core.events import AuditEvent, AuditEventType
 from app.core.failures import AuditLogError
 from app.document_ingestion.entities import MaskingResult
 from app.document_ingestion.service import DocumentIngestionService
-from app.observability import configure_logging, set_strict_mode
+from app.observability import (
+    configure_logging,
+    reset_registered_events,
+    reset_registered_keys,
+    set_strict_mode,
+)
+from app.observability.tracing import reset_tracing, set_tracing_enabled
 from app.observability_registry import register_observability_vocabulary
 from app.pipeline import Pipeline
 from app.retrieval.entities import NormWithSource
@@ -47,21 +53,36 @@ def _configured_log_sink(tmp_path_factory: pytest.TempPathFactory) -> None:
 
 
 @pytest.fixture(autouse=True)
-def _observability_strict_mode() -> Iterator[None]:
-    """Enforce strict observability mode for the whole suite (ADR-026).
+def _reset_observability_globals() -> Iterator[None]:
+    """Symmetrically reset every observability global between tests (ADR-026).
 
-    Runtime enforcement is mode-dependent: production substitutes degraded
-    events for unregistered names and processor failures, but the test suite
-    runs strict so CI catches every typo and every processor bug at its origin.
-    Strict is a wired flag now (finding 8), set via set_strict_mode rather than
-    the ambient environment, so a chain reconfiguration to a new sink path does
-    not flip enforcement. A test that exercises production behaviour opts out
-    with ``set_strict_mode(False)`` in its body; this fixture restores the
-    default at teardown for the next test.
+    The observability layer keeps process-wide globals (the declared single-run
+    debt: a run-scoped instrumentation object is the deferred retrofit). Until
+    that lands, a test that flips one of them can poison whatever test runs
+    next. This one autouse fixture resets them all symmetrically, so no test
+    inherits another's observability state regardless of collection order. It
+    replaces the former selective tracing fixture (autouse only inside the
+    tracing module) and the strict-only fixture: a tracing-flipping test in any
+    module could otherwise leak into a following test the tracing fixture never
+    covered.
+
+    Setup establishes the test default: the vocabulary registries re-assembled
+    (the union the CLI also builds), strict enforcement on so CI catches every
+    typo and key at its origin, and tracing off (the production default; tests
+    that exercise the enabled path set it via set_tracing_enabled). Teardown
+    clears all of it: tracing provider/exporter/flag, strict mode, and both
+    vocabulary registries. A test that needs production behaviour opts out in
+    its body (set_strict_mode(False)); this fixture restores the defaults for
+    the next test either way.
     """
+    register_observability_vocabulary()
     set_strict_mode(True)
+    set_tracing_enabled(False)
     yield
+    reset_tracing()
     set_strict_mode(False)
+    reset_registered_events()
+    reset_registered_keys()
 
 
 class FakeLLMClient:

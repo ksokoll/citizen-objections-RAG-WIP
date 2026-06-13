@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 import logging
 from collections import Counter
-from collections.abc import Callable, Iterator
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -26,10 +26,10 @@ from app.observability.events import STAGE_TIMING
 from app.observability.logging_config import LOG_FILENAME, configure_logging
 from app.observability.tracing import (
     get_finished_spans,
-    reset_tracing,
     set_tracing_enabled,
     traced,
     tracer_provider_is_built,
+    tracing_enabled,
 )
 from app.pipeline import Pipeline
 from app.retrieval.entities import GesetzParagraph, LoadedCorpus
@@ -53,20 +53,6 @@ _SINGLE_SPAN_STAGES = (
     "retrieval",
     "briefing",
 )
-
-
-@pytest.fixture(autouse=True)
-def _tracing_off_and_clean() -> Iterator[None]:
-    """Default every test to tracing disabled and reset the scaffold after.
-
-    Tracing is a wired flag now (finding 8): tests that exercise the enabled
-    path set it via set_tracing_enabled. Teardown discards the module-held
-    provider and resets the flag, so one test's backend or flag never leaks
-    into the next.
-    """
-    set_tracing_enabled(False)
-    yield
-    reset_tracing()
 
 
 @pytest.fixture()
@@ -326,5 +312,40 @@ def test_tracing_follows_the_wired_flag_not_the_environment(
 
     pipeline.run(_SAMPLE_EINWENDUNG)
 
+    assert tracer_provider_is_built() is False
+    assert get_finished_spans() == ()
+
+
+# Ordering check (H4): these two tests run consecutively in definition order.
+# The first enables tracing and builds the module-held provider; the second
+# asserts the autouse reset (conftest._reset_observability_globals) tore it down
+# before this test ran, so a tracing-flipping test cannot poison the next one.
+# They are a pair: the second's assertion is meaningful only because the first
+# left tracing enabled with a live provider.
+
+
+def test_ordering_check_part1_enables_tracing_and_builds_a_provider(
+    tmp_path: Path,
+    log_sink: Callable[[], list[dict]],
+) -> None:
+    # Given: tracing wired on
+    set_tracing_enabled(True)
+    pipeline = _real_pipeline(tmp_path)
+
+    # When: a run completes
+    pipeline.run(_SAMPLE_EINWENDUNG)
+
+    # Then: the provider is built and spans exist, so this test leaves the
+    # tracing globals dirty for the symmetric reset to clean up.
+    assert tracer_provider_is_built() is True
+    assert get_finished_spans() != ()
+
+
+def test_ordering_check_part2_following_test_sees_clean_tracing_globals() -> None:
+    # Given/Then: no setup here. The autouse reset ran between the previous test
+    # and this one, so tracing is back off, no provider exists, and the exporter
+    # is gone. If the reset were not symmetric, part1's enabled flag and live
+    # provider would leak into this assertion.
+    assert tracing_enabled() is False
     assert tracer_provider_is_built() is False
     assert get_finished_spans() == ()
