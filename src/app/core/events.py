@@ -8,7 +8,14 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class AuditEventType(StrEnum):
-    """Classification of audit event by pipeline stage."""
+    """Classification of an audit event.
+
+    Most members name a pipeline stage. WIEDERHERSTELLUNG is the exception: it
+    is a store-integrity event, not a pipeline step, recorded when the store
+    quarantines a damaged tail at open and writes a recovery event into the
+    chain (ADR-030). It lives here because AuditEvent.event_type is typed against
+    this enum and the recovery event is a custody record like any other.
+    """
 
     EINGANG = "eingang"
     TRIAGE = "triage"
@@ -18,6 +25,7 @@ class AuditEventType(StrEnum):
     KEIN_TREFFER = "kein_treffer"
     FREIGABE = "freigabe"
     PIPELINE_FEHLER = "pipeline_fehler"
+    WIEDERHERSTELLUNG = "wiederherstellung"
 
 
 class AuditEvent(BaseModel):

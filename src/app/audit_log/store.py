@@ -2,17 +2,32 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
+import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
+from typing import Final
 
+import structlog
 from filelock import FileLock, Timeout
 
+from app.audit_log.events import AUDIT_RECOVERED
 from app.audit_log.serialization import GENESIS_PREV_HASH, compute_event_hash
 from app.core.events import AuditEvent, AuditEventType
 from app.core.failures import AuditLogError
+
+#: Module logger for the store's recovery event. Routes through the same
+#: governed chain as every other event (ADR-026).
+_log = structlog.get_logger()
+
+#: einwendungs_id carried by the system recovery event, which is not tied to a
+#: citizen objection. A fixed non-objection sentinel so the recovery custody
+#: record satisfies the required non-empty id without claiming an Einwendung
+#: (ADR-030).
+RECOVERY_EINWENDUNGS_ID: Final[str] = "SYSTEM"
 
 
 class JsonLinesAuditStore:
@@ -40,11 +55,14 @@ class JsonLinesAuditStore:
       no second process holds the file on the Windows host.
     - The in-memory head (last hash, last sequence) is the sole duplicate
       mechanism: publish() does not scan the file. The file is read only at
-      open, to seed the head.
-
-    Limitations (resolved later in this round / a later phase):
-    - A damaged last line is not yet recovered (the recovery commit adds
-      quarantine plus a recovery event).
+      open, to seed the head, by the recovery path below (not a second reader).
+    - Recovery at open: a damaged or partial last line (invalid JSON at EOF, or
+      a line whose hash does not chain) is moved to a quarantine file, its bytes'
+      hash is recorded, and a recovery event is written into the chain. Only the
+      last line is healed: a mid-file break is not silently fixed here, it is for
+      verify_chain (18c) to surface, because a partial last line is directly
+      observable while lost interior events are not without an external anchor
+      (ADR-030).
     """
 
     def __init__(self, path: Path, lock_timeout: float = 10.0) -> None:
@@ -68,11 +86,13 @@ class JsonLinesAuditStore:
         self._path = path
         self._lock_timeout = lock_timeout
         self._lock = FileLock(f"{path}.lock", timeout=lock_timeout)
+        self._head_hash: str = GENESIS_PREV_HASH
+        self._head_sequence: int | None = None
         path.parent.mkdir(parents=True, exist_ok=True)
         if not path.exists():
             path.touch()
         with self._single_writer():
-            self._head_hash, self._head_sequence = self._initialize_head()
+            self._recover_and_seed()
 
     @contextmanager
     def _single_writer(self) -> Iterator[None]:
@@ -202,33 +222,189 @@ class JsonLinesAuditStore:
             results.append(event)
         return results
 
-    def _initialize_head(self) -> tuple[str, int | None]:
-        """Seed the in-memory chain head from the events already on disk.
+    def _recover_and_seed(self) -> None:
+        """Seed the in-memory head from disk, recovering a damaged tail (ADR-030).
 
-        The head is the predecessor the next appended event chains from: the
-        last event's hash and its sequence number. An empty chain (no event yet
-        carries a sequence number) seeds the genesis sentinel, so the next event
-        becomes sequence 0.
+        This is the single open-time read path: it both seeds the head and
+        recovers, so seeding is never a second reader divergent from recovery.
+        It reads the chain to its last valid line and seeds the head from it. If
+        the last line is damaged (invalid JSON at EOF, or a hash that does not
+        chain from its predecessor), the damaged line is quarantined, a recovery
+        event is appended to the chain, and the recovery is logged. Only the last
+        line is healed: an interior break is left for verify_chain (18c) to
+        surface, because a partial last line is directly observable while a lost
+        interior event is not without an external anchor.
 
-        Reading the file at open is this round's seeding mechanism; 18b makes the
-        in-memory head the sole record and adds durable append. Correctness, not
-        cost, is the concern here.
+        Called under the single-writer lock from __init__, so open, recovery, and
+        the recovery event's append are one critical section.
+        """
+        valid_events, valid_lines, damaged_line = self._read_chain_with_tail_check()
+        self._seed_head_from(valid_events)
+        if damaged_line is not None:
+            self._quarantine_and_record(damaged_line, valid_lines)
+
+    def _read_chain_with_tail_check(
+        self,
+    ) -> tuple[list[AuditEvent], list[str], str | None]:
+        """Read the on-disk chain, isolating a damaged last line if present.
+
+        Returns the valid events, their source lines (so the live file can be
+        rewritten byte-for-byte without the damaged tail), and the damaged last
+        line or None. The damage cases handled here are the EOF cases: a last
+        line that fails to parse, or one that parses but whose hash does not
+        chain from its predecessor. An interior line that fails to parse is a
+        mid-file break, which recovery does not heal: it raises so the corruption
+        surfaces loudly rather than being silently truncated (ADR-030).
 
         Returns:
-            A (head_hash, head_sequence) pair: the hash the next event chains
-            from (GENESIS_PREV_HASH when the chain is empty) and the last
-            assigned sequence number (None when the chain is empty).
+            (valid_events, valid_lines, damaged_line). damaged_line is None when
+            the chain is intact to its end.
+
+        Raises:
+            AuditLogError: If an interior (non-last) line fails to parse.
         """
-        chained = [
-            event for event in self._read_all() if event.sequence_number is not None
+        if not self._path.exists():
+            return [], [], None
+        lines = [
+            line
+            for line in self._path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
         ]
+        if not lines:
+            return [], [], None
+
+        events: list[AuditEvent] = []
+        for index, line in enumerate(lines):
+            try:
+                events.append(AuditEvent.model_validate_json(line))
+            except ValueError as exc:
+                if index == len(lines) - 1:
+                    # Truncated or partial last line: the EOF case recovery heals.
+                    return events, lines[:index], line
+                raise AuditLogError(
+                    f"audit store {self._path} has a damaged interior line at "
+                    f"position {index}; recovery heals only a damaged last line, "
+                    "an interior break is for verify_chain to surface (18c)"
+                ) from exc
+
+        if self._last_event_chains(events):
+            return events, lines, None
+        # The last line parsed but its hash does not chain: quarantine it too.
+        return events[:-1], lines[:-1], lines[-1]
+
+    def _last_event_chains(self, events: list[AuditEvent]) -> bool:
+        """Whether the last event's hash chains from its predecessor.
+
+        A healthy last event always passes, because the store wrote its hash
+        over the same canonical bytes the read reproduces (ADR-029 roundtrip
+        stability), so this is a false-positive-free damaged-tail check. A
+        pre-chain tail (no sequence_number or event_hash) is treated as intact:
+        there is no hash to validate and it is not a partial write.
+
+        Args:
+            events: The parsed events, last element checked against its
+                predecessor (the genesis sentinel when it is the only event).
+        """
+        last = events[-1]
+        if last.sequence_number is None or last.event_hash is None:
+            return True
+        prev_hash = GENESIS_PREV_HASH
+        if len(events) >= 2 and events[-2].event_hash is not None:
+            prev_hash = events[-2].event_hash
+        return last.event_hash == compute_event_hash(last, prev_hash)
+
+    def _seed_head_from(self, events: list[AuditEvent]) -> None:
+        """Seed the head from the last sequenced event (genesis if none).
+
+        The head is the predecessor the next appended event chains from: the
+        last event's hash and sequence number. An empty or pre-chain-only file
+        seeds the genesis sentinel, so the next event becomes sequence 0.
+
+        Args:
+            events: The valid events to seed from (the damaged tail excluded).
+        """
+        chained = [event for event in events if event.sequence_number is not None]
         if not chained:
-            return GENESIS_PREV_HASH, None
+            self._head_hash = GENESIS_PREV_HASH
+            self._head_sequence = None
+            return
         last = max(chained, key=lambda event: event.sequence_number or 0)
-        head_hash = (
+        self._head_hash = (
             last.event_hash if last.event_hash is not None else GENESIS_PREV_HASH
         )
-        return head_hash, last.sequence_number
+        self._head_sequence = last.sequence_number
+
+    def _quarantine_and_record(self, damaged_line: str, valid_lines: list[str]) -> None:
+        """Quarantine the damaged tail, heal the file, record a recovery event.
+
+        The damaged line's bytes are written to a timestamped quarantine file,
+        the live file is rewritten durably without the damaged tail, a recovery
+        event carrying the quarantined bytes' hash and a line count (never the
+        raw content) is appended to the chain, and the recovery is logged. The
+        quarantine-not-truncate choice keeps the damaged bytes for later
+        inspection rather than discarding them silently (ADR-030).
+
+        Args:
+            damaged_line: The damaged last line, removed from the live file.
+            valid_lines: The source lines of the valid events, rewritten to the
+                live file byte-for-byte.
+        """
+        quarantined_hash = hashlib.sha256(damaged_line.encode("utf-8")).hexdigest()
+        self._quarantine_path().write_text(damaged_line + "\n", encoding="utf-8")
+        self._rewrite_valid_prefix(valid_lines)
+        self._append_durably(self._recovery_event(quarantined_hash))
+        _log.warning(
+            AUDIT_RECOVERED,
+            quarantined_hash=quarantined_hash,
+            quarantined_lines=1,
+        )
+
+    def _quarantine_path(self) -> Path:
+        """Return a timestamped sibling quarantine path for the damaged bytes."""
+        timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
+        return self._path.with_name(f"{self._path.name}.corrupt.{timestamp}")
+
+    def _rewrite_valid_prefix(self, valid_lines: list[str]) -> None:
+        """Durably rewrite the live file with only the valid lines.
+
+        Recovery is the one operation that rewrites the file rather than
+        appending; it drops the damaged tail and fsyncs, so the heal is itself
+        durable before the recovery event is appended (ADR-030).
+
+        Args:
+            valid_lines: The lines to keep, in order, written byte-for-byte.
+
+        Raises:
+            AuditLogError: If rewriting the healed file fails.
+        """
+        try:
+            with self._path.open("w", encoding="utf-8") as f:
+                for line in valid_lines:
+                    f.write(line + "\n")
+                f.flush()
+                os.fsync(f.fileno())
+        except OSError as exc:
+            raise AuditLogError(
+                f"failed to rewrite the audit store at {self._path} during recovery"
+            ) from exc
+
+    def _recovery_event(self, quarantined_hash: str) -> AuditEvent:
+        """Build the recovery custody event for the chain.
+
+        Carries the quarantined bytes' hash and a line count in its payload, so
+        what was removed is attributable without the raw content ever entering
+        the chain. It is a WIEDERHERSTELLUNG event with the system sentinel id,
+        not an objection event (ADR-030).
+
+        Args:
+            quarantined_hash: SHA-256 hex of the quarantined bytes.
+        """
+        return AuditEvent(
+            event_id=str(uuid.uuid4()),
+            event_type=AuditEventType.WIEDERHERSTELLUNG,
+            einwendungs_id=RECOVERY_EINWENDUNGS_ID,
+            payload={"quarantined_hash": quarantined_hash, "quarantined_lines": 1},
+        )
 
     def _chain(self, event: AuditEvent) -> AuditEvent:
         """Stamp the next sequence number and chained hash onto an event.

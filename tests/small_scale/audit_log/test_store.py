@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -444,3 +446,117 @@ def test_store_assigns_chain_fields_and_ignores_caller_supplied_ones(
     assert stored.sequence_number == 0
     assert stored.event_hash == compute_event_hash(stored, GENESIS_PREV_HASH)
     assert stored.event_hash != "f" * 64
+
+
+# A distinctive, invalid-JSON tail standing in for a crash mid-write: it cannot
+# parse, and it shares no substring with a real event line, so absence checks
+# against the healed live file are unambiguous.
+_PARTIAL_LAST_LINE = '{"truncated_partial_write": "PARTIAL'
+
+
+def test_a_truncated_last_line_is_quarantined_with_a_recovery_event(
+    tmp_path: Path,
+) -> None:
+    """Given a chain whose last line was partially written (a crash mid-append),
+    when the store reopens, then the partial line is quarantined (absent from the
+    live file, present in audit.jsonl.corrupt.<timestamp>) and a recovery event
+    carrying the quarantined bytes' hash and a count, with no raw content, is in
+    the chain (ADR-030).
+    """
+    path = tmp_path / "audit.jsonl"
+    store = JsonLinesAuditStore(path)
+    store.publish(_make_event(einwendungs_id="EW-001"))
+    store.publish(_make_event(einwendungs_id="EW-002"))
+    with path.open("a", encoding="utf-8") as f:
+        f.write(_PARTIAL_LAST_LINE + "\n")
+    expected_hash = hashlib.sha256(_PARTIAL_LAST_LINE.encode("utf-8")).hexdigest()
+
+    reopened = JsonLinesAuditStore(path)
+
+    # The partial line is gone from the live file and preserved in quarantine.
+    assert _PARTIAL_LAST_LINE not in path.read_text(encoding="utf-8")
+    corrupt_files = list(tmp_path.glob("audit.jsonl.corrupt.*"))
+    assert len(corrupt_files) == 1
+    assert corrupt_files[0].read_text(encoding="utf-8").strip() == _PARTIAL_LAST_LINE
+
+    # A recovery event records the quarantine: the bytes' hash and a count, never
+    # the raw content.
+    [recovery] = reopened.query(event_type=AuditEventType.WIEDERHERSTELLUNG)
+    assert recovery.payload["quarantined_hash"] == expected_hash
+    assert recovery.payload["quarantined_lines"] == 1
+    assert _PARTIAL_LAST_LINE not in json.dumps(recovery.payload)
+
+
+def test_the_chain_continues_from_the_recovery_event_after_recovery(
+    tmp_path: Path,
+) -> None:
+    """Given recovery quarantined a damaged tail, when a new event is published,
+    then the head reflects the recovered chain and the new event chains onto the
+    recovery event: the chain is continuous across the heal (ADR-030).
+    """
+    path = tmp_path / "audit.jsonl"
+    store = JsonLinesAuditStore(path)
+    store.publish(_make_event(einwendungs_id="EW-001"))
+    with path.open("a", encoding="utf-8") as f:
+        f.write(_PARTIAL_LAST_LINE + "\n")
+
+    reopened = JsonLinesAuditStore(path)  # recovery seeds the head, appends event
+    reopened.publish(_make_event(einwendungs_id="EW-002"))
+
+    events = reopened.query()
+    # EW-001 (0), the recovery event (1), EW-002 (2): one continuous chain.
+    assert [event.sequence_number for event in events] == [0, 1, 2]
+    assert events[1].event_type == AuditEventType.WIEDERHERSTELLUNG
+    prev_hash = GENESIS_PREV_HASH
+    for event in events:
+        assert event.event_hash == compute_event_hash(event, prev_hash)
+        prev_hash = event.event_hash
+
+
+def test_a_last_line_whose_hash_does_not_chain_is_quarantined(
+    tmp_path: Path,
+) -> None:
+    """Given a last line that parses but whose hash does not chain from its
+    predecessor, when the store reopens, then it is quarantined like a truncated
+    line: a damaged tail is a damaged tail whether the damage is partial bytes or
+    a broken link (ADR-030).
+    """
+    path = tmp_path / "audit.jsonl"
+    store = JsonLinesAuditStore(path)
+    store.publish(_make_event(einwendungs_id="EW-001"))
+    [genuine] = store.query()
+    # A well-formed event that does NOT chain (wrong event_hash for its position).
+    forged = genuine.model_copy(update={"sequence_number": 1, "event_hash": "a" * 64})
+    with path.open("a", encoding="utf-8") as f:
+        f.write(forged.model_dump_json() + "\n")
+
+    reopened = JsonLinesAuditStore(path)
+
+    # The forged line is quarantined and a recovery event replaces it in the chain.
+    assert len(list(tmp_path.glob("audit.jsonl.corrupt.*"))) == 1
+    sequences = [event.sequence_number for event in reopened.query()]
+    assert sequences == [0, 1]  # EW-001 then the recovery event
+    [recovery] = reopened.query(event_type=AuditEventType.WIEDERHERSTELLUNG)
+    assert recovery.sequence_number == 1
+
+
+def test_an_interior_damaged_line_is_not_healed_but_surfaces_loudly(
+    tmp_path: Path,
+) -> None:
+    """Given a damaged line that is not the last (an interior break), when the
+    store opens, then it raises rather than silently truncating: recovery heals
+    only the observable EOF case, interior breaks are for verify_chain (ADR-030).
+    """
+    path = tmp_path / "audit.jsonl"
+    store = JsonLinesAuditStore(path)
+    store.publish(_make_event(einwendungs_id="EW-001"))
+    store.publish(_make_event(einwendungs_id="EW-002"))
+    # Insert a damaged line between the two valid ones (an interior break).
+    good_lines = path.read_text(encoding="utf-8").splitlines()
+    path.write_text(
+        good_lines[0] + "\n" + _PARTIAL_LAST_LINE + "\n" + good_lines[1] + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(AuditLogError):
+        JsonLinesAuditStore(path)
