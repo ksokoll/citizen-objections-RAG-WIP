@@ -11,11 +11,56 @@ from __future__ import annotations
 
 import json
 import os
+from collections.abc import Iterable
 
 from mistralai.client import Mistral
 from pydantic import BaseModel
 
 from app.core.failures import LLMError
+
+
+class EndpointNotAllowedError(Exception):
+    """The resolved Mistral endpoint is not on the configured allowlist (K1).
+
+    The narrow PII-masking scope (ADR-025) rests on the assumption that the
+    Triage LLM is reached at an encapsulated endpoint. That assumption is now a
+    checked fact, not prose: the composition root resolves the endpoint and the
+    allowlist at startup and raises this before any client is built, so an
+    outbound call to an unvetted destination fails loud at the bootstrap line
+    rather than silently sending pseudonymized text off-box (ADR-027).
+    """
+
+
+def check_endpoint_allowed(endpoint: str, allowlist: Iterable[str]) -> str:
+    """Return the normalized endpoint if it is on the allowlist, else raise.
+
+    Normalizes by stripping a trailing slash from the endpoint and every
+    allowlist entry, matching the Mistral SDK's own server-url handling, so
+    ``https://host`` and ``https://host/`` are the same destination and a
+    cosmetic slash cannot defeat the check.
+
+    Args:
+        endpoint: The resolved Triage endpoint (the SDK server_url).
+        allowlist: The endpoints a deployment permits. The default admits the
+            public Mistral cloud so the demo runs unconfigured; a Behörde
+            narrows it to its encapsulated endpoint and excludes the rest.
+
+    Returns:
+        The normalized endpoint, safe to hand to the client.
+
+    Raises:
+        EndpointNotAllowedError: If the normalized endpoint is not on the
+            normalized allowlist. The message names the resolved endpoint and
+            the allowlist so the abort is actionable.
+    """
+    normalized = endpoint.rstrip("/")
+    allowed = tuple(entry.rstrip("/") for entry in allowlist)
+    if normalized not in allowed:
+        raise EndpointNotAllowedError(
+            f"Mistral endpoint '{normalized}' is not on the configured "
+            f"allowlist {list(allowed)}"
+        )
+    return normalized
 
 
 class MistralClient:
@@ -30,6 +75,7 @@ class MistralClient:
         api_key: str | None = None,
         model: str = "mistral-large-latest",
         temperature: float = 0.0,
+        base_url: str | None = None,
     ) -> None:
         """Initialize the Mistral client.
 
@@ -39,13 +85,18 @@ class MistralClient:
             model: Model identifier. Defaults to mistral-large-latest.
             temperature: Sampling temperature. Defaults to 0.0 for
                 determinism in classification and extraction tasks.
+            base_url: The endpoint to reach (the SDK server_url). The
+                composition root resolves it and checks it against the
+                endpoint allowlist before constructing this client (K1,
+                check_endpoint_allowed). None falls back to the SDK default
+                (the public Mistral cloud).
 
         Raises:
             KeyError: If api_key is None and MISTRAL_API_KEY is not
                 set in the environment.
         """
         resolved_key = api_key or os.environ["MISTRAL_API_KEY"]
-        self._client = Mistral(api_key=resolved_key)
+        self._client = Mistral(api_key=resolved_key, server_url=base_url)
         self._model = model
         self._temperature = temperature
 

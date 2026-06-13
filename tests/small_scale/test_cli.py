@@ -26,7 +26,7 @@ from app.document_ingestion.service import (
 )
 from app.observability.logging_config import LOG_FILENAME
 from app.observability_registry import CLI_UNHANDLED_ERROR, STARTUP_CONFIG
-from tests.conftest import FakePiiMasker
+from tests.conftest import FakeLLMClient, FakePiiMasker
 
 _ORIGINAL_TEXT = "Originaltext der Einwendung mit allen Details."
 
@@ -263,6 +263,82 @@ def test_oversized_document_is_refused_before_read(
     assert exit_code == 1
     assert f"{MAX_RAW_TEXT_CHARS}-character" in captured.err
     assert captured.out == ""
+
+
+def test_off_allowlist_endpoint_aborts_at_startup(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """An endpoint off the allowlist is a clean startup abort, exit 2 (K1).
+
+    Given a small valid document and a --mistral-endpoint the default allowlist
+    does not admit, when process runs, then it exits 2 with a startup-aborted
+    line that names the resolved endpoint and no traceback. The abort precedes
+    the LLM, corpus, and masker wiring (it needs neither MISTRAL_API_KEY nor the
+    statute corpus, which is itself the evidence that nothing was wired).
+    """
+    document = tmp_path / "einwendung.txt"
+    document.write_text("Eine kurze Einwendung.", encoding="utf-8")
+    off_list = "https://not-allowed.example/mistral"
+
+    exit_code = main(
+        [
+            "--app-home",
+            str(tmp_path / "home"),
+            "process",
+            str(document),
+            "--mistral-endpoint",
+            off_list,
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 2
+    assert "startup aborted" in captured.err
+    assert off_list in captured.err
+    assert "Traceback" not in captured.err
+    assert captured.out == ""
+
+
+def test_configured_allowlist_admits_its_endpoint(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A Behörde-narrowed allowlist admits exactly its encapsulated endpoint (K1).
+
+    Given a --mistral-endpoint-allowlist set to one encapsulated endpoint and a
+    matching --mistral-endpoint, when process runs, then the endpoint check
+    passes and the run proceeds past it (failing later on the absent statute
+    corpus, exit 2): the off-list abort is endpoint-specific, not a blanket
+    refusal. A faked LLM keeps the check independent of MISTRAL_API_KEY.
+    """
+    monkeypatch.setattr(cli, "_build_triage_llm", lambda base_url: FakeLLMClient())
+    document = tmp_path / "einwendung.txt"
+    document.write_text("Eine kurze Einwendung.", encoding="utf-8")
+    encapsulated = "https://mistral.intern.behoerde"
+
+    exit_code = main(
+        [
+            "--app-home",
+            str(tmp_path / "home"),
+            "process",
+            str(document),
+            "--mistral-endpoint",
+            encapsulated,
+            "--mistral-endpoint-allowlist",
+            encapsulated,
+            "--xml-dir",
+            str(tmp_path / "no_such_corpus"),
+        ]
+    )
+
+    captured = capsys.readouterr()
+    # Past the endpoint check: the abort that fires is the missing corpus, not
+    # the endpoint, so the configured allowlist admitted the matching endpoint.
+    assert exit_code == 2
+    assert "not-allowed" not in captured.err
+    assert encapsulated not in captured.err
 
 
 def test_observability_format_env_does_not_change_the_renderer(

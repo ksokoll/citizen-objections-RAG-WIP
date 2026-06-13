@@ -76,7 +76,11 @@ from app.observability_registry import (
 from app.pipeline import Pipeline
 from app.retrieval.gesetz_xml_loader import load_corpus
 from app.retrieval.service import NormRetrievalService
-from app.services.llm.mistral_client import MistralClient
+from app.services.llm.mistral_client import (
+    EndpointNotAllowedError,
+    MistralClient,
+    check_endpoint_allowed,
+)
 from app.triage.service import TriageService
 
 _log = structlog.get_logger()
@@ -84,6 +88,19 @@ _log = structlog.get_logger()
 #: The production Triage model (the only LLM call in the pipeline). Recorded
 #: in startup_config so every run's output is attributable to its model.
 TRIAGE_MODEL_ID: str = "mistral-large-latest"
+
+#: The public Mistral cloud endpoint, the SDK's own default. The wired default
+#: so the demo runs unconfigured (K1); a Behörde overrides --mistral-endpoint
+#: with its encapsulated endpoint and narrows the allowlist to exclude this one.
+DEFAULT_MISTRAL_ENDPOINT: str = "https://api.mistral.ai"
+
+#: The endpoints the resolved Triage endpoint is checked against at startup (K1,
+#: ADR-027). The default admits the public cloud so the unconfigured demo runs;
+#: a Behörde narrows it via --mistral-endpoint-allowlist to its encapsulated
+#: endpoint and excludes the public cloud. An off-list endpoint is a fail-loud
+#: startup abort, not a silent outbound call to an unvetted destination. This
+#: checked fact is what the narrow PII-masking scope now rests on (ADR-025).
+DEFAULT_ENDPOINT_ALLOWLIST: tuple[str, ...] = (DEFAULT_MISTRAL_ENDPOINT,)
 
 #: Default app home for the persistent stores (raw store, audit log, log
 #: sink): a fixed, absolute, user-owned location. The persistent stores must
@@ -108,16 +125,20 @@ _PROVENANCE_PACKAGES: tuple[str, ...] = (
 )
 
 
-def _build_triage_llm() -> LLMClientProtocol:
+def _build_triage_llm(base_url: str) -> LLMClientProtocol:
     """Build the production Triage LLM client (the test seam).
 
     The medium-scale CLI smoke test monkeypatches this function with a fake,
     so the smoke exercises the full production wiring without a network call.
 
+    Args:
+        base_url: The endpoint to reach, already checked against the allowlist
+            at startup (check_endpoint_allowed); the client only transports it.
+
     Raises:
         KeyError: If MISTRAL_API_KEY is not set in the environment.
     """
-    return MistralClient(model=TRIAGE_MODEL_ID)
+    return MistralClient(model=TRIAGE_MODEL_ID, base_url=base_url)
 
 
 def _build_masker() -> PiiMasker:
@@ -167,15 +188,18 @@ def _emit_startup_config(
     paths: dict[str, Path],
     corpus_id: str | None = None,
     model_id: str | None = None,
+    endpoint: str | None = None,
 ) -> None:
     """Emit the registered startup_config event after bootstrap.
 
-    Records the active toolset that produces this process's output. corpus_id
-    and model_id apply only to commands that load the corpus and wire the
-    LLM (process); show-document omits them rather than reporting stale or
-    invented values. paths carries the resolved absolute store paths under
-    their allowlisted keys (app_home, log_dir, raw_store, audit_log), so
-    which stores a run actually hit is determinable afterward (S5).
+    Records the active toolset that produces this process's output. corpus_id,
+    model_id, and endpoint apply only to commands that load the corpus and wire
+    the LLM (process); show-document omits them rather than reporting stale or
+    invented values. The endpoint is the destination the startup allowlist check
+    admitted (K1), so a run's output is attributable to the endpoint it actually
+    reached. paths carries the resolved absolute store paths under their
+    allowlisted keys (app_home, log_dir, raw_store, audit_log), so which stores a
+    run actually hit is determinable afterward (S5).
     """
     fields: dict[str, object] = {
         "git_sha": _git_short_sha(),
@@ -190,6 +214,8 @@ def _emit_startup_config(
         fields["corpus_id"] = corpus_id
     if model_id is not None:
         fields["model_id"] = model_id
+    if endpoint is not None:
+        fields["mistral_endpoint"] = endpoint
     _log.info(STARTUP_CONFIG, **fields)
 
 
@@ -266,6 +292,19 @@ def _build_parser() -> argparse.ArgumentParser:
         type=Path,
         default=Path("data") / "XML",
         help="statute XML corpus directory (read-only input)",
+    )
+    process.add_argument(
+        "--mistral-endpoint",
+        default=DEFAULT_MISTRAL_ENDPOINT,
+        help="Triage LLM endpoint; checked against the allowlist at startup "
+        f"(default: {DEFAULT_MISTRAL_ENDPOINT})",
+    )
+    process.add_argument(
+        "--mistral-endpoint-allowlist",
+        default=None,
+        help="comma-separated endpoints the resolved endpoint must be on; a "
+        "Behörde narrows this to its encapsulated endpoint (default: the "
+        "public Mistral cloud, so the demo runs unconfigured)",
     )
     process.add_argument(
         "--raw-store",
@@ -363,8 +402,27 @@ def _run_process(args: argparse.Namespace, paths: dict[str, Path]) -> int:
         print(f"could not read document '{args.document}': {exc}", file=sys.stderr)
         return 1
 
+    # Endpoint allowlist (K1): resolve the endpoint and the allowlist, then check
+    # the destination before any client is built. An off-list endpoint is a
+    # fail-loud startup abort (exit 2, like the other bootstrap aborts), so
+    # pseudonymized text is never sent to an unvetted destination by accident.
+    # This checked fact is what the narrow PII-masking scope now rests on.
+    if args.mistral_endpoint_allowlist is None:
+        allowlist = DEFAULT_ENDPOINT_ALLOWLIST
+    else:
+        allowlist = tuple(
+            entry.strip()
+            for entry in args.mistral_endpoint_allowlist.split(",")
+            if entry.strip()
+        )
     try:
-        llm = _build_triage_llm()
+        endpoint = check_endpoint_allowed(args.mistral_endpoint, allowlist)
+    except EndpointNotAllowedError as exc:
+        print(f"startup aborted: {exc}", file=sys.stderr)
+        return 2
+
+    try:
+        llm = _build_triage_llm(base_url=endpoint)
     except KeyError:
         print(
             "startup aborted: MISTRAL_API_KEY is not set in the environment",
@@ -386,6 +444,9 @@ def _run_process(args: argparse.Namespace, paths: dict[str, Path]) -> int:
         # hash (ADR-028, M2).
         corpus_id=retrieval.source_revision,
         model_id=TRIAGE_MODEL_ID,
+        # The endpoint the allowlist check admitted: the destination this run's
+        # output is attributable to (K1, ADR-027).
+        endpoint=endpoint,
     )
 
     pipeline = Pipeline(

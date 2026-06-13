@@ -24,9 +24,14 @@ created owner-restricted on POSIX (0o700 / 0o600), best-effort on Windows
 
 Scope (ADR-025, DATA_GOVERNANCE_STATEMENT): only identifying core attributes
 are masked, namely names, phone numbers, email addresses, and IBAN. Locations,
-postal codes, and case numbers are deliberately not masked. Under an
-encapsulated-LLM deployment the masking serves internal data minimization, not
-protection against a third-party processor.
+postal codes, and case numbers are deliberately not masked. The masking serves
+internal data minimization, not protection against a third-party processor.
+That distinction rests on a checked fact, not a prose assumption: the
+composition root resolves the Triage endpoint and verifies it against an
+allowlist at startup (ADR-027, K1; check_endpoint_allowed), so an outbound call
+to an unvetted destination fails loud at the bootstrap line. The narrow scope is
+licensed by that enforced endpoint constraint, not by an unenforced assumption
+that the deployment happens to be encapsulated.
 
 Entity counts follow an explicit contract owned by this module: the anchor and
 analyzer spans are merged into regions (overlapping spans, and whitespace

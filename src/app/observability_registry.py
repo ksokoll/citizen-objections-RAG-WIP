@@ -49,11 +49,13 @@ CLI_EVENTS: Final[frozenset[str]] = frozenset({STARTUP_CONFIG, CLI_UNHANDLED_ERR
 
 #: The composition root's own allowlisted log keys, owned by the root rather
 #: than a context: the startup_config provenance fields (git_sha, model_id,
-#: package_versions, corpus_id, allowlist_size, tracing_enabled, log_format)
-#: and the resolved absolute store paths (app_home, log_dir, raw_store,
-#: audit_log; S5). The corpus_id key keeps its name: it is the briefing
-#: provenance field, recorded in startup_config (ADR-028). Static configuration
-#: provenance, never document content.
+#: package_versions, corpus_id, allowlist_size, tracing_enabled, log_format,
+#: mistral_endpoint) and the resolved absolute store paths (app_home, log_dir,
+#: raw_store, audit_log; S5). The corpus_id key keeps its name: it is the
+#: briefing provenance field, recorded in startup_config (ADR-028). The
+#: mistral_endpoint key records the destination the startup allowlist check
+#: admitted (K1, ADR-027). Static configuration provenance, never document
+#: content.
 CLI_KEYS: Final[frozenset[str]] = frozenset(
     {
         "git_sha",
@@ -63,6 +65,7 @@ CLI_KEYS: Final[frozenset[str]] = frozenset(
         "allowlist_size",
         "tracing_enabled",
         "log_format",
+        "mistral_endpoint",
         "app_home",
         "log_dir",
         "raw_store",

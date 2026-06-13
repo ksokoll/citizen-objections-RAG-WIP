@@ -65,7 +65,7 @@ def test_process_prints_parseable_briefing_json_with_provenance(
     monkeypatch.setattr(
         cli,
         "_build_triage_llm",
-        lambda: FakeLLMClient(parse_response=_TRIAGE_OUTPUT),
+        lambda base_url: FakeLLMClient(parse_response=_TRIAGE_OUTPUT),
     )
     document = tmp_path / "einwendung.txt"
     document.write_text(SAMPLE_EINWENDUNG, encoding="utf-8")
@@ -113,3 +113,7 @@ def test_process_prints_parseable_briefing_json_with_provenance(
     assert startups[0]["corpus_id"] == briefing["corpus_id"]
     assert startups[0]["git_sha"]
     assert startups[0]["model_id"] == cli.TRIAGE_MODEL_ID
+    # The unconfigured demo runs against the default endpoint, and the
+    # destination the allowlist check admitted is recorded in startup_config
+    # (K1, ADR-027).
+    assert startups[0]["mistral_endpoint"] == cli.DEFAULT_MISTRAL_ENDPOINT
