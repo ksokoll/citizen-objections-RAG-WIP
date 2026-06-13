@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from datetime import datetime
 from pathlib import Path
 
@@ -23,13 +24,19 @@ class JsonLinesAuditStore:
     The hash is computed from the canonical serializer (serialization.py) that
     a later verify path will recompute with, so the two cannot diverge.
 
-    Limitations (by design, resolved in later chain phases):
-    - No file locking: concurrent publish() calls are not safe (18b).
-    - No durable append: a crash mid-write produces a corrupt line, and the
-      head advances only after a successful write but without fsync (18b).
-    - The head is re-seeded from the file at open and the O(n) duplicate check
-      re-reads the file on every publish(); the in-memory head becomes the sole
-      mechanism, replacing both reads, in 18b.
+    Durability and the chain head (ADR-030):
+    - Durable append: each line is flushed and fsynced to stable storage before
+      the in-memory head advances, so a crash can never leave the head asserting
+      an event the disk lacks.
+    - The in-memory head (last hash, last sequence) is the sole duplicate
+      mechanism: publish() does not scan the file. The file is read only at
+      open, to seed the head.
+
+    Limitations (resolved later in this round / a later phase):
+    - No file locking yet: concurrent publish() calls are not serialized (the
+      next commit adds the single-writer advisory lock).
+    - A damaged last line is not yet recovered (the recovery commit adds
+      quarantine plus a recovery event).
     """
 
     def __init__(self, path: Path) -> None:
@@ -51,37 +58,55 @@ class JsonLinesAuditStore:
 
         The store owns the chain fields: it assigns the next sequence number and
         the chained hash from its in-memory head, overwriting any values the
-        caller set on them, then writes the event and advances the head. The
-        head advances only after a successful write, so a failed append does not
-        leave the in-memory chain ahead of disk.
+        caller set on them, then durably appends the event and advances the
+        head. The write is flushed and fsynced to disk before the head advances
+        (ADR-030), so the head never claims an event the disk lacks; and the head
+        advances only on success, so a failed append leaves the in-memory chain
+        level with disk rather than ahead of it.
+
+        The in-memory head is the sole duplicate mechanism (ADR-030): publish no
+        longer scans the file, so a run of n events is no longer O(n^2). The file
+        is read only at open, to seed the head. A re-published event_id is
+        therefore not detected here; the pipeline keys each event with a fresh
+        id, so this is a deliberate trade, not a gap (ADR-030).
 
         Args:
             event: The audit event to record. Its sequence_number and event_hash
                 are assigned here; the caller supplies content, not chain fields.
 
         Raises:
-            AuditLogError: If event_id already exists (duplicate prevention) or
-                if an I/O failure prevents reading or appending. Raw OSErrors are
-                wrapped so callers (Pipeline._emit, ADR-027) can route a store
-                failure as the recoverable class without depending on stdlib
-                exception types.
+            AuditLogError: If an I/O failure prevents the durable append. Raw
+                OSErrors are wrapped so callers (Pipeline._emit, ADR-027) can
+                route a store failure as the recoverable class without depending
+                on stdlib exception types.
         """
-        # TODO(18b): replace the O(n) duplicate check with the in-memory head
-        try:
-            existing = self._read_all()
-        except OSError as exc:
-            raise AuditLogError(
-                f"failed to read the audit store at {self._path}"
-            ) from exc
-        for existing_event in existing:
-            if existing_event.event_id == event.event_id:
-                raise AuditLogError(f"Duplicate event_id: {event.event_id}")
+        self._append_durably(event)
 
+    def _append_durably(self, event: AuditEvent) -> None:
+        """Chain, durably write, then advance the head: the append invariant.
+
+        The ordering is the durability guarantee (ADR-030): write the line,
+        flush the Python buffer, os.fsync the file descriptor so the bytes reach
+        stable storage, and only then advance the in-memory head. The head is
+        the claim that an event exists, so advancing it strictly after the fsync
+        means the claim never precedes its evidence on disk. Any failure before
+        the head-advance raises and leaves the head where it was, so a failed
+        append never puts the in-memory chain ahead of the file.
+
+        Args:
+            event: The caller's event, before its chain fields are assigned.
+
+        Raises:
+            AuditLogError: If writing or fsyncing the line fails. The OSError is
+                wrapped and chained so the boundary contract holds (ADR-027).
+        """
         chained = self._chain(event)
 
         try:
             with self._path.open("a", encoding="utf-8") as f:
                 f.write(chained.model_dump_json() + "\n")
+                f.flush()
+                os.fsync(f.fileno())
         except OSError as exc:
             raise AuditLogError(
                 f"failed to append audit event {event.event_id}"

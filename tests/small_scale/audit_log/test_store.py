@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -77,13 +78,78 @@ def test_publish_translates_io_failure_into_audit_log_error(tmp_path: Path) -> N
     assert isinstance(exc_info.value.__cause__, OSError)
 
 
-def test_publish_duplicate_event_id_raises(tmp_path: Path) -> None:
-    store = JsonLinesAuditStore(tmp_path / "audit.jsonl")
-    event = _make_event()
-    store.publish(event)
+def test_fsync_precedes_the_head_advance(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Given a publish, when its fsync runs, then the in-memory head still points
+    at the previous event; only after the publish returns has it advanced.
 
-    with pytest.raises(AuditLogError, match="Duplicate event_id"):
-        store.publish(event)
+    fsync-before-head-advance is the durability invariant (ADR-030): the head is
+    the claim that an event exists, so it must not advance until the bytes are on
+    stable storage. Observing the head at fsync time is the seam that proves the
+    order.
+    """
+    store = JsonLinesAuditStore(tmp_path / "audit.jsonl")
+    store.publish(_make_event(einwendungs_id="EW-001"))  # head is now at seq 0
+
+    captured: dict[str, int | None] = {}
+    real_fsync = os.fsync
+
+    def recording_fsync(fd: int) -> None:
+        # The head must not yet reflect the event whose bytes we are fsyncing.
+        captured["head_sequence_at_fsync"] = store._head_sequence
+        real_fsync(fd)
+
+    monkeypatch.setattr(os, "fsync", recording_fsync)
+    store.publish(_make_event(einwendungs_id="EW-002"))  # should advance to seq 1
+
+    assert captured["head_sequence_at_fsync"] == 0
+    assert store._head_sequence == 1
+
+
+def test_a_write_failing_before_fsync_leaves_the_head_unadvanced(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Given a publish whose fsync fails, when it raises, then the head has not
+    advanced: a failed durable append leaves the in-memory chain level with disk,
+    never ahead of it (ADR-030).
+    """
+    store = JsonLinesAuditStore(tmp_path / "audit.jsonl")
+    store.publish(_make_event(einwendungs_id="EW-001"))
+    head_sequence_before = store._head_sequence
+    head_hash_before = store._head_hash
+
+    def failing_fsync(fd: int) -> None:
+        raise OSError("simulated fsync failure before the head advances")
+
+    monkeypatch.setattr(os, "fsync", failing_fsync)
+    with pytest.raises(AuditLogError):
+        store.publish(_make_event(einwendungs_id="EW-002"))
+
+    assert store._head_sequence == head_sequence_before
+    assert store._head_hash == head_hash_before
+
+
+def test_publish_does_not_read_the_whole_file_per_append(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Given a published event, when another is published, then publish does not
+    scan the whole file: the in-memory head is the sole duplicate mechanism, so
+    the O(n^2) per-append read of 18a is gone (ADR-030).
+    """
+    path = tmp_path / "audit.jsonl"
+    store = JsonLinesAuditStore(path)
+    store.publish(_make_event(einwendungs_id="EW-001"))
+
+    def _boom(*args: object, **kwargs: object) -> list[AuditEvent]:
+        raise AssertionError("publish must not read the whole file per append")
+
+    monkeypatch.setattr(store, "_read_all", _boom)
+    store.publish(_make_event(einwendungs_id="EW-002"))  # must not call _read_all
+
+    # Read the file directly (query() legitimately reads; only publish must not).
+    lines = path.read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 2
 
 
 def test_query_by_einwendungs_id(tmp_path: Path) -> None:
