@@ -220,6 +220,23 @@ class ObservabilityBootstrapError(Exception):
     """
 
 
+class UnregisteredLogKeyError(Exception):
+    """Raised in strict mode when a registered own event carries a key that is
+    not in ALLOWED_KEYS.
+
+    The key allowlist is default-deny: a non-allowlisted key is dropped before
+    the record is rendered (ADR-026). In strict mode (the test suite) that
+    silent drop becomes a loud failure, the sibling of UnregisteredLogEventError
+    for keys rather than for event names, so a mistyped or unallowlisted field
+    fails in CI at its origin instead of vanishing from the line. The fix is to
+    allowlist the key in ALLOWED_KEYS on purpose, not to suppress the error.
+
+    Foreign stdlib records are exempt: their fields are governed by origin
+    (extras are never merged into the event dict), so the raise is gated on our
+    own events via the _from_structlog discriminant.
+    """
+
+
 def _is_strict() -> bool:
     """Return whether runtime enforcement is strict (read live, per call).
 
@@ -451,7 +468,31 @@ def _filter_allowlist(
     for own-code and structlog-internal keys rather than the foreign-extra gate.
     The two ProcessorFormatter meta keys are preserved so the formatter can
     strip them itself after this point.
+
+    Mode-dependent, the sibling of the event-vocabulary check (ADR-026, phase
+    separation):
+
+    - Strict mode (the test suite): an own event carrying a key that is neither
+      allowlisted nor a formatter meta key raises UnregisteredLogKeyError, so a
+      mistyped or unallowlisted field fails in CI instead of being dropped
+      silently. Gated on own code via the _from_structlog discriminant: a
+      foreign record never raises.
+    - Production: the non-allowlisted key is dropped, never raised, so a stray
+      key can never abort the request path (unbreakable runtime).
+
+    Raises:
+        UnregisteredLogKeyError: In strict mode, if an own event carries a key
+            that is not in ALLOWED_KEYS or _META_KEYS.
     """
+    is_own_event = event_dict.get("_from_structlog") is not False
+    if _is_strict() and is_own_event:
+        for key in event_dict:
+            if key not in ALLOWED_KEYS and key not in _META_KEYS:
+                raise UnregisteredLogKeyError(
+                    f"log key {key!r} on event {event_dict.get('event')!r} is "
+                    "not allowlisted; add it to "
+                    "observability.logging_config.ALLOWED_KEYS"
+                )
     return {
         key: value
         for key, value in event_dict.items()

@@ -36,6 +36,8 @@ from app.observability.logging_config import (
     MAX_FOREIGN_EVENT_CHARS,
     ObservabilityBootstrapError,
     ProcessorChainError,
+    UnregisteredLogKeyError,
+    _filter_allowlist,
     _OwnerOnlyTimedRotatingFileHandler,
     configure_logging,
     never_raise,
@@ -218,6 +220,75 @@ def test_unregistered_structlog_event_name_raises(
 
     with pytest.raises(UnregisteredLogEventError):
         log.info("ad.hoc.unregistered.event", count=1)
+
+
+def test_unregistered_key_on_a_registered_event_raises_in_strict_mode(
+    log_sink: Callable[[], list[dict]],
+) -> None:
+    """A registered event carrying a non-allowlisted key fails loudly (strict).
+
+    The sibling of the event-name check: in strict mode a key that is not in
+    ALLOWED_KEYS does not vanish silently from the line, it raises
+    UnregisteredLogKeyError at the allowlist processor, so a mistyped or
+    unallowlisted field is caught in CI at its origin (ADR-026, enforcement at
+    origin). The registered event passes the vocabulary check first, so the
+    raise is attributable to the key, not the name.
+    """
+    log = structlog.get_logger()
+
+    with pytest.raises(UnregisteredLogKeyError):
+        log.error(AUDIT_APPEND_FAILED, not_an_allowlisted_key="x")
+
+
+def test_unregistered_key_is_dropped_in_production_and_the_line_survives(
+    log_sink: Callable[[], list[dict]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With strict off, a non-allowlisted key is dropped, the rest survives.
+
+    Production keeps the silent default-deny drop (unbreakable runtime): the
+    unallowlisted key and its value are absent, while the event and its
+    allowlisted fields reach the sink. A stray key must never abort the request
+    path. The log_sink fixture is requested before monkeypatch so its teardown
+    restores a clean configuration after the monkeypatch is undone.
+    """
+    monkeypatch.delenv("OBSERVABILITY_STRICT", raising=False)
+
+    structlog.get_logger().error(
+        AUDIT_APPEND_FAILED,
+        audit_event_type="triage",
+        leaked="citizen Max Mustermann",
+    )
+
+    lines = log_sink()
+    assert len(lines) == 1
+    record = lines[0]
+    assert record["event"] == AUDIT_APPEND_FAILED
+    assert record["audit_event_type"] == "triage"
+    assert "leaked" not in record
+    assert "Max Mustermann" not in json.dumps(record)
+
+
+def test_foreign_record_with_a_stray_key_is_dropped_not_raised_in_strict_mode() -> None:
+    """The strict key-raise is gated on own code; a foreign record never raises.
+
+    The discriminant: a foreign record (``_from_structlog`` is False) carrying a
+    non-allowlisted key is dropped silently even in strict mode, because foreign
+    fields are governed by origin and the loud failure targets our own events
+    only. Asserted on the processor directly, since the chain never merges a
+    foreign extra into the event dict to begin with (the only way to present
+    one here).
+    """
+    foreign_record = {
+        "event": "presidio analysis complete",
+        "_from_structlog": False,
+        "pii_field": "Max Mustermann",
+    }
+
+    result = _filter_allowlist(None, "error", dict(foreign_record))
+
+    assert "pii_field" not in result
+    assert result["event"] == "presidio analysis complete"
 
 
 def test_configure_raises_when_allowlist_missing_from_chain(

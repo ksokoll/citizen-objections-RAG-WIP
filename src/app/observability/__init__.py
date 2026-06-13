@@ -27,6 +27,7 @@ from app.observability.events import (
 from app.observability.logging_config import (
     ObservabilityBootstrapError,
     ProcessorChainError,
+    UnregisteredLogKeyError,
     configure_logging,
     sweep_expired_logs,
 )
@@ -37,6 +38,7 @@ __all__ = [
     "ObservabilityBootstrapError",
     "ProcessorChainError",
     "UnregisteredLogEventError",
+    "UnregisteredLogKeyError",
     "configure_logging",
     "correlation_scope",
     "get_correlation_id",
