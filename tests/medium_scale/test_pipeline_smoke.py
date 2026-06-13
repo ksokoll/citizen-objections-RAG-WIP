@@ -85,7 +85,7 @@ class TestPipelineSmoke:
                 masker=FakePiiMasker(),
             ),
             triage=EmptyTriageService(llm=FakeLLMClient()),
-            retrieval=FakeRetriever(corpus_id="corpus-id-kein-treffer-test"),
+            retrieval=FakeRetriever(source_revision="corpus-id-kein-treffer-test"),
             briefing=BriefingService(),
             audit=AuditLogService(store=audit_store),
         )

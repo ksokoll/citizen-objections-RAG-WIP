@@ -84,7 +84,7 @@ def test_injected_empty_argument_list_raises_the_contradiction_signal(
         triage=TriageService(
             llm=FakeLLMClient(parse_response=LLMTriageOutput(argumente=[]))
         ),
-        retrieval=FakeRetriever(corpus_id="corpus-id-prompt-boundary-test"),
+        retrieval=FakeRetriever(source_revision="corpus-id-prompt-boundary-test"),
         briefing=BriefingService(),
         audit=AuditLogService(store=audit_store),
     )

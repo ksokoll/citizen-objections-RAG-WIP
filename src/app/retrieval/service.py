@@ -34,16 +34,17 @@ class NormRetrievalService:
 
     Attributes:
         _exact: Map from paragraph-level canonical key to its paragraph.
-        _corpus_id: Content identifier of the corpus behind _exact.
+        _corpus_id: SHA-256 content identifier of the corpus behind _exact,
+            returned as this implementation's source_revision.
     """
 
     def __init__(self, corpus: LoadedCorpus) -> None:
         """Build the exact-match lookup from a loaded corpus.
 
         The service is built from the LoadedCorpus value type, never from a
-        bare paragraph list plus a separate id string, so the corpus_id it
-        exposes is the one computed over exactly the paragraphs it resolves
-        against (ADR-028, provenance).
+        bare paragraph list plus a separate id string, so the source_revision
+        it exposes is the corpus hash computed over exactly the paragraphs it
+        resolves against (ADR-028, provenance).
 
         Args:
             corpus: The loaded corpus whose paragraphs are keyed by their
@@ -53,8 +54,13 @@ class NormRetrievalService:
         self._corpus_id = corpus.corpus_id
 
     @property
-    def corpus_id(self) -> str:
-        """Content identifier of the statute corpus this service resolves against."""
+    def source_revision(self) -> str:
+        """Source identifier this service resolves against (the corpus hash).
+
+        Satisfies the Retriever protocol's neutral source_revision member
+        (ADR-028, M2). For this corpus-based implementation the value is the
+        SHA-256 corpus hash; the term generalizes, the value does not change.
+        """
         return self._corpus_id
 
     @traced(stage="retrieval")

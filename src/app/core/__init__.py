@@ -15,7 +15,6 @@ from .failures import (
 from .protocols import (
     AuditEventPublisherProtocol,
     LLMClientProtocol,
-    Retriever,
 )
 from .results import (
     IngestionResult,
@@ -41,5 +40,4 @@ __all__ = [
     # Protocols
     "AuditEventPublisherProtocol",
     "LLMClientProtocol",
-    "Retriever",
 ]

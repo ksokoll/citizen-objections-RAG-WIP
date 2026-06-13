@@ -376,7 +376,11 @@ def _run_process(args: argparse.Namespace, paths: dict[str, Path]) -> int:
     _emit_startup_config(
         log_format=args.log_format,
         paths=paths,
-        corpus_id=retrieval.corpus_id,
+        # The startup_config corpus_id field keeps its name (provenance of the
+        # statute corpus, ADR-026); its value is the retriever's
+        # source_revision, which for this corpus-based retriever is the corpus
+        # hash (ADR-028, M2).
+        corpus_id=retrieval.source_revision,
         model_id=TRIAGE_MODEL_ID,
     )
 

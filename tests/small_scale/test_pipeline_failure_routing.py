@@ -99,7 +99,7 @@ def test_invalid_catalog_id_from_the_llm_seam_ends_as_pipeline_fehler(
             masker=FakePiiMasker(),
         ),
         triage=TriageService(llm=SeamFaithfulLLMClient(_INVALID_CATALOG_RESPONSE)),
-        retrieval=FakeRetriever(corpus_id="corpus-id-failure-routing-test"),
+        retrieval=FakeRetriever(source_revision="corpus-id-failure-routing-test"),
         briefing=BriefingService(),
         audit=AuditLogService(store=audit_store),
     )

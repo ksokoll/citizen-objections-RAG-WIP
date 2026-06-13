@@ -34,7 +34,6 @@ from app.core.failures import (
     RetrievalError,
     TriageError,
 )
-from app.core.protocols import Retriever
 from app.core.results import TriageResult
 from app.document_ingestion.service import DocumentIngestionService
 from app.observability import correlation_scope
@@ -48,6 +47,7 @@ from app.observability.metrics import (
     observe_arguments_per_objection,
 )
 from app.observability.tracing import clear_finished_spans, traced
+from app.retrieval.protocols import Retriever
 from app.triage.service import TriageService
 
 _log = structlog.get_logger()
@@ -59,11 +59,12 @@ class Pipeline:
     Attributes:
         _ingestion: DocumentIngestion BC.
         _triage: Triage BC.
-        _retrieval: Retrieval BC (via the Retriever Protocol). Owns the
-            corpus identity: the corpus_id stamped into every briefing is
-            read from the retriever, so the provenance is structurally that
-            of the corpus actually resolved against; no separate id
-            parameter exists to lie with (ADR-028).
+        _retrieval: Retrieval BC (via the Retriever Protocol, imported from
+            the retrieval context). Owns the source identity: the
+            source_revision stamped into every briefing is read from the
+            retriever, so the provenance is structurally that of the source
+            actually resolved against; no separate id parameter exists to lie
+            with (ADR-028).
         _briefing: Briefing BC.
         _audit: AuditLog BC.
     """
@@ -170,7 +171,7 @@ class Pipeline:
                     einwendungs_typ=triage_result.einwendungs_typ.value,
                     arguments=arguments,
                     norms_by_argument=norms_by_argument,
-                    corpus_id=self._retrieval.corpus_id,
+                    corpus_id=self._retrieval.source_revision,
                     created_at=datetime.now(UTC),
                 )
 

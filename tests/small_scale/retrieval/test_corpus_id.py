@@ -8,8 +8,9 @@ different id. Small tests: pure hashing over in-memory entities, no XML.
 
 from __future__ import annotations
 
-from app.retrieval.entities import GesetzParagraph
+from app.retrieval.entities import GesetzParagraph, LoadedCorpus
 from app.retrieval.gesetz_xml_loader import compute_corpus_id
+from app.retrieval.service import NormRetrievalService
 
 
 def _paragraph(
@@ -70,3 +71,16 @@ def test_corpus_id_changes_when_a_paragraph_is_removed():
 
     # When/Then: a missing or corrupt paragraph is detectable
     assert compute_corpus_id(_CORPUS) != compute_corpus_id(truncated)
+
+
+def test_service_source_revision_is_the_loaded_corpus_hash():
+    # Given: a retrieval service built from a loaded corpus and its hash
+    corpus_hash = compute_corpus_id(_CORPUS)
+    service = NormRetrievalService(
+        LoadedCorpus(paragraphs=_CORPUS, corpus_id=corpus_hash)
+    )
+
+    # When/Then: the protocol's source_revision is exactly the corpus hash, so
+    # the generalized contract term still carries the corpus identity (ADR-028,
+    # M2): the term generalized, the value did not change.
+    assert service.source_revision == corpus_hash
