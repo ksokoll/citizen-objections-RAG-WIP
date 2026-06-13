@@ -146,6 +146,9 @@ class Pipeline:
                     {
                         "argument_count": len(triage_result.extracted_arguments),
                         "contradiction_detected": triage_result.contradiction_detected,
+                        "substance_threshold_exceeded": (
+                            triage_result.substance_threshold_exceeded
+                        ),
                     },
                 )
 

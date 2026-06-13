@@ -7,14 +7,20 @@ configuring `FakeLLMClient.parse_response` with an explicit
 describe what each block verifies.
 """
 
+import json
+import logging
+from pathlib import Path
+
 import pytest
 from pydantic import BaseModel
 
 from app.core import EinwendungsTyp
 from app.core.failures import LLMError, LLMParseError, TriageError
+from app.observability.logging_config import LOG_FILENAME, configure_logging
 from app.triage.classification import classify_einwendungs_typ
+from app.triage.events import TRIAGE_SUBSTANCE_THRESHOLD
 from app.triage.llm_schema import LLMArgument, LLMTriageOutput
-from app.triage.service import TriageService
+from app.triage.service import SUBSTANCE_THRESHOLD_CHARS, TriageService
 from tests.conftest import FakeLLMClient
 
 
@@ -214,6 +220,118 @@ class TestContradictionCheck:
 
         # Then no contradiction is flagged
         assert result.contradiction_detected is False
+
+
+class TestSubstanceThreshold:
+    """A substantial text with no arguments is a review signal on its own (H2).
+
+    The 16.1 contradiction signal fires only when the deterministic extractor
+    finds citable norms. The length backstop covers the gap: a substantive prose
+    objection without paragraph notation that the LLM returns as zero arguments
+    is flagged for review instead of shipping silently as KEIN_TREFFER.
+    """
+
+    #: Substantive prose well over the threshold, with no paragraph citation, so
+    #: the deterministic extractor finds no norm: the case the contradiction
+    #: signal cannot see.
+    _SUBSTANTIVE_PROSE = (
+        "Wir wenden uns mit Nachdruck gegen die geplante Anlage. Die zu "
+        "erwartende Belastung für die Anwohnerschaft ist aus unserer Sicht "
+        "unzumutbar, der Verkehr nimmt erheblich zu, und die Erholungsfunktion "
+        "des Gebiets geht verloren. Das Vorhaben widerspricht dem Charakter des "
+        "Ortes und den berechtigten Interessen der hier lebenden Menschen. Wir "
+        "bitten die Behörde eindringlich, diese Bedenken ernst zu nehmen und das "
+        "Verfahren nicht über die Köpfe der Betroffenen hinweg fortzuführen. "
+        "Über Jahrzehnte gewachsene Strukturen dürfen nicht leichtfertig einem "
+        "einzelnen Vorhaben geopfert werden, das der Allgemeinheit keinen "
+        "erkennbaren Mehrwert bringt."
+    )
+
+    def test_substantial_text_with_no_arguments_sets_the_flag(self) -> None:
+        # Given a long prose objection without any paragraph citation and an LLM
+        # returning no arguments
+        assert "§" not in self._SUBSTANTIVE_PROSE
+        assert len(self._SUBSTANTIVE_PROSE) >= SUBSTANCE_THRESHOLD_CHARS
+        fake_llm = FakeLLMClient(parse_response=LLMTriageOutput(argumente=[]))
+        service = TriageService(llm=fake_llm)
+
+        # When triage runs
+        result = service.triage(self._SUBSTANTIVE_PROSE)
+
+        # Then the substance-threshold flag is set, and the contradiction flag is
+        # not (no norm was cited): the backstop caught what the contradiction
+        # signal could not see
+        assert result.substance_threshold_exceeded is True
+        assert result.contradiction_detected is False
+
+    def test_short_empty_text_does_not_set_the_flag(self) -> None:
+        # Given a short text below the threshold and an LLM returning no arguments
+        fake_llm = FakeLLMClient(parse_response=LLMTriageOutput(argumente=[]))
+        service = TriageService(llm=fake_llm)
+
+        # When triage runs (a legitimate short TYP_1 non-substance document)
+        result = service.triage("Ich bin einfach dagegen.")
+
+        # Then neither the threshold nor the contradiction flag is set
+        assert result.substance_threshold_exceeded is False
+        assert result.contradiction_detected is False
+
+    def test_substantial_text_with_arguments_does_not_set_the_flag(self) -> None:
+        # Given a long text from which the LLM does extract an argument
+        quote = self._SUBSTANTIVE_PROSE[:120]
+        fake_llm = FakeLLMClient(
+            parse_response=LLMTriageOutput(
+                argumente=[
+                    LLMArgument(
+                        catalog_id=None,
+                        einwendungs_typ=EinwendungsTyp.TYP_1,
+                        argument_text="Unzumutbare Belastung der Anwohnerschaft",
+                        original_zitat=quote,
+                    ),
+                ]
+            )
+        )
+        service = TriageService(llm=fake_llm)
+
+        # When triage runs
+        result = service.triage(self._SUBSTANTIVE_PROSE)
+
+        # Then the threshold flag stays clear: the signal is about an empty
+        # extraction, not about length alone
+        assert result.substance_threshold_exceeded is False
+
+    def test_threshold_event_reaches_the_sink_with_length_and_no_content(
+        self, tmp_path: Path
+    ) -> None:
+        # Given the governed sink redirected to a tmp path under the autouse
+        # strict mode, and a substantial empty-extraction document
+        configure_logging(log_dir=tmp_path, fmt="json")
+        fake_llm = FakeLLMClient(parse_response=LLMTriageOutput(argumente=[]))
+        service = TriageService(llm=fake_llm)
+
+        # When triage runs (this does not raise: clean_text_length is declared in
+        # TRIAGE_KEYS, so the field passes the strict default-deny allowlist; an
+        # undeclared field would raise UnregisteredLogKeyError here)
+        service.triage(self._SUBSTANTIVE_PROSE)
+
+        # Then exactly one threshold event reached the sink, carrying the
+        # tripping character length and none of the document text
+        for handler in logging.getLogger().handlers:
+            handler.flush()
+        lines = [
+            json.loads(line)
+            for line in (tmp_path / LOG_FILENAME)
+            .read_text(encoding="utf-8")
+            .splitlines()
+            if line.strip()
+        ]
+        configure_logging(log_dir=tmp_path, fmt="json")
+        threshold_events = [
+            line for line in lines if line["event"] == TRIAGE_SUBSTANCE_THRESHOLD
+        ]
+        assert len(threshold_events) == 1
+        assert threshold_events[0]["clean_text_length"] == len(self._SUBSTANTIVE_PROSE)
+        assert "Anwohnerschaft" not in json.dumps(lines)
 
 
 class _RaisingLLMClient:
