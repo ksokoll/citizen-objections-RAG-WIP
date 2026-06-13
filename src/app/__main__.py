@@ -66,9 +66,13 @@ from app.observability import (
     ProcessorChainError,
     configure_logging,
 )
-from app.observability.events import CLI_UNHANDLED_ERROR, STARTUP_CONFIG
 from app.observability.logging_config import ALLOWED_KEYS, ENV_STRICT
 from app.observability.tracing import ENV_TRACING, set_tracing_enabled, tracing_enabled
+from app.observability_registry import (
+    CLI_UNHANDLED_ERROR,
+    STARTUP_CONFIG,
+    register_observability_vocabulary,
+)
 from app.pipeline import Pipeline
 from app.retrieval.gesetz_xml_loader import load_corpus
 from app.retrieval.service import NormRetrievalService
@@ -433,10 +437,16 @@ def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
     paths = _resolve_paths(args)
 
+    # Assemble the event vocabulary the logging chain enforces against, before
+    # any event can flow: observability holds the mechanism, the root unions in
+    # each context's declared events plus the CLI's own (H2). Idempotent.
+    register_observability_vocabulary()
+
     # Behavior flags are resolved once here at the root and wired in, never read
-    # live from the environment deep in the observability stack (finding 8).
-    # Strict mode is forwarded to configure_logging; tracing is wired so the
-    # @traced decorator and the startup_config record see the same value.
+    # live from the environment deep in the observability stack (ADR-026,
+    # composition-root wiring). Strict mode is forwarded to configure_logging;
+    # tracing is wired so the @traced decorator and the startup_config record
+    # see the same value.
     strict = os.environ.get(ENV_STRICT) == "1"
     set_tracing_enabled(os.environ.get(ENV_TRACING) == "1")
 

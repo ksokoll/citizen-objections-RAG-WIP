@@ -17,8 +17,9 @@ The controls at the sink:
   rendering;
 - a default-deny key allowlist (ALLOWED_KEYS), so a field is invisible until
   it is allowlisted on purpose;
-- a registered event vocabulary (events.REGISTERED_EVENTS), so a structlog
-  event name that is not a registered constant fails loudly;
+- a registered event vocabulary (events.registered_events(), the root-assembled
+  union of each context's declared events), so a structlog event name that is
+  not a registered constant fails loudly;
 - exception reduction to type plus location, so an exception message (foreign
   authored text) is never written to disk.
 
@@ -80,9 +81,9 @@ from app.observability.events import (
     LOG_SINK_SIZE_BYTES,
     LOG_SINK_WORLD_READABLE,
     PROCESSOR_FAILED,
-    REGISTERED_EVENTS,
     UNREGISTERED_LOG_EVENT,
     UnregisteredLogEventError,
+    registered_events,
 )
 
 #: Module logger for the sink self-checks. Routes through the same governed
@@ -381,17 +382,18 @@ def _enforce_event_vocabulary(
 
     Raises:
         UnregisteredLogEventError: In strict mode, if a structlog event name is
-            not in REGISTERED_EVENTS.
+            not in the registered vocabulary (events.registered_events()).
     """
     if event_dict.get("_from_structlog") is False:
         return event_dict
     event_name = event_dict.get("event")
-    if event_name in REGISTERED_EVENTS:
+    if event_name in registered_events():
         return event_dict
     if _is_strict():
         raise UnregisteredLogEventError(
             f"log event {event_name!r} is not a registered constant; "
-            "add it to observability.events.REGISTERED_EVENTS"
+            "declare it in the emitting context's events.py and union it at "
+            "the composition root via register_events"
         )
     # Production: discard the original name (potential payload) and substitute
     # the registered constant plus the caller location. Authoritative stamps

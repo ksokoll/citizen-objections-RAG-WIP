@@ -17,6 +17,7 @@ from app.core.failures import AuditLogError
 from app.document_ingestion.entities import MaskingResult
 from app.document_ingestion.service import DocumentIngestionService
 from app.observability import configure_logging, set_strict_mode
+from app.observability_registry import register_observability_vocabulary
 from app.pipeline import Pipeline
 from app.retrieval.entities import NormWithSource
 from app.triage.llm_schema import LLMArgument, LLMTriageOutput
@@ -34,7 +35,14 @@ def _configured_log_sink(tmp_path_factory: pytest.TempPathFactory) -> None:
     composition-root act. For the test suite that composition root is this
     fixture. Tests that assert at the sink reconfigure to their own tmp path
     via their local log_sink fixtures; configure_logging is idempotent.
+
+    The event vocabulary is a root-assembled union (H2): the test root unions
+    every context's declared events plus the CLI's into the registry the chain
+    enforces against, the same act the CLI performs. Registered here once for
+    the session; the autouse reset re-registers it after clearing the registry
+    so a test cannot leak vocabulary.
     """
+    register_observability_vocabulary()
     configure_logging(log_dir=tmp_path_factory.mktemp("observability-logs"))
 
 

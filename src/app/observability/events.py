@@ -1,51 +1,34 @@
-"""Registered log event vocabulary for the observability layer.
+"""Log event vocabulary mechanism for the observability layer.
 
 Log messages are static, registered constants, never interpolated free text.
 Variable data goes into named, allowlisted fields on the event, not into the
-message string (ADR-026, message policy). This module is the single registry.
-The logging chain rejects any structlog event whose name is not in
-REGISTERED_EVENTS, so a typo or an ad hoc message fails loudly at the sink
-instead of silently widening the vocabulary.
+message string (ADR-026, message policy). The logging chain rejects any
+structlog event whose name is not registered, so a typo or an ad hoc message
+fails loudly at the sink instead of silently widening the vocabulary.
+
+This module holds the enforcement mechanism plus a registration API, not the
+domain vocabulary. Each bounded context declares the event constants it emits
+in its own ``<context>/events.py``; the composition root unions those
+per-context declarations into the registry via register_events. observability
+no longer knows any domain event name (H2): the only constants defined here are
+the layer's own self-instrumentation events, which observability itself emits.
+Those own events seed the registry at import so the instrumentation works
+before any root assembly runs.
 
 Foreign stdlib records (Presidio, OpenTelemetry, urllib3) are not subject to
 this vocabulary: their message text is arbitrary by nature and is governed only
 by the key allowlist and the WARNING clamp.
-
-Round A defines the governed events emitted in this round: the interim
-audit-append failure and the two DocumentIngestion warnings that previously
-escaped to stderr ungoverned. Rounds B and C extend this registry (timing,
-tracing, metrics, custody-write events) deliberately, one constant at a time.
 """
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from typing import Final
-
-#: Interim governed event for a failed audit publish (ADR-027). Emitted at
-#: ERROR by Pipeline._emit in place of the former stderr print. Round C turns
-#: the same call site fail-closed; the log line stays.
-AUDIT_APPEND_FAILED: Final[str] = "audit.append_failed"
-
-#: A persisted raw store is world-accessible on POSIX (DocumentIngestion).
-#: A misconfiguration, not a masking outcome: logged, processing continues.
-INGESTION_RAW_STORE_WORLD_READABLE: Final[str] = "ingestion.raw_store_world_readable"
 
 #: The log sink directory is world-accessible on POSIX (observability). The
 #: logs are a third store of pseudonymous data (ADR-026); the check mirrors the
 #: raw-store world-readable check (ADR-025). Logged as a mode count only.
 LOG_SINK_WORLD_READABLE: Final[str] = "observability.log_sink_world_readable"
-
-#: Deterministic anchor name tokens survived masking in their own zone
-#: (DocumentIngestion). An internal contradiction; logged as a count only,
-#: never the surviving tokens, so the anomaly signal carries no PII.
-INGESTION_PII_COVERAGE_ANOMALY: Final[str] = "ingestion.pii_coverage_anomaly"
-
-#: A stored raw document (unmasked PII) was read back out of the raw store
-#: (DocumentIngestion, Round 16.1, H4/S4). Emitted on every successful
-#: load_raw_document call with the document_id only, never content: the read
-#: path on raw PII leaves an operational trace. The chain-level read audit
-#: event (custody, not telemetry) is Round C work (ADR-027).
-RAW_DOCUMENT_ACCESSED: Final[str] = "ingestion.raw_document_accessed"
 
 #: Size in bytes of the active log sink, emitted once after configuration
 #: (observability). Surfaces the Windows rotation failure mode: if a second
@@ -60,31 +43,11 @@ LOG_SINK_SIZE_BYTES: Final[str] = "observability.log_sink_size_bytes"
 #: processor that failed mid-chain may hold half-processed, untrusted data.
 PROCESSOR_FAILED: Final[str] = "observability.processor_failed"
 
-#: The active toolset at startup, emitted once by the CLI composition root
-#: after a successful bootstrap (Round B). Records what produced the run's
-#: output: git_sha, model_id, package versions, corpus_id, allowlist size,
-#: tracing flag, and log format. Operational provenance, never payload.
-STARTUP_CONFIG: Final[str] = "app.startup_config"
-
-#: An unexpected exception reached the CLI dispatch boundary (Round 16.1,
-#: S1/M4). Emitted at ERROR by the entrypoint catch-all before the process
-#: exits 1; the exception is reduced to type plus location by the chain and
-#: its message (foreign-authored text) is never written. The stderr line the
-#: user sees carries the type only, no detail and no traceback.
-CLI_UNHANDLED_ERROR: Final[str] = "app.unhandled_error"
-
-#: The deterministic extractor found norm citations but the LLM returned an
-#: empty argument list (Triage, Round 16.1, S3). An internal contradiction
-#: and the observable signature of a prompt-injected suppression: a document
-#: that cites norms has legal substance by the prompt's own definition.
-#: Logged as the event only, no fields; the document text never travels.
-TRIAGE_CONTRADICTION_DETECTED: Final[str] = "triage.contradiction_detected"
-
 #: Timing of one instrumented stage, emitted by the @traced decorator on
-#: every invocation regardless of the tracing flag (observability, Round B).
-#: Carries the stage name, duration_ms, and status ok or error; on error the
-#: exception is reduced to type plus location by the chain. Timing must not
-#: depend on tracing (ADR-023).
+#: every invocation regardless of the tracing flag (observability). Carries the
+#: stage name, duration_ms, and status ok or error; on error the exception is
+#: reduced to type plus location by the chain. Timing must not depend on
+#: tracing (ADR-023).
 STAGE_TIMING: Final[str] = "observability.stage_timing"
 
 #: An own-code structlog event whose name was not a registered constant, seen
@@ -95,28 +58,70 @@ STAGE_TIMING: Final[str] = "observability.stage_timing"
 #: catches every typo (ADR-026, enforcement at origin).
 UNREGISTERED_LOG_EVENT: Final[str] = "observability.unregistered_log_event"
 
-REGISTERED_EVENTS: Final[frozenset[str]] = frozenset(
+#: The observability layer's own self-instrumentation events. These are the
+#: mechanism's own vocabulary, not domain knowledge, so they live here and seed
+#: the registry at import time: a degraded-event substitution or a sink
+#: self-check must work before any composition root unions the context
+#: registries in.
+OBSERVABILITY_EVENTS: Final[frozenset[str]] = frozenset(
     {
-        AUDIT_APPEND_FAILED,
-        CLI_UNHANDLED_ERROR,
-        INGESTION_RAW_STORE_WORLD_READABLE,
         LOG_SINK_WORLD_READABLE,
-        INGESTION_PII_COVERAGE_ANOMALY,
-        RAW_DOCUMENT_ACCESSED,
         LOG_SINK_SIZE_BYTES,
         PROCESSOR_FAILED,
         STAGE_TIMING,
-        STARTUP_CONFIG,
-        TRIAGE_CONTRADICTION_DETECTED,
         UNREGISTERED_LOG_EVENT,
     }
 )
 
+#: The live registry the chain enforces against, assembled at runtime. Seeded
+#: with the layer's own events; the composition root adds each context's
+#: declared events via register_events. Mutable on purpose: the registry is a
+#: union built at the root, not a frozen central god-list (H2). The reset hook
+#: returns it to the seed between tests.
+_registered_events: set[str] = set(OBSERVABILITY_EVENTS)
+
+
+def register_events(events: Iterable[str]) -> None:
+    """Union a set of event constants into the live registry.
+
+    Called by the composition root with each context's declared events
+    (TRIAGE_EVENTS, INGESTION_EVENTS, ...) plus the root's own CLI events.
+    Idempotent: registering the same events twice is a no-op union, so two
+    roots (the CLI and the test conftest) calling it does not double-count.
+
+    Args:
+        events: Event-name constants to register.
+    """
+    _registered_events.update(events)
+
+
+def registered_events() -> frozenset[str]:
+    """Return the currently registered event vocabulary.
+
+    The logging chain consults this rather than a module-level frozen set, so
+    the registry is the root-assembled union of the layer's own events and the
+    per-context declarations (H2).
+    """
+    return frozenset(_registered_events)
+
+
+def reset_registered_events() -> None:
+    """Reset the registry to the layer's own events (test hook).
+
+    Returns the registry to its import-time seed (the observability self
+    events), discarding any context events a root unioned in. Part of the
+    symmetric between-tests reset so a test that registers an event cannot leak
+    its vocabulary into a later test.
+    """
+    _registered_events.clear()
+    _registered_events.update(OBSERVABILITY_EVENTS)
+
 
 class UnregisteredLogEventError(Exception):
-    """Raised when a structlog event name is not in REGISTERED_EVENTS.
+    """Raised when a structlog event name is not registered.
 
     Signals a message-policy violation: an event was logged with a name that
-    is not a registered static constant. The fix is to register the constant
-    in this module, not to suppress the error.
+    is not a registered static constant. The fix is to declare the constant in
+    the emitting context's events.py and union it at the composition root, not
+    to suppress the error.
     """

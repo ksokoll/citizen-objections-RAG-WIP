@@ -14,9 +14,9 @@ import pytest
 import structlog
 from presidio_analyzer import RecognizerResult
 
+from app.document_ingestion.events import INGESTION_PII_COVERAGE_ANOMALY
 from app.document_ingestion.presidio_masker import PresidioMasker
 from app.document_ingestion.zone_extractor import ZoneExtraction
-from app.observability.events import INGESTION_PII_COVERAGE_ANOMALY
 
 
 def _person_span(text: str, substring: str) -> RecognizerResult:

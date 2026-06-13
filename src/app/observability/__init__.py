@@ -20,9 +20,10 @@ from app.observability.correlation import (
     set_correlation_id,
 )
 from app.observability.events import (
-    AUDIT_APPEND_FAILED,
-    REGISTERED_EVENTS,
     UnregisteredLogEventError,
+    register_events,
+    registered_events,
+    reset_registered_events,
 )
 from app.observability.logging_config import (
     ObservabilityBootstrapError,
@@ -34,8 +35,6 @@ from app.observability.logging_config import (
 )
 
 __all__ = [
-    "AUDIT_APPEND_FAILED",
-    "REGISTERED_EVENTS",
     "ObservabilityBootstrapError",
     "ProcessorChainError",
     "UnregisteredLogEventError",
@@ -43,7 +42,10 @@ __all__ = [
     "configure_logging",
     "correlation_scope",
     "get_correlation_id",
+    "register_events",
+    "registered_events",
     "reset_correlation_id",
+    "reset_registered_events",
     "set_correlation_id",
     "set_strict_mode",
     "sweep_expired_logs",

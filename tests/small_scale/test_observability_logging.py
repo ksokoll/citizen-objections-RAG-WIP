@@ -21,10 +21,10 @@ from pathlib import Path
 import pytest
 import structlog
 
+from app.audit_log.events import AUDIT_APPEND_FAILED
 from app.observability import logging_config
 from app.observability.correlation import correlation_scope
 from app.observability.events import (
-    AUDIT_APPEND_FAILED,
     LOG_SINK_SIZE_BYTES,
     PROCESSOR_FAILED,
     UNREGISTERED_LOG_EVENT,

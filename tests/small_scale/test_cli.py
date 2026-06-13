@@ -19,16 +19,13 @@ import pytest
 
 import app.__main__ as cli
 from app.__main__ import main
+from app.document_ingestion.events import RAW_DOCUMENT_ACCESSED
 from app.document_ingestion.service import (
     MAX_RAW_TEXT_CHARS,
     DocumentIngestionService,
 )
-from app.observability.events import (
-    CLI_UNHANDLED_ERROR,
-    RAW_DOCUMENT_ACCESSED,
-    STARTUP_CONFIG,
-)
 from app.observability.logging_config import LOG_FILENAME
+from app.observability_registry import CLI_UNHANDLED_ERROR, STARTUP_CONFIG
 from tests.conftest import FakePiiMasker
 
 _ORIGINAL_TEXT = "Originaltext der Einwendung mit allen Details."

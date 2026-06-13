@@ -23,6 +23,7 @@ from typing import Any
 
 import structlog
 
+from app.audit_log.events import AUDIT_APPEND_FAILED
 from app.audit_log.service import AuditLogService
 from app.briefing.entities import ResolvedNormEntry, WuerdigungsBriefing
 from app.briefing.service import BriefingService
@@ -37,7 +38,6 @@ from app.core.failures import (
 from app.core.results import TriageResult
 from app.document_ingestion.service import DocumentIngestionService
 from app.observability import correlation_scope
-from app.observability.events import AUDIT_APPEND_FAILED
 from app.observability.metrics import (
     inc_argument_verification_failures,
     inc_audit_write_failure,

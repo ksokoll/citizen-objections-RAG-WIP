@@ -54,8 +54,8 @@ from presidio_anonymizer import AnonymizerEngine
 from presidio_anonymizer.entities import OperatorConfig
 
 from app.document_ingestion.entities import MaskingResult
+from app.document_ingestion.events import INGESTION_PII_COVERAGE_ANOMALY
 from app.document_ingestion.zone_extractor import ZoneExtraction, extract_zones
-from app.observability.events import INGESTION_PII_COVERAGE_ANOMALY
 
 _log = structlog.get_logger()
 

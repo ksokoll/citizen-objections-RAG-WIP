@@ -14,8 +14,8 @@ from pathlib import Path
 
 import pytest
 
+from app.audit_log.events import AUDIT_APPEND_FAILED
 from app.observability import metrics
-from app.observability.events import AUDIT_APPEND_FAILED
 from app.observability.logging_config import LOG_FILENAME, configure_logging
 from app.pipeline import Pipeline
 from tests.conftest import RaisingAuditStoreFake

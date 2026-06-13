@@ -20,8 +20,8 @@ from tests.conftest import FakeLLMClient
 
 import app.__main__ as cli
 from app.core import EinwendungsTyp
-from app.observability.events import STARTUP_CONFIG
 from app.observability.logging_config import LOG_FILENAME
+from app.observability_registry import STARTUP_CONFIG
 from app.triage.llm_schema import LLMArgument, LLMTriageOutput
 
 _XML_DIR = Path(__file__).parents[2] / "data" / "XML"

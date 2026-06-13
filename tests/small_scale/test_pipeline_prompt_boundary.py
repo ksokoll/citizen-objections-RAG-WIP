@@ -24,9 +24,9 @@ from app.briefing.service import BriefingService
 from app.core.events import AuditEventType
 from app.document_ingestion.service import DocumentIngestionService
 from app.observability import metrics
-from app.observability.events import TRIAGE_CONTRADICTION_DETECTED
 from app.observability.logging_config import LOG_FILENAME, configure_logging
 from app.pipeline import Pipeline
+from app.triage.events import TRIAGE_CONTRADICTION_DETECTED
 from app.triage.llm_schema import LLMTriageOutput
 from app.triage.service import TriageService
 from tests.conftest import FakeLLMClient, FakePiiMasker, FakeRetriever

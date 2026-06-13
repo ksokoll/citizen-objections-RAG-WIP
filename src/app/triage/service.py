@@ -27,11 +27,11 @@ from app.core.entities import ExtrahiertesArgument
 from app.core.failures import LLMError, LLMParseError, TriageError
 from app.core.protocols import LLMClientProtocol
 from app.core.results import TriageResult
-from app.observability.events import TRIAGE_CONTRADICTION_DETECTED
 from app.observability.tracing import traced
 
 from .catalog import KATALOG
 from .classification import classify_einwendungs_typ
+from .events import TRIAGE_CONTRADICTION_DETECTED
 from .llm_schema import LLMArgument, LLMTriageOutput
 from .norm_extractor import ExtractedNorm, extract_norms
 from .prompts import ARGUMENT_EXTRACTION_PROMPT
