@@ -65,9 +65,11 @@ R = TypeVar("R")
 
 #: Name of the environment variable the composition root (the CLI) reads to
 #: decide tracing. It is read only at the root and wired via set_tracing_enabled
-#: (finding 8); the decorator consults the wired _TRACING_ENABLED flag, never
-#: the environment. Off by default: in normal single-process operation timing
-#: comes from the structured logs (ADR-023).
+#: (ADR-026, composition-root wiring: behavior flags are resolved once at the
+#: root, never live from the environment deep in the stack); the decorator
+#: consults the wired _TRACING_ENABLED flag, never the environment. Off by
+#: default: in normal single-process operation timing comes from the structured
+#: logs (ADR-023).
 ENV_TRACING: str = "OBSERVABILITY_TRACING"
 
 #: The wired tracing flag, set once at the composition root via
@@ -86,7 +88,7 @@ _EXPORTER: InMemorySpanExporter | None = None
 
 
 def set_tracing_enabled(enabled: bool) -> None:
-    """Set the wired tracing flag (composition-root wiring, finding 8).
+    """Set the wired tracing flag (ADR-026, composition-root wiring).
 
     Tracing is resolved once at the root and set here, not read live from the
     environment inside the decorator. The CLI reads OBSERVABILITY_TRACING and
@@ -106,7 +108,8 @@ def tracing_enabled() -> bool:
 
     Span creation follows the wired _TRACING_ENABLED flag, set once at the
     composition root via set_tracing_enabled, not read from the environment in
-    the decorator (finding 8). A test toggles it via the setter.
+    the decorator (ADR-026, composition-root wiring). A test toggles it via the
+    setter.
     """
     return _TRACING_ENABLED
 

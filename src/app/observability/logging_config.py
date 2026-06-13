@@ -100,7 +100,9 @@ LOG_FILENAME: str = "observability.log"
 
 #: Name of the environment variable the composition root (the CLI) reads to
 #: decide strict mode. It is read only at the root and passed to
-#: configure_logging (finding 8); the processor chain consults the wired
+#: configure_logging (ADR-026, composition-root wiring: behavior flags are
+#: resolved once at the root, never live from the environment deep in the
+#: stack); the processor chain consults the wired
 #: _STRICT_MODE flag, never the environment. Strict (1): an unregistered event
 #: name or key raises and a processor exception propagates, so CI catches every
 #: typo and bug. Unset (production): the same conditions are contained and
@@ -267,7 +269,7 @@ class UnregisteredLogKeyError(Exception):
 
 
 def set_strict_mode(enabled: bool) -> None:
-    """Set the wired strict-mode flag (composition-root wiring, finding 8).
+    """Set the wired strict-mode flag (ADR-026, composition-root wiring).
 
     Strict mode is resolved once at the root and set here, not read live from
     the environment inside the processor chain. The CLI reads OBSERVABILITY_STRICT
@@ -289,9 +291,9 @@ def _is_strict() -> bool:
 
     Strict mode is the wired _STRICT_MODE flag, set once at the composition
     root via set_strict_mode, not read from the environment deep in the chain
-    (finding 8). A test toggles the mode by calling set_strict_mode, so a chain
-    reconfiguration to a new sink path does not flip enforcement (ADR-026,
-    phase separation).
+    (ADR-026, composition-root wiring). A test toggles the mode by calling
+    set_strict_mode, so a chain reconfiguration to a new sink path does not flip
+    enforcement (ADR-026, phase separation).
     """
     return _STRICT_MODE
 
@@ -671,8 +673,8 @@ def configure_logging(
     degradation to a NullHandler or bare stderr. Idempotent: a second call
     replaces the handler this module installed rather than stacking a second
     sink. Called explicitly by the composition root (the CLI entrypoint, the
-    conftest fixture); the sink path is a parameter, never an environment
-    read in this module (security finding 5).
+    conftest fixture); the sink path is a parameter resolved at the entrypoint,
+    never an environment read in this module (ADR-026, composition-root wiring).
 
     Args:
         log_dir: Sink directory, resolved by the caller at the entrypoint.
@@ -681,7 +683,7 @@ def configure_logging(
             so reconfiguring the sink path does not flip enforcement; a
             composition root passes an explicit bool (the CLI from
             OBSERVABILITY_STRICT, the test conftest True). Forwarded to
-            set_strict_mode (finding 8).
+            set_strict_mode (ADR-026, composition-root wiring).
         retention_days: Rotated-backup count and sweep horizon.
 
     Raises:

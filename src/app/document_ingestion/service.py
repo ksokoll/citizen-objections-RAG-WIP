@@ -59,8 +59,9 @@ def load_raw_document(raw_store_path: Path, document_id: str) -> str:
     guard).
 
     Every successful read emits the governed raw_document_accessed event with
-    the document_id only, never content (H4/S4): a read of unmasked PII must
-    leave a trace. The chain-level read audit event is Round C work (ADR-027).
+    the document_id only, never content (ADR-027): a read of unmasked PII must
+    leave an operational trace. The chain-level read audit event (custody, not
+    telemetry) is Round C work (ADR-027).
 
     Args:
         raw_store_path: The raw store directory.

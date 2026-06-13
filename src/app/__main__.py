@@ -461,11 +461,11 @@ def main(argv: list[str] | None = None) -> int:
             return _run_process(args, paths)
         return _run_show_document(args, paths)
     except Exception as exc:
-        # Dispatch catch-all (S1/M4): an unexpected exception becomes a
-        # governed ERROR event (the chain reduces it to type plus location)
-        # and one clean stderr line carrying the type only. The exception
-        # message is foreign-authored text and never reaches stderr or the
-        # sink; a traceback would be the richest leak channel of all.
+        # Dispatch catch-all (ADR-026, exception policy): an unexpected
+        # exception becomes a governed ERROR event (the chain reduces it to type
+        # plus location) and one clean stderr line carrying the type only. The
+        # exception message is foreign-authored text and never reaches stderr or
+        # the sink; a traceback would be the richest leak channel of all.
         _log.error(CLI_UNHANDLED_ERROR, exc_info=True)
         print(f"unexpected error: {type(exc).__name__}", file=sys.stderr)
         return 1
