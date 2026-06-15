@@ -13,7 +13,11 @@ import pytest
 from filelock import FileLock
 
 from app.audit_log.serialization import GENESIS_PREV_HASH, compute_event_hash
-from app.audit_log.store import JsonLinesAuditStore
+from app.audit_log.store import (
+    JsonLinesAuditStore,
+    verify_chain,
+    verify_chain_file,
+)
 from app.core.events import AuditEvent, AuditEventType
 from app.core.failures import AuditLogError
 
@@ -560,3 +564,201 @@ def test_an_interior_damaged_line_is_not_healed_but_surfaces_loudly(
 
     with pytest.raises(AuditLogError):
         JsonLinesAuditStore(path)
+
+
+def _written_chain(tmp_path: Path, count: int = 5) -> tuple[Path, list[AuditEvent]]:
+    """Write a real chain of `count` events and return the path and the events.
+
+    The events carry hashes the store computed via the canonical serializer, so
+    verifying them is the same-serializer property in practice: a divergent
+    verify serializer would fail on this freshly written chain.
+    """
+    path = tmp_path / "audit.jsonl"
+    store = JsonLinesAuditStore(path)
+    for index in range(count):
+        store.publish(_make_event(einwendungs_id=f"EW-{index:03d}"))
+    return path, store.query()
+
+
+def test_verify_chain_accepts_a_freshly_written_chain_same_serializer(
+    tmp_path: Path,
+) -> None:
+    """Given a chain the store wrote, when it is verified, then it is ok.
+
+    This is the same-serializer guard (ADR-031): the store stamped each hash via
+    canonical_bytes, and verify_chain recomputes via the same compute_event_hash.
+    If a second, divergent serialization were introduced into the verify path,
+    this freshly written chain would fail to verify, so the test fails exactly
+    when the two serializations drift.
+    """
+    _, events = _written_chain(tmp_path)
+
+    result = verify_chain(events)
+
+    assert result.ok
+    assert result.first_break is None
+
+
+def test_verify_chain_accepts_a_chain_anchored_on_the_18a_golden_event() -> None:
+    """Given the 18a golden event chained from genesis, when verified, then ok.
+
+    Ties verification to the exact canonical bytes 18a froze (test_serialization
+    golden): verify_chain recomputes over those bytes, so the chain proof rests
+    on the one pinned byte form, not a second copy.
+    """
+    golden = AuditEvent(
+        event_id="11111111-1111-1111-1111-111111111111",
+        event_type=AuditEventType.EINGANG,
+        einwendungs_id="EW-001",
+        timestamp=datetime(2024, 6, 15, 12, 0, 0, tzinfo=UTC),
+        payload={"model": "mistral", "confidence": 0.95},
+        sequence_number=0,
+    )
+    chained = golden.model_copy(
+        update={"event_hash": compute_event_hash(golden, GENESIS_PREV_HASH)}
+    )
+
+    assert verify_chain([chained]).ok
+
+
+def test_verify_chain_detects_a_mutated_past_payload_with_location(
+    tmp_path: Path,
+) -> None:
+    """Given a chain with one event's payload altered (its hash left intact),
+    when verified, then the break is reported at that event's index, not a bare
+    False (ADR-031).
+    """
+    _, events = _written_chain(tmp_path, count=3)
+    events[1] = events[1].model_copy(update={"payload": {"tampered": True}})
+
+    result = verify_chain(events)
+
+    assert not result.ok
+    assert result.first_break is not None
+    assert result.first_break.index == 1
+    assert result.first_break.sequence_number == 1
+    assert "hash" in result.first_break.reason
+
+
+def test_verify_chain_detects_a_broken_link_with_location(tmp_path: Path) -> None:
+    """Given a chain with one event's recorded hash overwritten (a broken link),
+    when verified, then the break is reported at that event's index.
+    """
+    _, events = _written_chain(tmp_path, count=3)
+    events[1] = events[1].model_copy(update={"event_hash": "a" * 64})
+
+    result = verify_chain(events)
+
+    assert not result.ok
+    assert result.first_break is not None
+    assert result.first_break.index == 1
+    assert result.first_break.found == "a" * 64
+
+
+def test_verify_chain_detects_a_sequence_gap_with_location(tmp_path: Path) -> None:
+    """Given a chain with an interior event removed (a sequence gap), when
+    verified, then the break is reported at the gap with the expected vs found
+    sequence number.
+    """
+    _, events = _written_chain(tmp_path, count=3)
+    del events[1]  # sequences are now 0, 2: a gap at the second position
+
+    result = verify_chain(events)
+
+    assert not result.ok
+    assert result.first_break is not None
+    assert result.first_break.index == 1
+    assert "sequence" in result.first_break.reason
+    assert result.first_break.expected == "1"
+    assert result.first_break.found == "2"
+
+
+def test_verify_chain_detects_a_wrong_genesis_sentinel_with_location(
+    tmp_path: Path,
+) -> None:
+    """Given a genesis event whose hash was computed from a non-genesis
+    predecessor, when verified, then the break is reported at index 0 as a
+    genesis-anchor failure: the whole chain is only as sound as the genesis it
+    descends from (ADR-031).
+    """
+    _, events = _written_chain(tmp_path, count=3)
+    events[0] = events[0].model_copy(
+        update={"event_hash": compute_event_hash(events[0], "f" * 64)}
+    )
+
+    result = verify_chain(events)
+
+    assert not result.ok
+    assert result.first_break is not None
+    assert result.first_break.index == 0
+    assert "genesis" in result.first_break.reason
+
+
+def test_verify_chain_file_reports_an_unparseable_line(tmp_path: Path) -> None:
+    """Given a chain file with a corrupt line, when verified for an auditor,
+    then it is reported as a located break rather than crashing the command.
+    """
+    path, _ = _written_chain(tmp_path, count=3)
+    lines = path.read_text(encoding="utf-8").splitlines()
+    lines[1] = '{"truncated": '
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    result = verify_chain_file(path)
+
+    assert not result.ok
+    assert result.first_break is not None
+    assert result.first_break.index == 1
+
+
+def test_tail_window_at_open_detects_a_break_within_the_window(
+    tmp_path: Path,
+) -> None:
+    """Given a chain whose second-to-last event was edited in place (its hash
+    kept, the last line left intact so recovery does not quarantine it), when
+    the store opens with a tail window covering it, then open fails loudly with
+    the break's location (ADR-031): a tampered tail is diagnosed at open.
+    """
+    path, _ = _written_chain(tmp_path, count=5)
+    lines = path.read_text(encoding="utf-8").splitlines()
+    second_to_last = AuditEvent.model_validate_json(lines[3])
+    lines[3] = second_to_last.model_copy(
+        update={"payload": {"tampered": True}}
+    ).model_dump_json()
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    with pytest.raises(AuditLogError, match="index 3"):
+        JsonLinesAuditStore(path, tail_window=2)
+
+
+def test_tail_window_at_open_does_not_see_a_break_before_the_window(
+    tmp_path: Path,
+) -> None:
+    """Given a chain whose first event was edited in place, when the store opens
+    with a small tail window, then open succeeds (the break is before the
+    window), while a full walk still catches it: the window is a fast startup
+    check, not the full audit (ADR-031).
+    """
+    path, _ = _written_chain(tmp_path, count=5)
+    lines = path.read_text(encoding="utf-8").splitlines()
+    first = AuditEvent.model_validate_json(lines[0])
+    lines[0] = first.model_copy(
+        update={"payload": {"tampered": True}}
+    ).model_dump_json()
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    JsonLinesAuditStore(path, tail_window=2)  # opens without raising
+
+    full = verify_chain_file(path)
+    assert not full.ok
+    assert full.first_break is not None
+    assert full.first_break.index == 0
+
+
+def test_verify_chain_is_vacuously_ok_for_an_empty_chain(tmp_path: Path) -> None:
+    """Given a fresh store with no events, when its chain is verified, then it is
+    ok: an empty chain has nothing to break."""
+    path = tmp_path / "audit.jsonl"
+    JsonLinesAuditStore(path)
+
+    assert verify_chain([]).ok
+    assert verify_chain_file(path).ok

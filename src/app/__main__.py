@@ -29,9 +29,14 @@ Commands (ADR-028):
   presentation happens in a frontend beyond the system boundary.
 - show-document <id>: print the stored raw document for a document_id.
   An unknown or malformed id is a clear error and a nonzero exit.
+- verify-audit: fully walk the audit hash chain and report the first break
+  for an auditor (ADR-031). Non-mutating (it never opens the store), so an
+  audit cannot trigger recovery; a detected break is a nonzero exit with a
+  located, content-free report.
 
 Exit codes: 0 success, 1 run-level failure (unreadable document, unknown id,
-pipeline error), 2 startup abort (logging bootstrap, missing configuration).
+pipeline error, a detected chain break), 2 startup abort (logging bootstrap,
+missing configuration).
 """
 
 from __future__ import annotations
@@ -46,7 +51,7 @@ from pathlib import Path
 import structlog
 
 from app.audit_log.service import AuditLogService
-from app.audit_log.store import JsonLinesAuditStore
+from app.audit_log.store import JsonLinesAuditStore, verify_chain_file
 from app.briefing.serialization import to_json
 from app.briefing.service import BriefingService
 from app.core.failures import (
@@ -331,6 +336,18 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help="raw document store directory (default: <app-home>/raw_store)",
     )
+
+    verify = commands.add_parser(
+        "verify-audit",
+        help="fully verify the audit hash chain; exit nonzero on a break",
+        parents=[sink_options],
+    )
+    verify.add_argument(
+        "--audit-log",
+        type=Path,
+        default=None,
+        help="append-only audit log file to verify (default: <app-home>/audit.jsonl)",
+    )
     return parser
 
 
@@ -482,6 +499,31 @@ def _run_show_document(args: argparse.Namespace, paths: dict[str, Path]) -> int:
     return 0
 
 
+def _run_verify_audit(args: argparse.Namespace, paths: dict[str, Path]) -> int:
+    """Fully verify the audit hash chain for an auditor (ADR-031).
+
+    Reads and walks the whole chain from genesis (verify_chain_file), which is
+    non-mutating: it never opens the store, so an audit run cannot trigger
+    recovery or append a recovery event. A clean chain exits 0; a detected break
+    exits 1 with a content-free, located description on stderr, so an automated
+    audit can gate on the exit code and a human reads where the chain broke.
+    """
+    _emit_startup_config(log_format=args.log_format, paths=paths)
+    if not args.audit_log.exists():
+        print(f"no audit chain at {args.audit_log}; nothing to verify")
+        return 0
+    result = verify_chain_file(args.audit_log)
+    if result.ok:
+        print(f"audit chain verified: {args.audit_log}")
+        return 0
+    print(
+        f"audit chain verification FAILED for {args.audit_log}: "
+        f"{result.first_break.describe()}",
+        file=sys.stderr,
+    )
+    return 1
+
+
 def main(argv: list[str] | None = None) -> int:
     """Entry point: bootstrap strictly, then dispatch the command.
 
@@ -520,6 +562,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.command == "process":
             return _run_process(args, paths)
+        if args.command == "verify-audit":
+            return _run_verify_audit(args, paths)
         return _run_show_document(args, paths)
     except Exception as exc:
         # Dispatch catch-all (ADR-026, exception policy): an unexpected

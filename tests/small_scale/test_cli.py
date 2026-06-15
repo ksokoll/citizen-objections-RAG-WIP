@@ -19,6 +19,8 @@ import pytest
 
 import app.__main__ as cli
 from app.__main__ import main
+from app.audit_log.store import JsonLinesAuditStore
+from app.core.events import AuditEvent, AuditEventType
 from app.document_ingestion.events import RAW_DOCUMENT_ACCESSED
 from app.document_ingestion.service import (
     MAX_RAW_TEXT_CHARS,
@@ -417,6 +419,83 @@ def test_unexpected_exception_is_one_clean_line_and_a_governed_error(
     assert errors[0]["level"] == "error"
     assert errors[0]["exc_type"] == "RuntimeError"
     assert "secret detail" not in json.dumps(errors)
+
+
+def _write_chain(audit_log: Path, count: int = 3) -> None:
+    """Write `count` real chained events to an audit log for the CLI tests."""
+    store = JsonLinesAuditStore(audit_log)
+    for index in range(count):
+        store.publish(
+            AuditEvent(
+                event_id=str(uuid.uuid4()),
+                event_type=AuditEventType.EINGANG,
+                einwendungs_id=f"EW-{index:03d}",
+            )
+        )
+
+
+def test_verify_audit_reports_a_clean_chain_and_exits_zero(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A clean audit chain verifies fully and exits 0 (ADR-031).
+
+    Given an intact chain, when verify-audit runs, then it walks the whole chain
+    from genesis, prints a verified line, and exits 0.
+    """
+    audit_log = tmp_path / "audit.jsonl"
+    _write_chain(audit_log)
+
+    exit_code = main(
+        [
+            "--log-dir",
+            str(tmp_path / "logs"),
+            "verify-audit",
+            "--audit-log",
+            str(audit_log),
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert "verified" in captured.out
+
+
+def test_verify_audit_exits_nonzero_on_a_planted_break(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A tampered chain fails verification with a located report and exits 1.
+
+    Given a chain whose interior event was edited in place (its hash kept), when
+    verify-audit runs, then it exits 1 with a FAILED report naming the break's
+    location on stderr and nothing on stdout (ADR-031). The full walk catches a
+    break the open-time tail window need not cover.
+    """
+    audit_log = tmp_path / "audit.jsonl"
+    _write_chain(audit_log)
+    lines = audit_log.read_text(encoding="utf-8").splitlines()
+    middle = AuditEvent.model_validate_json(lines[1])
+    lines[1] = middle.model_copy(
+        update={"payload": {"tampered": True}}
+    ).model_dump_json()
+    audit_log.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    exit_code = main(
+        [
+            "--log-dir",
+            str(tmp_path / "logs"),
+            "verify-audit",
+            "--audit-log",
+            str(audit_log),
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 1
+    assert "FAILED" in captured.err
+    assert "index 1" in captured.err
+    assert captured.out == ""
 
 
 def test_cli_run_emits_startup_config_into_the_sink(

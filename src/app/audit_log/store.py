@@ -7,6 +7,7 @@ import os
 import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Final
@@ -28,6 +29,200 @@ _log = structlog.get_logger()
 #: record satisfies the required non-empty id without claiming an Einwendung
 #: (ADR-030).
 RECOVERY_EINWENDUNGS_ID: Final[str] = "SYSTEM"
+
+#: How many trailing events are verified at store open: the last K, not the
+#: whole file, so startup stays fast as the trail grows (ADR-031). The full walk
+#: is the auditor's CLI command (verify_chain_file); the window only diagnoses a
+#: break near the tail, where a crash-or-tamper is most likely to have landed.
+OPEN_VERIFY_TAIL_WINDOW: Final[int] = 256
+
+
+@dataclass(frozen=True)
+class ChainBreak:
+    """The first point at which verification found the chain inconsistent.
+
+    Reported instead of a bare False so an auditor learns where and why the
+    chain broke, not merely that it did (ADR-031). index is the 0-based position
+    in the walked sequence (a line index for an on-disk walk); expected and
+    found are stringified so a sequence break and a hash break report uniformly.
+    """
+
+    index: int
+    sequence_number: int | None
+    reason: str
+    expected: str
+    found: str
+
+    def describe(self) -> str:
+        """One-line, content-free description of the break for a report."""
+        return (
+            f"chain break at line index {self.index} "
+            f"(sequence_number {self.sequence_number}): {self.reason}; "
+            f"expected {self.expected!r}, found {self.found!r}"
+        )
+
+
+@dataclass(frozen=True)
+class VerificationResult:
+    """The outcome of a chain verification: ok, or the first break with detail.
+
+    An empty chain is vacuously ok. first_break is None exactly when ok is True.
+    """
+
+    ok: bool
+    first_break: ChainBreak | None = None
+
+
+def _verify_one(
+    event: AuditEvent,
+    index: int,
+    prev_hash: str,
+    expected_sequence: int,
+    is_genesis: bool,
+) -> ChainBreak | None:
+    """Verify one event against its expected position and predecessor.
+
+    Checks, in order: the monotonic sequence number, that a chain hash is
+    present, and that the recorded hash equals the recomputation over the
+    event's canonical bytes plus prev_hash. Returns the break or None.
+
+    Args:
+        event: The event to check.
+        index: Its 0-based position in the walked chain.
+        prev_hash: The predecessor's hash (GENESIS_PREV_HASH for genesis).
+        expected_sequence: The sequence number this position must carry.
+        is_genesis: Whether this is the genesis position of a full walk, which
+            only changes the reason text so a wrong genesis anchor reads as such.
+    """
+    if event.sequence_number != expected_sequence:
+        return ChainBreak(
+            index=index,
+            sequence_number=event.sequence_number,
+            reason="sequence number is not monotonic",
+            expected=str(expected_sequence),
+            found=str(event.sequence_number),
+        )
+    if event.event_hash is None:
+        return ChainBreak(
+            index=index,
+            sequence_number=event.sequence_number,
+            reason="event carries no chain hash",
+            expected="a SHA-256 hex digest",
+            found="None",
+        )
+    recomputed = compute_event_hash(event, prev_hash)
+    if event.event_hash != recomputed:
+        reason = (
+            "genesis event does not chain from the all-zero sentinel"
+            if is_genesis
+            else "event hash does not match the recomputed hash"
+        )
+        return ChainBreak(
+            index=index,
+            sequence_number=event.sequence_number,
+            reason=reason,
+            expected=recomputed,
+            found=event.event_hash,
+        )
+    return None
+
+
+def verify_chain(
+    events: list[AuditEvent], *, tail: int | None = None
+) -> VerificationResult:
+    """Walk the hash chain and report the first break, or ok (ADR-031).
+
+    Recomputes each event's hash with the SAME canonical serializer the write
+    path used (compute_event_hash, which dispatches canonical_bytes per
+    serialization_version, serialization.py). A chain written under
+    canonical_bytes verifies only against that same byte form, so a second,
+    divergent serialization introduced into the verify path would make a
+    freshly written chain fail here: the proof has exactly one definition.
+
+    Per event it checks the monotonic sequence number, the chained hash (content
+    plus predecessor hash), and, on a full walk, the genesis sentinel (the first
+    event is sequence 0 and chains from GENESIS_PREV_HASH).
+
+    Args:
+        events: The chain in append order, as read from the store.
+        tail: If given, verify only the last `tail` events, seeding the
+            predecessor hash and the expected sequence from the event just
+            before the window. This is the fast startup check; by construction
+            it cannot see a break before the window or the genesis sentinel,
+            which is the full walk's job. None (default) walks from genesis.
+
+    Returns:
+        VerificationResult(ok=True) for an intact (or empty) chain, or
+        VerificationResult(ok=False, first_break=...) at the first break.
+    """
+    if not events:
+        return VerificationResult(ok=True)
+
+    if tail is None or tail >= len(events):
+        start_index = 0
+        prev_hash = GENESIS_PREV_HASH
+        expected_sequence = 0
+        verifies_genesis = True
+    else:
+        start_index = len(events) - tail
+        predecessor = events[start_index - 1]
+        prev_hash = predecessor.event_hash or GENESIS_PREV_HASH
+        expected_sequence = (predecessor.sequence_number or -1) + 1
+        verifies_genesis = False
+
+    for index in range(start_index, len(events)):
+        event = events[index]
+        first_break = _verify_one(
+            event,
+            index,
+            prev_hash,
+            expected_sequence,
+            is_genesis=verifies_genesis and index == 0,
+        )
+        if first_break is not None:
+            return VerificationResult(ok=False, first_break=first_break)
+        prev_hash = event.event_hash  # type: ignore[assignment]
+        expected_sequence += 1
+    return VerificationResult(ok=True)
+
+
+def verify_chain_file(path: Path) -> VerificationResult:
+    """Read the on-disk chain and verify it fully, reporting the first break.
+
+    Non-mutating by design: it reads and parses the file directly rather than
+    opening the store, so an auditor's verification never triggers recovery or
+    appends a recovery event (the auditor reads the chain as it stands). A line
+    that does not parse is itself reported as a break rather than crashing the
+    command, so a corrupt line is diagnosed like any other.
+
+    Args:
+        path: Path to the JSON Lines audit file. A missing or empty file is a
+            vacuously intact chain (nothing has been written to break).
+
+    Returns:
+        The full-walk VerificationResult for the chain on disk.
+    """
+    if not path.exists():
+        return VerificationResult(ok=True)
+    lines = [
+        line for line in path.read_text(encoding="utf-8").splitlines() if line.strip()
+    ]
+    events: list[AuditEvent] = []
+    for index, line in enumerate(lines):
+        try:
+            events.append(AuditEvent.model_validate_json(line))
+        except ValueError:
+            return VerificationResult(
+                ok=False,
+                first_break=ChainBreak(
+                    index=index,
+                    sequence_number=None,
+                    reason="line is not a valid serialized AuditEvent",
+                    expected="parseable JSON",
+                    found="unparseable line",
+                ),
+            )
+    return verify_chain(events)
 
 
 class JsonLinesAuditStore:
@@ -65,11 +260,19 @@ class JsonLinesAuditStore:
       (ADR-030).
     """
 
-    def __init__(self, path: Path, lock_timeout: float = 10.0) -> None:
+    def __init__(
+        self,
+        path: Path,
+        lock_timeout: float = 10.0,
+        tail_window: int = OPEN_VERIFY_TAIL_WINDOW,
+    ) -> None:
         """Initialize the store, ensure the backing file exists, seed the head.
 
         Seeding reads the file under the single-writer lock, so open+recovery is
-        one critical section (ADR-030).
+        one critical section (ADR-030). After seeding, the last `tail_window`
+        events are verified for startup speed: a tampered or non-chaining line
+        near the tail is surfaced loudly at open, while the full walk is the
+        auditor's CLI command (ADR-031).
 
         Args:
             path: Path to the JSON Lines file. Created (including parent
@@ -78,13 +281,18 @@ class JsonLinesAuditStore:
             lock_timeout: Seconds to wait for the single-writer lock before
                 failing loudly. A finite default surfaces accidental contention
                 as an AuditLogError rather than hanging; tests pass a small value.
+            tail_window: How many trailing events to verify at open. The default
+                bounds startup cost as the trail grows; tests pass a small value
+                to exercise the window boundary.
 
         Raises:
             AuditLogError: If another writer holds the lock past lock_timeout
-                (open cannot recover concurrently with another start).
+                (open cannot recover concurrently with another start), or if the
+                tail-window verification finds a break (ADR-031).
         """
         self._path = path
         self._lock_timeout = lock_timeout
+        self._tail_window = tail_window
         self._lock = FileLock(f"{path}.lock", timeout=lock_timeout)
         self._head_hash: str = GENESIS_PREV_HASH
         self._head_sequence: int | None = None
@@ -236,12 +444,41 @@ class JsonLinesAuditStore:
         interior event is not without an external anchor.
 
         Called under the single-writer lock from __init__, so open, recovery, and
-        the recovery event's append are one critical section.
+        the recovery event's append are one critical section. After seeding (and
+        any tail recovery), the kept events' tail window is verified so a
+        tampered or non-chaining interior line near the end is surfaced at open
+        with detail, not left for the next CLI run (ADR-031).
         """
         valid_events, valid_lines, damaged_line = self._read_chain_with_tail_check()
         self._seed_head_from(valid_events)
         if damaged_line is not None:
             self._quarantine_and_record(damaged_line, valid_lines)
+        self._verify_tail_window(valid_events)
+
+    def _verify_tail_window(self, events: list[AuditEvent]) -> None:
+        """Verify the last tail_window events, raising loudly on a break.
+
+        The fast startup check (ADR-031): recovery heals only a damaged last
+        line, so a parseable-but-non-chaining interior line (a naive in-place
+        edit) would otherwise pass open silently and surface only at the next
+        full verify. Verifying the tail window catches such a break near the end
+        and raises it with location, so a damaged tail is diagnosed at open, not
+        merely the next audit. A break before the window is the full walk's job
+        (verify_chain_file), deliberately not done here for startup speed.
+
+        Args:
+            events: The kept (valid) events, the damaged tail already excluded.
+
+        Raises:
+            AuditLogError: If the tail window does not verify, carrying the
+                first break's content-free description.
+        """
+        result = verify_chain(events, tail=self._tail_window)
+        if not result.ok and result.first_break is not None:
+            raise AuditLogError(
+                f"audit store {self._path} failed tail-window verification at "
+                f"open: {result.first_break.describe()}"
+            )
 
     def _read_chain_with_tail_check(
         self,
