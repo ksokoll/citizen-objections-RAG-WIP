@@ -48,11 +48,8 @@ from __future__ import annotations
 
 import functools
 from collections.abc import Callable
-from typing import ParamSpec
 
 from prometheus_client import CollectorRegistry, Counter, Histogram
-
-P = ParamSpec("P")
 
 #: In-process registry holding exactly the seven pipeline metrics.
 #: Deliberately not the prometheus_client global REGISTRY, so importing this
@@ -112,7 +109,7 @@ TRIAGE_CONTRADICTIONS = Counter(
 )
 
 
-def _contained(write: Callable[P, None]) -> Callable[P, None]:
+def _contained[**P](write: Callable[P, None]) -> Callable[P, None]:
     """Wrap a metrics write so it can never abort the business path.
 
     See the module docstring for why this containment is unconditional,

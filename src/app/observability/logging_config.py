@@ -74,6 +74,8 @@ from collections.abc import Iterable
 from datetime import UTC, datetime, timedelta
 from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
+from types import FrameType
+from typing import cast
 
 import structlog
 from structlog.typing import EventDict, Processor, WrappedLogger
@@ -316,7 +318,7 @@ def _caller_location() -> str:
     ``unknown`` if no such frame is found. The location carries no payload, only
     where an unregistered event name was logged so the typo can be fixed.
     """
-    frame = sys._getframe(1)
+    frame: FrameType | None = sys._getframe(1)
     while frame is not None:
         filename = frame.f_code.co_filename
         if not any(marker in filename for marker in _CALLER_SKIP_MARKERS):
@@ -347,7 +349,9 @@ def never_raise(processor: Processor) -> Processor:
         logger: WrappedLogger, method_name: str, event_dict: EventDict
     ) -> EventDict:
         try:
-            return processor(logger, method_name, event_dict)
+            # never_raise wraps our own processors, which return EventDict; the
+            # structlog Processor return type is the broader renderer union.
+            return cast(EventDict, processor(logger, method_name, event_dict))
         except Exception:
             if _is_strict():
                 raise
@@ -618,11 +622,16 @@ class _OwnerOnlyTimedRotatingFileHandler(TimedRotatingFileHandler):
         # os.open's mode is masked by umask and does not touch a pre-existing
         # file; chmod unconditionally so a reopened or inherited file is bounded.
         os.chmod(self.baseFilename, _LOG_FILE_MODE)
-        return os.fdopen(
-            file_descriptor,
-            self.mode,
-            encoding=self.encoding,
-            errors=self.errors,
+        # self.mode is a text mode ("a"), so fdopen returns a TextIOWrapper; the
+        # non-literal mode makes os.fdopen's overload widen the type to IO[Any].
+        return cast(
+            io.TextIOWrapper,
+            os.fdopen(
+                file_descriptor,
+                self.mode,
+                encoding=self.encoding,
+                errors=self.errors,
+            ),
         )
 
 

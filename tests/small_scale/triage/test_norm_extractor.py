@@ -456,7 +456,7 @@ class TestPositionTracking:
 
     def test_should_return_norms_with_strictly_increasing_positions(self) -> None:
         # Given three citations at distinct positions
-        text = "§ 5 WHG ist erste, § 1 BauGB ist zweite, " "§ 9 BNatSchG ist dritte."
+        text = "§ 5 WHG ist erste, § 1 BauGB ist zweite, § 9 BNatSchG ist dritte."
 
         # When extracting norms
         result = extract_norms(text)

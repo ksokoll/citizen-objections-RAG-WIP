@@ -126,7 +126,8 @@ class PresidioMasker:
 
     def __init__(self) -> None:
         self._analyzer = self._build_analyzer()
-        self._anonymizer = AnonymizerEngine()
+        # presidio ships no type stubs, so its engine is untyped to mypy.
+        self._anonymizer = AnonymizerEngine()  # type: ignore[no-untyped-call]
         self._operators = {
             entity: OperatorConfig("replace", {"new_value": placeholder})
             for entity, placeholder in _ENTITY_TO_PLACEHOLDER.items()
@@ -167,7 +168,9 @@ class PresidioMasker:
 
         anonymized = self._anonymizer.anonymize(
             text=text,
-            analyzer_results=resolved,
+            # presidio duplicates RecognizerResult across its analyzer and
+            # anonymizer packages; the anonymizer accepts analyzer results.
+            analyzer_results=resolved,  # type: ignore[arg-type]
             operators=self._operators,
         )
 

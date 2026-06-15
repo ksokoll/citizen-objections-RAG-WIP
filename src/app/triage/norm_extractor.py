@@ -43,10 +43,10 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 
 
-class Gesetz(str, Enum):
+class Gesetz(StrEnum):
     """Whitelist of laws indexed in the corpus.
 
     Each entry must have a corresponding XML file in data/XML/ and a

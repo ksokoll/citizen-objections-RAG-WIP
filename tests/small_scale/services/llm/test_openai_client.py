@@ -3,7 +3,7 @@
 Wraps OpenAI's chat completion API for two use cases: free-text
 generation and structured output via constrained decoding (used by
 Triage for argument extraction). The client is provider-specific
-but exposes only the methods declared in core.protocols.LLMClient.
+but exposes only the methods declared in app.triage.protocols.LLMClientProtocol.
 No OpenAI types leak across this boundary; callers receive plain
 strings or Pydantic model instances.
 """

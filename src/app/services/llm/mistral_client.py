@@ -130,7 +130,9 @@ class MistralClient:
             response = self._client.chat.complete(
                 model=self._model,
                 temperature=self._temperature,
-                messages=messages,
+                # The SDK accepts dict messages at runtime; its stubs require the
+                # typed message objects, so the plain-dict list is flagged.
+                messages=messages,  # type: ignore[arg-type]
             )
         except Exception as exc:
             # Exception policy (ADR-026, M2): the message carries the provider
@@ -143,7 +145,8 @@ class MistralClient:
                 f"Mistral generate call failed: {type(exc).__name__}"
             ) from exc
 
-        content = response.choices[0].message.content
+        message = response.choices[0].message
+        content = message.content if message is not None else None
         if content is None or not isinstance(content, str):
             raise LLMError("Mistral returned no text content")
         return content
@@ -189,13 +192,16 @@ class MistralClient:
             response = self._client.chat.complete(
                 model=self._model,
                 temperature=self._temperature,
-                messages=messages,
+                # See generate(): dict messages are valid at runtime, typed-only
+                # in the stubs.
+                messages=messages,  # type: ignore[arg-type]
                 response_format={"type": "json_object"},
             )
         except Exception as exc:
             raise LLMError(f"Mistral parse call failed: {type(exc).__name__}") from exc
 
-        content = response.choices[0].message.content
+        message = response.choices[0].message
+        content = message.content if message is not None else None
         if content is None or not isinstance(content, str):
             raise LLMError("Mistral returned no JSON content")
 

@@ -13,6 +13,7 @@ the bounded-context boundary clean.
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Any
 
 from app.briefing.entities import (
     BriefingEntry,
@@ -37,7 +38,7 @@ class BriefingService:
         self,
         document_id: str,
         einwendungs_typ: str,
-        arguments: list[dict],
+        arguments: list[dict[str, Any]],
         norms_by_argument: dict[str, list[ResolvedNormEntry]],
         corpus_id: str,
         created_at: datetime,

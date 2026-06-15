@@ -605,6 +605,9 @@ def _run_verify_audit(args: argparse.Namespace, paths: dict[str, Path]) -> int:
     if result.ok:
         print(f"audit chain verified: {args.audit_log}")
         return 0
+    # Invariant (verification.py): first_break is None exactly when ok is True,
+    # so a non-ok result always carries a break to describe.
+    assert result.first_break is not None
     print(
         f"audit chain verification FAILED for {args.audit_log}: "
         f"{result.first_break.describe()}",
