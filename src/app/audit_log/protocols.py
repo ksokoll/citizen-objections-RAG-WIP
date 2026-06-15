@@ -1,31 +1,23 @@
-# core.protocols.py - Protocol definitions for core services and interfaces.
+# audit_log.protocols.py - Protocols for the AuditLog bounded context.
+"""Protocols for the AuditLog bounded context.
+
+Holds the append-only publisher interface the AuditLogService implements and
+the JsonLinesAuditStore satisfies. The protocol lives with its only consumer,
+the audit context, rather than in the shared kernel: the pipeline injects the
+concrete AuditLogService, not this protocol, so no other context depends on it
+(H1, Round 20). This mirrors the Retriever move of Round 17.1; the two
+remaining single-context protocols are now retro-fitted to that precedent so
+the repo carries one rule, not two.
+
+It references AuditEvent and AuditEventType from the shared kernel, the
+cross-context payload the audit chain persists; that dependency points into
+core, the allowed direction, not into another bounded context.
+"""
+
 from datetime import datetime
-from typing import Protocol, TypeVar
+from typing import Protocol
 
-from pydantic import BaseModel
-
-from .events import AuditEvent, AuditEventType
-
-T = TypeVar("T", bound=BaseModel)
-
-
-class LLMClientProtocol(Protocol):
-    """Provider-agnostic LLM text generation and structured parsing.
-
-    Temperature and model selection are implementation details, not part of
-    the interface. All LLM calls must go through this Protocol; no direct
-    imports of anthropic, openai, or provider SDKs are allowed in domain or
-    application code.
-    """
-
-    def generate(self, prompt: str, system_prompt: str = "") -> str: ...
-
-    def parse(
-        self,
-        prompt: str,
-        response_format: type[T],
-        system_prompt: str = "",
-    ) -> T: ...
+from app.core.events import AuditEvent, AuditEventType
 
 
 class AuditEventPublisherProtocol(Protocol):

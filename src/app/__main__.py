@@ -66,7 +66,6 @@ from app.core.failures import (
     RetrievalError,
     TriageError,
 )
-from app.core.protocols import LLMClientProtocol
 from app.document_ingestion.protocols import PiiMasker
 from app.document_ingestion.service import (
     MAX_RAW_TEXT_CHARS,
@@ -93,6 +92,7 @@ from app.services.llm.mistral_client import (
     MistralClient,
     check_endpoint_allowed,
 )
+from app.triage.protocols import LLMClientProtocol
 from app.triage.service import TriageService
 
 _log = structlog.get_logger()

@@ -5,12 +5,12 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
+from app.audit_log.protocols import AuditEventPublisherProtocol
 from app.core.events import (
     SYSTEM_EINWENDUNGS_ID,
     AuditEvent,
     AuditEventType,
 )
-from app.core.protocols import AuditEventPublisherProtocol
 from app.observability.tracing import traced
 
 

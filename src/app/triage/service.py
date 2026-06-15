@@ -25,7 +25,6 @@ import structlog
 
 from app.core.entities import ExtrahiertesArgument
 from app.core.failures import LLMError, LLMParseError, TriageError
-from app.core.protocols import LLMClientProtocol
 from app.core.results import TriageResult
 from app.observability.tracing import traced
 
@@ -35,6 +34,7 @@ from .events import TRIAGE_CONTRADICTION_DETECTED, TRIAGE_SUBSTANCE_THRESHOLD
 from .llm_schema import LLMArgument, LLMTriageOutput
 from .norm_extractor import ExtractedNorm, extract_norms
 from .prompts import ARGUMENT_EXTRACTION_PROMPT, neutralize_fence_markers
+from .protocols import LLMClientProtocol
 
 _log = structlog.get_logger()
 
