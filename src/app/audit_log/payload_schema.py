@@ -99,6 +99,17 @@ PAYLOAD_SCHEMAS: dict[AuditEventType, dict[str, type | FlatDict]] = {
         "model_id": str,
         "mistral_endpoint": str,
     },
+    # The read-access custody event (ADR-033): the show-document path records a
+    # raw-document read here before disclosing content. The document_id is the
+    # only payload key; it is content-free (the pseudonymous id, never the
+    # document text) and redundant with the event's einwendungs_id by
+    # construction, the same self-describing duplication EINGANG carries. The
+    # "when" is the event's own top-level timestamp, already inside the canonical
+    # hash (serialization.py) and so tamper-evident, not duplicated into the
+    # payload as a second clock that could diverge from it.
+    AuditEventType.ROHDOKUMENT_ZUGRIFF: {
+        "document_id": str,
+    },
 }
 
 

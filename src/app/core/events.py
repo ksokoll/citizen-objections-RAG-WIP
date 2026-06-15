@@ -18,13 +18,21 @@ SYSTEM_EINWENDUNGS_ID: Final[str] = "SYSTEM"
 class AuditEventType(StrEnum):
     """Classification of an audit event.
 
-    Most members name a pipeline stage. Two are exceptions, both process-wide
-    custody records rather than pipeline steps: WIEDERHERSTELLUNG, recorded when
-    the store quarantines a damaged tail at open (ADR-030), and STARTKONFIGURATION,
-    recorded at process start to prove the active controls after the fact
-    (ADR-031). Both carry the SYSTEM_EINWENDUNGS_ID sentinel. They live here
-    because AuditEvent.event_type is typed against this enum and each is a
-    custody record like any other.
+    Most members name a pipeline stage. Three are not pipeline steps:
+    WIEDERHERSTELLUNG, recorded when the store quarantines a damaged tail at open
+    (ADR-030); STARTKONFIGURATION, recorded at process start to prove the active
+    controls after the fact (ADR-031); and ROHDOKUMENT_ZUGRIFF, recorded when the
+    show-document path reads a stored raw document (unmasked PII) back out
+    (ADR-033). They live here because AuditEvent.event_type is typed against this
+    enum and each is a custody record like any other.
+
+    The sentinel differs by what the record is tied to. WIEDERHERSTELLUNG and
+    STARTKONFIGURATION are process-wide, tied to no objection, so they carry the
+    SYSTEM_EINWENDUNGS_ID sentinel. ROHDOKUMENT_ZUGRIFF is not: a raw-document
+    read is access to one specific objection's PII, so it carries that document's
+    id as its einwendungs_id (the natural correlation), not the SYSTEM sentinel.
+    A query for everything touching one objection then finds its read accesses
+    alongside its pipeline events (ADR-033).
     """
 
     EINGANG = "eingang"
@@ -37,6 +45,7 @@ class AuditEventType(StrEnum):
     PIPELINE_FEHLER = "pipeline_fehler"
     WIEDERHERSTELLUNG = "wiederherstellung"
     STARTKONFIGURATION = "startkonfiguration"
+    ROHDOKUMENT_ZUGRIFF = "rohdokument_zugriff"
 
 
 class AuditEvent(BaseModel):

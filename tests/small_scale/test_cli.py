@@ -19,8 +19,9 @@ import pytest
 
 import app.__main__ as cli
 from app.__main__ import main
-from app.audit_log.store import JsonLinesAuditStore
+from app.audit_log.store import JsonLinesAuditStore, verify_chain_file
 from app.core.events import AuditEvent, AuditEventType
+from app.core.failures import AuditLogError
 from app.document_ingestion.events import RAW_DOCUMENT_ACCESSED
 from app.document_ingestion.service import (
     MAX_RAW_TEXT_CHARS,
@@ -98,6 +99,8 @@ def test_show_document_round_trips_a_stored_document(
             stored.document_id,
             "--raw-store",
             str(raw_store),
+            "--audit-log",
+            str(tmp_path / "audit.jsonl"),
         ]
     )
 
@@ -132,6 +135,8 @@ def test_show_document_leaves_exactly_one_access_trace_without_content(
             stored.document_id,
             "--raw-store",
             str(raw_store),
+            "--audit-log",
+            str(tmp_path / "audit.jsonl"),
         ]
     )
 
@@ -142,6 +147,111 @@ def test_show_document_leaves_exactly_one_access_trace_without_content(
     assert len(accesses) == 1
     assert accesses[0]["document_id"] == stored.document_id
     assert _ORIGINAL_TEXT not in json.dumps(lines)
+
+
+def test_show_document_writes_a_content_free_read_event_to_the_chain(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The read of raw PII leaves a chain event, content-free (ADR-033).
+
+    Given a stored document, when show-document reads it, then the content is
+    printed (exit 0) and the audit chain carries exactly one ROHDOKUMENT_ZUGRIFF
+    event tied to the document_id (both as its correlation id and its only
+    payload key), the document content appears nowhere in the chain, and the
+    chain verifies fully: the event's schema passed write-entry validation, so it
+    is durably on the chain rather than rejected.
+    """
+    raw_store = tmp_path / "raw"
+    ingestion = DocumentIngestionService(
+        raw_store_path=raw_store,
+        masker=FakePiiMasker(),
+    )
+    stored = ingestion.ingest(_ORIGINAL_TEXT)
+    audit_log = tmp_path / "audit.jsonl"
+
+    exit_code = main(
+        [
+            "--log-dir",
+            str(tmp_path / "logs"),
+            "show-document",
+            stored.document_id,
+            "--raw-store",
+            str(raw_store),
+            "--audit-log",
+            str(audit_log),
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert _ORIGINAL_TEXT in captured.out
+
+    reads = JsonLinesAuditStore(audit_log).query(
+        event_type=AuditEventType.ROHDOKUMENT_ZUGRIFF
+    )
+    assert len(reads) == 1
+    assert reads[0].einwendungs_id == stored.document_id
+    assert reads[0].payload == {"document_id": stored.document_id}
+    assert _ORIGINAL_TEXT not in audit_log.read_text(encoding="utf-8")
+    assert verify_chain_file(audit_log).ok
+
+
+def test_show_document_aborts_without_printing_when_the_read_audit_write_fails(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failed read-access write aborts the read and discloses nothing (ADR-033).
+
+    Given an audit store whose write of the read-access event fails, when
+    show-document is invoked for a stored document, then it exits nonzero with a
+    clear refusal on stderr and prints no content: raw PII is disclosed only if
+    the access is provably recorded in the chain, so an unrecorded read is no
+    read at all.
+    """
+    raw_store = tmp_path / "raw"
+    ingestion = DocumentIngestionService(
+        raw_store_path=raw_store,
+        masker=FakePiiMasker(),
+    )
+    stored = ingestion.ingest(_ORIGINAL_TEXT)
+
+    class _WriteFailingStore:
+        """A store whose recover/verify_open succeed but whose write fails."""
+
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            pass
+
+        def recover(self) -> None:
+            pass
+
+        def verify_open(self) -> None:
+            pass
+
+        def publish(self, event: AuditEvent) -> None:
+            raise AuditLogError("simulated read-access write failure")
+
+    monkeypatch.setattr(cli, "JsonLinesAuditStore", _WriteFailingStore)
+
+    exit_code = main(
+        [
+            "--log-dir",
+            str(tmp_path / "logs"),
+            "show-document",
+            stored.document_id,
+            "--raw-store",
+            str(raw_store),
+            "--audit-log",
+            str(tmp_path / "audit.jsonl"),
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 1
+    assert captured.out == ""
+    assert _ORIGINAL_TEXT not in captured.out
+    assert "refusing to disclose" in captured.err
 
 
 def test_show_document_with_unknown_id_errors_clearly(

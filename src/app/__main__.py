@@ -30,8 +30,11 @@ Commands (ADR-028):
   WuerdigungsBriefing as JSON with ISO-8601 UTC datetimes. The briefing is
   the delivery contract; the CLI emits it and nothing prettier, because
   presentation happens in a frontend beyond the system boundary.
-- show-document <id>: print the stored raw document for a document_id.
-  An unknown or malformed id is a clear error and a nonzero exit.
+- show-document <id>: print the stored raw document for a document_id. The
+  read of unmasked PII is recorded as a ROHDOKUMENT_ZUGRIFF event in the
+  tamper-evident chain before the content is printed, fail-closed: if that
+  custody write fails, the read aborts and nothing is printed (ADR-033). An
+  unknown or malformed id is a clear error and a nonzero exit.
 - verify-audit: fully walk the audit hash chain and report the first break
   for an auditor (ADR-031). Non-mutating (it never opens the store), so an
   audit cannot trigger recovery; a detected break is a nonzero exit with a
@@ -58,6 +61,7 @@ from app.audit_log.store import JsonLinesAuditStore, verify_chain_file
 from app.briefing.serialization import to_json
 from app.briefing.service import BriefingService
 from app.core.failures import (
+    AuditLogError,
     IngestionError,
     RetrievalError,
     TriageError,
@@ -373,6 +377,13 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help="raw document store directory (default: <app-home>/raw_store)",
     )
+    show.add_argument(
+        "--audit-log",
+        type=Path,
+        default=None,
+        help="append-only audit log file the read-access event is written to "
+        "(default: <app-home>/audit.jsonl)",
+    )
 
     verify = commands.add_parser(
         "verify-audit",
@@ -541,12 +552,40 @@ def _run_process(args: argparse.Namespace, paths: dict[str, Path]) -> int:
 
 
 def _run_show_document(args: argparse.Namespace, paths: dict[str, Path]) -> int:
-    """Look up one stored raw document by id."""
+    """Look up one stored raw document by id, recording the access fail-closed.
+
+    Reading raw PII back out is the one custody-relevant read path (ADR-033).
+    The document is loaded first, which validates the id and emits the
+    operational raw_document_accessed log event (ADR-027). Then the read-access
+    event is written into the tamper-evident chain, and the content is printed
+    only if that write is durable: raw PII is disclosed only when the access is
+    provably recorded in the immutable chain, not merely in the deletable log. A
+    failure anywhere in the audit path (lock contention, a tampered tail caught
+    at open, the append itself) aborts the read with a nonzero exit and prints
+    nothing.
+
+    The audit store is opened as a writing path (recover then verify_open, like
+    process): recover seeds the chain head so the read event chains onto the real
+    tail rather than re-seeding genesis, and verify_open refuses to disclose PII
+    onto a chain whose tail does not verify.
+    """
     _emit_startup_config(log_format=args.log_format, paths=paths)
     try:
         raw_text = load_raw_document(args.raw_store, args.document_id)
     except IngestionError as exc:
         print(str(exc), file=sys.stderr)
+        return 1
+    try:
+        audit_store = JsonLinesAuditStore(args.audit_log)
+        audit_store.recover()
+        audit_store.verify_open()
+        AuditLogService(store=audit_store).record_raw_document_read(args.document_id)
+    except AuditLogError as exc:
+        print(
+            f"raw-document access could not be recorded in the audit chain, "
+            f"refusing to disclose the document: {exc}",
+            file=sys.stderr,
+        )
         return 1
     print(raw_text)
     return 0

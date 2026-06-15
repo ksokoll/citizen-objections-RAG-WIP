@@ -125,6 +125,25 @@ def test_the_emitted_events_payloads_all_validate() -> None:
         AuditEventType.WIEDERHERSTELLUNG,
         {"quarantined_hash": "a" * 64, "quarantined_lines": 1},
     )
+    validate_payload(
+        AuditEventType.ROHDOKUMENT_ZUGRIFF,
+        {"document_id": "doc-1"},
+    )
+
+
+def test_read_access_event_carries_only_the_content_free_document_id() -> None:
+    """The read-access event declares document_id and nothing that could carry
+    content (ADR-033): the document_id string passes, and a content key like the
+    document text is rejected at the declaration boundary, so the read-access
+    record stays content-free like every other chain event.
+    """
+    validate_payload(AuditEventType.ROHDOKUMENT_ZUGRIFF, {"document_id": "doc-1"})
+
+    with pytest.raises(PayloadSchemaError, match="content"):
+        validate_payload(
+            AuditEventType.ROHDOKUMENT_ZUGRIFF,
+            {"document_id": "doc-1", "content": "Originaltext der Einwendung"},
+        )
 
 
 def test_publish_rejects_an_undeclared_payload_key_at_write_entry(
