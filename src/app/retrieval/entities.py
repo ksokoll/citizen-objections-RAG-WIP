@@ -1,15 +1,16 @@
-"""Entities and protocols for the Retrieval bounded context.
+"""Value objects for the Retrieval bounded context.
 
-Holds the value objects and the abstract interfaces. Pure: no I/O, no
-external dependencies beyond the standard library and typing, no imports
-from other modules in this context. Concrete implementations of the
-protocols live alongside this module in the flat context package.
+Holds the value objects the production path produces and consumes. Pure: no
+I/O, no external dependencies beyond the standard library, no imports from
+other modules in this context. The Retriever interface lives in protocols.py.
+The Embedder interface moved to experiments/vector_retrieval_reference with its
+only implementation when the vector path left production (Round 20, M2,
+ADR-021), so no vector vocabulary remains here.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Protocol
 
 
 @dataclass(frozen=True)
@@ -97,22 +98,3 @@ class NormWithSource:
     method: str
     confidence: float | None
     resolved: bool
-
-
-class Embedder(Protocol):
-    """Abstract interface for turning text into dense vectors.
-
-    Concrete implementations (for example a sentence-transformers wrapper)
-    live alongside this module in the context package. The asymmetric query/passage
-    distinction is part of the contract because retrieval-tuned models
-    such as the e5 family require different handling for indexed passages
-    versus search queries.
-    """
-
-    def embed_passages(self, texts: list[str]) -> list[list[float]]:
-        """Embed texts that will be stored in the index (the corpus side)."""
-        ...
-
-    def embed_query(self, text: str) -> list[float]:
-        """Embed a single text that will be used as a search query."""
-        ...

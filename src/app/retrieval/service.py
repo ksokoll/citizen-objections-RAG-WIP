@@ -10,8 +10,9 @@ than guessed.
 The vector-similarity fallback was removed from the production path
 (ADR-021): it resolved zero real citations on the Phase A ground truth and
 produced a confident-wrong match on an out-of-corpus probe. The E5Embedder
-and FaissNormIndex remain in this context as reversible experimental
-reference and are deliberately not imported here.
+and FaissNormIndex were moved to experiments/vector_retrieval_reference as
+reversible experimental reference (Round 20, M2); the production path is this
+exact-match resolver only, and the context no longer carries vector code.
 """
 
 from __future__ import annotations

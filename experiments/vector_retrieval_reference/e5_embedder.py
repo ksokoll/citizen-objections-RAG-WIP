@@ -1,8 +1,18 @@
-"""Sentence-transformers embedder for the Retrieval bounded context.
+"""Sentence-transformers embedder: evaluated, rejected, kept as reference.
 
-Infrastructure-layer implementation of the Embedder Protocol, wrapping
-the multilingual-e5-large model. The e5 family is trained for asymmetric
-retrieval and requires distinct prefixes:
+Reference implementation of the vector-search path the Retrieval context
+evaluated and rejected (ADR-021). Production resolves norm citations by exact
+dict lookup (retrieval/service.py); the vector fallback resolved zero real
+citations on the Phase A ground truth and produced a confident-wrong match on
+an out-of-corpus probe, so it was removed from the production path. This module
+lived in src/app/retrieval through Round 17; Round 20 (M2) moved it here so the
+production package no longer carries torch/faiss/sentence-transformers for code
+that never runs, and the directory name states what is true. The decision is
+reversible: if production data later shows drift that exact-match misses, the
+hybrid path is reinstated from here with a calibrated confidence floor.
+
+It wraps the multilingual-e5-large model. The e5 family is trained for
+asymmetric retrieval and requires distinct prefixes:
 
     "passage: " for texts that are stored in the index (the corpus)
     "query: "   for texts used as search queries
@@ -14,9 +24,14 @@ wrapper owns the prefixing.
 Embeddings are L2-normalised so that an inner-product search over the
 vectors is equivalent to cosine similarity. The FaissNormIndex relies on
 this: it uses an inner-product index and assumes normalised inputs.
+
+Requires the optional vector-experiments extra (pyproject.toml):
+``pip install -e .[vector-experiments]``.
 """
 
 from __future__ import annotations
+
+from typing import Protocol
 
 import numpy as np
 from sentence_transformers import SentenceTransformer
@@ -27,6 +42,26 @@ _MODEL_NAME = "intfloat/multilingual-e5-large"
 
 _PASSAGE_PREFIX = "passage: "
 _QUERY_PREFIX = "query: "
+
+
+class Embedder(Protocol):
+    """Abstract interface for turning text into dense vectors.
+
+    Moved here with its only implementation in Round 20 (M2): no production
+    code referenced it once the vector path left src/app/retrieval, so the
+    interface travels with E5Embedder rather than remaining a dead protocol in
+    the context's entities module. The asymmetric query/passage distinction is
+    part of the contract because retrieval-tuned models such as the e5 family
+    require different handling for indexed passages versus search queries.
+    """
+
+    def embed_passages(self, texts: list[str]) -> list[list[float]]:
+        """Embed texts that will be stored in the index (the corpus side)."""
+        ...
+
+    def embed_query(self, text: str) -> list[float]:
+        """Embed a single text that will be used as a search query."""
+        ...
 
 
 class E5Embedder:

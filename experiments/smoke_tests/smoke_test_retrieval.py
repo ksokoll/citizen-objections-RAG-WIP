@@ -12,8 +12,9 @@ Loads all nine statutes and resolves a set of probe citations covering:
 
 Resolution is exact-match only (ADR-021); the probes confirm the
 paragraph-level normalisation and Gesetz isolation behave on the real
-corpus. The E5Embedder and FaissNormIndex remain in the context as
-experimental reference and are not exercised here.
+corpus. The E5Embedder and FaissNormIndex now live under
+experiments/vector_retrieval_reference (Round 20, M2) and are not exercised
+here.
 """
 
 from __future__ import annotations
