@@ -16,6 +16,7 @@ from filelock import FileLock, Timeout
 
 from app.audit_log.anchor import ChainHead
 from app.audit_log.events import AUDIT_RECOVERED
+from app.audit_log.payload_schema import validate_payload
 from app.audit_log.serialization import GENESIS_PREV_HASH, compute_event_hash
 from app.audit_log.verification import ChainBreak, VerificationResult, verify_chain
 from app.core.events import SYSTEM_EINWENDUNGS_ID, AuditEvent, AuditEventType
@@ -270,7 +271,14 @@ class JsonLinesAuditStore:
         )
 
     def _append_durably(self, event: AuditEvent) -> None:
-        """Chain, durably write, then advance the head: the append invariant.
+        """Validate, chain, durably write, then advance the head: the append rule.
+
+        The write entry is where the content-free gate runs (Form B, ADR-032):
+        before anything touches disk, the payload is validated against the event
+        type's declared schema, so an undeclared key or a wrong type is rejected
+        loudly and never reaches the chain. This is the only place the schema is
+        enforced; the read path stays tolerant so a historical line never fails
+        an open (Sec-3).
 
         The ordering is the durability guarantee (ADR-030): write the line,
         flush the Python buffer, os.fsync the file descriptor so the bytes reach
@@ -284,9 +292,13 @@ class JsonLinesAuditStore:
             event: The caller's event, before its chain fields are assigned.
 
         Raises:
+            PayloadSchemaError: If the payload carries a key or type the event's
+                declared schema forbids (ADR-032). A programming error in the
+                emitter, raised before any write.
             AuditLogError: If writing or fsyncing the line fails. The OSError is
                 wrapped and chained so the boundary contract holds (ADR-027).
         """
+        validate_payload(event.event_type, event.payload)
         chained = self._chain(event)
 
         try:
@@ -299,6 +311,9 @@ class JsonLinesAuditStore:
                 f"failed to append audit event {event.event_id}"
             ) from exc
 
+        # _chain always stamps a hash, so event_hash is a str here; the field
+        # type is str | None for the pre-chain case, narrowed by construction.
+        assert chained.event_hash is not None
         self._head_hash = chained.event_hash
         self._head_sequence = chained.sequence_number
 

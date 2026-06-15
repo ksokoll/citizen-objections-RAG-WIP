@@ -268,7 +268,7 @@ def test_event_survives_roundtrip(tmp_path: Path) -> None:
         einwendungs_id="EW-042",
         event_type=AuditEventType.BRIEFING_ERSTELLT,
         timestamp=ts,
-        payload={"confidence": 0.95, "model": "claude-3"},
+        payload={"entry_count": 3},
     )
     store.publish(original)
 

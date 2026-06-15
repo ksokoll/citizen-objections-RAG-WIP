@@ -14,51 +14,6 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 #: system events finds them together regardless of which wrote them.
 SYSTEM_EINWENDUNGS_ID: Final[str] = "SYSTEM"
 
-#: Maximum length of any string in an AuditEvent payload. The hash chain must
-#: stay content-free so it can coexist with the right to erasure: the chain is
-#: undeletable, erasure hits only the raw store, and that holds only if the
-#: chain carries nothing erasure-bound (ADR-031). The bound is a heuristic
-#: against text snippets, not a guarantee: it admits SHA-256 hashes (64 hex),
-#: short ids, version strings, and entity labels, while rejecting a pasted
-#: objection fragment. A 30-char string can still be a name; the validator
-#: enforces types and length mechanically, and the residual is named, exactly
-#: like the log-key allowlist (mechanism plus policy plus residual).
-MAX_PAYLOAD_STR_LEN: Final[int] = 128
-
-
-def _payload_leaf_is_allowed(value: object) -> bool:
-    """Whether a scalar payload value is within the content-free allowlist.
-
-    Allowed leaves are int, float, bool (an int subclass), and strings up to
-    MAX_PAYLOAD_STR_LEN. Everything else (None, bytes, nested containers, any
-    object) is rejected.
-    """
-    if isinstance(value, int | float):
-        return True
-    if isinstance(value, str):
-        return len(value) <= MAX_PAYLOAD_STR_LEN
-    return False
-
-
-def _payload_value_is_allowed(value: object) -> bool:
-    """Whether one payload value is allowed: a leaf, or a flat list/dict of them.
-
-    A single level of list or dict is permitted so counts maps (entity counts)
-    and version maps pass while staying content-free: every element must itself
-    be an allowed leaf, so a dict of dicts or a list of lists is rejected. Dict
-    keys must be strings within the same length bound.
-    """
-    if isinstance(value, list):
-        return all(_payload_leaf_is_allowed(item) for item in value)
-    if isinstance(value, dict):
-        return all(
-            isinstance(key, str)
-            and len(key) <= MAX_PAYLOAD_STR_LEN
-            and _payload_leaf_is_allowed(item)
-            for key, item in value.items()
-        )
-    return _payload_leaf_is_allowed(value)
-
 
 class AuditEventType(StrEnum):
     """Classification of an audit event.
@@ -107,7 +62,13 @@ class AuditEvent(BaseModel):
     payload: dict[str, Any] = Field(
         default_factory=dict,
         description=(
-            "Context-specific metadata (confidence scores, intermediate results, etc.)"
+            "Context-specific metadata (counts, scores, flags, ids). The kernel "
+            "carries the payload without constraining its shape; the audit "
+            "context governs what each event type may carry and enforces it at "
+            "write entry, so the chain stays content-free (Form B, ADR-032). The "
+            "kernel does not validate the payload at construction: the gate is "
+            "the store's write entry, not the model, and the read path is "
+            "deliberately tolerant so a historical line never fails an open."
         ),
     )
     serialization_version: int = Field(
@@ -156,41 +117,3 @@ class AuditEvent(BaseModel):
         if not v or not v.strip():
             raise ValueError("must not be empty")
         return v.strip()
-
-    @field_validator("payload")
-    @classmethod
-    def validate_payload_is_content_free(
-        cls, payload: dict[str, Any]
-    ) -> dict[str, Any]:
-        """Reject payload values that are not content-free simple types (ADR-031).
-
-        The chain is the precondition for erasure coexistence: it is undeletable,
-        and the right to erasure reaches only the raw store, which holds only if
-        the chain carries nothing erasure-bound. So a payload value may be int,
-        float, bool, a string up to MAX_PAYLOAD_STR_LEN, or a flat list/dict of
-        those (counts and version maps). A value outside that set, a deeper
-        nesting, or an over-length string is rejected at construction, loudly,
-        so a text fragment cannot enter the chain by accident. This is a
-        mechanism with a named residual, not a guarantee: a short string can
-        still be a name (see MAX_PAYLOAD_STR_LEN).
-
-        Args:
-            payload: The event payload to validate.
-
-        Returns:
-            The validated payload, unchanged.
-
-        Raises:
-            ValueError: If any value (or nested element) is outside the
-                allowlist, naming the offending key.
-        """
-        for key, value in payload.items():
-            if not _payload_value_is_allowed(value):
-                raise ValueError(
-                    f"payload[{key!r}] is not content-free: an audit payload "
-                    "value must be int, float, bool, a string no longer than "
-                    f"{MAX_PAYLOAD_STR_LEN} characters, or a flat list/dict of "
-                    "those, so the tamper-evident chain carries no erasure-bound "
-                    "text (ADR-031)"
-                )
-        return payload
