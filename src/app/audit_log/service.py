@@ -2,9 +2,14 @@
 
 from __future__ import annotations
 
+import uuid
 from datetime import datetime
 
-from app.core.events import AuditEvent, AuditEventType
+from app.core.events import (
+    SYSTEM_EINWENDUNGS_ID,
+    AuditEvent,
+    AuditEventType,
+)
 from app.core.protocols import AuditEventPublisherProtocol
 from app.observability.tracing import traced
 
@@ -37,6 +42,32 @@ class AuditLogService:
             event: The audit event to record.
         """
         self._store.publish(event)
+
+    def record_startup_config(self, provenance: dict[str, object]) -> None:
+        """Construct and publish the STARTKONFIGURATION custody event (ADR-031).
+
+        The audit context owns the custody event's shape: the STARTKONFIGURATION
+        event type, the process-wide SYSTEM sentinel id, and a fresh event id.
+        The CLI supplies only the content-free provenance values (git sha,
+        package versions, allowlist size, and so on); the audit-schema knowledge
+        stays here, not in the wiring layer (A3). The store assigns the chain
+        fields and enforces the payload schema at write entry, so this is a plain
+        publish like any other custody event, not a second writer reaching past
+        the service.
+
+        Args:
+            provenance: The content-free provenance of the active controls, as
+                assembled by the composition root. Copied into the event payload
+                so the caller's dict is not retained.
+        """
+        self._store.publish(
+            AuditEvent(
+                event_id=str(uuid.uuid4()),
+                event_type=AuditEventType.STARTKONFIGURATION,
+                einwendungs_id=SYSTEM_EINWENDUNGS_ID,
+                payload=dict(provenance),
+            )
+        )
 
     def query(
         self,

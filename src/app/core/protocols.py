@@ -31,9 +31,16 @@ class LLMClientProtocol(Protocol):
 class AuditEventPublisherProtocol(Protocol):
     """Append-only audit event store.
 
-    All state changes must be audited via `publish`. The store must enforce
-    immutability: duplicate event_ids raise AuditLogError. `query` is for
-    retrieving historical events; it returns empty list on no match, never raises.
+    All state changes must be audited via `publish`, which appends; no event is
+    ever rewritten or deleted. `query` is for retrieving historical events; it
+    returns empty list on no match, never raises.
+
+    Duplicate detection is deliberately not part of this contract. The durable
+    store keys the chain off an in-memory head and does not scan the file per
+    append (ADR-030), so a re-published event_id is not rejected here; the
+    pipeline mints a fresh id per event, making that a deliberate trade, not a
+    gap. Append-only and failure-translation are the guarantees this protocol
+    makes.
 
     Failure contract: implementations translate every I/O failure on the
     publish path into AuditLogError. No raw OSError may escape publish, so
@@ -50,9 +57,8 @@ class AuditEventPublisherProtocol(Protocol):
             event: The audit event to record.
 
         Raises:
-            AuditLogError: If event_id already exists (duplicate prevention)
-                or if an I/O failure prevents the append. Raw OSErrors are
-                translated, never propagated.
+            AuditLogError: If an I/O failure prevents the append. Raw OSErrors
+                are translated, never propagated.
         """
         ...
 
