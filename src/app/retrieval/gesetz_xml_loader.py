@@ -32,6 +32,12 @@ from __future__ import annotations
 import hashlib
 import re
 from pathlib import Path
+
+# Stdlib XML parsing. It is not hardened against internal entity expansion
+# (billion-laughs). That is acceptable only under the corpus-trust assumption
+# made explicit at the parse site in load_gesetz; a future untrusted-corpus
+# source must switch this import and that call to defusedxml.ElementTree, the
+# named one-line backlog the hardening depends on.
 from xml.etree import ElementTree
 
 from app.retrieval.entities import GesetzParagraph, LoadedCorpus
@@ -153,6 +159,15 @@ def load_gesetz(xml_path: Path) -> list[GesetzParagraph]:
     if not xml_path.exists():
         raise FileNotFoundError(f"Statute XML not found: {xml_path}")
 
+    # Parsed with stdlib ElementTree, which does not harden against internal
+    # entity expansion. Safe here on an explicit assumption: the corpus under
+    # data/XML/ is fixed, checked-in, read-only, and not attacker-controlled
+    # input, so the entity-expansion vector is not reachable in the current
+    # threat model (ADR-027 delimitation). The hardening depends on that
+    # assumption: if a future deployment loads corpora from a less trusted
+    # channel, switch this call and the import above to defusedxml.ElementTree
+    # (pin defusedxml exact when added). That one dependency is the named
+    # backlog item; it is not pulled in now because the threat is unreachable.
     tree = ElementTree.parse(xml_path)
     root = tree.getroot()
     gesetz = _extract_statute_abbreviation(root)
