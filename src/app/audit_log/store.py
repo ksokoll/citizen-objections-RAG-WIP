@@ -67,6 +67,40 @@ class VerificationResult:
     first_break: ChainBreak | None = None
 
 
+@dataclass(frozen=True)
+class ChainHead:
+    """The chain's current tip: the last event's hash and its sequence number.
+
+    The value an eval run anchors into its committed results.json, so the git
+    history witnesses the chain's tip at that moment (ADR-031). A fresh chain has
+    the genesis sentinel as event_hash and None as sequence_number, recorded
+    honestly: there is no chain to anchor yet.
+    """
+
+    event_hash: str
+    sequence_number: int | None
+
+
+def head_anchor(head: ChainHead) -> dict[str, object]:
+    """Serialize the chain head as the external-anchor block for results.json.
+
+    Returns {"chain_anchor": {"head_hash", "head_sequence"}}, the value an eval
+    run embeds into its committed results.json so the git history is an external
+    trust anchor against later truncation or rewrite (ADR-031). A None sequence
+    (an empty chain) is recorded as null, not masked: there was no chain to
+    anchor.
+
+    Args:
+        head: The chain head to serialize, typically a store's `head`.
+    """
+    return {
+        "chain_anchor": {
+            "head_hash": head.event_hash,
+            "head_sequence": head.sequence_number,
+        }
+    }
+
+
 def _verify_one(
     event: AuditEvent,
     index: int,
@@ -356,6 +390,18 @@ class JsonLinesAuditStore:
         """
         with self._single_writer():
             self._append_durably(event)
+
+    @property
+    def head(self) -> ChainHead:
+        """The chain's current head (last hash and sequence): the anchor value.
+
+        Read from the in-memory head the durable append maintains (ADR-030), so
+        it never claims an event the disk lacks. An eval run records this via
+        head_anchor into its committed results.json (ADR-031).
+        """
+        return ChainHead(
+            event_hash=self._head_hash, sequence_number=self._head_sequence
+        )
 
     def _append_durably(self, event: AuditEvent) -> None:
         """Chain, durably write, then advance the head: the append invariant.

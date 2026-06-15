@@ -15,6 +15,7 @@ from filelock import FileLock
 from app.audit_log.serialization import GENESIS_PREV_HASH, compute_event_hash
 from app.audit_log.store import (
     JsonLinesAuditStore,
+    head_anchor,
     verify_chain,
     verify_chain_file,
 )
@@ -762,3 +763,41 @@ def test_verify_chain_is_vacuously_ok_for_an_empty_chain(tmp_path: Path) -> None
 
     assert verify_chain([]).ok
     assert verify_chain_file(path).ok
+
+
+def test_head_reflects_the_last_appended_event(tmp_path: Path) -> None:
+    """Given a chain of events, when the head is read, then it carries the last
+    event's hash and sequence: the head is the external anchor value (ADR-031).
+    """
+    path, events = _written_chain(tmp_path, count=3)
+    store = JsonLinesAuditStore(path)
+
+    assert store.head.sequence_number == 2
+    assert store.head.event_hash == events[-1].event_hash
+
+
+def test_head_of_a_fresh_chain_is_the_genesis_sentinel(tmp_path: Path) -> None:
+    """A fresh store has the genesis sentinel as head hash and None as sequence:
+    there is no chain to anchor yet, recorded honestly."""
+    store = JsonLinesAuditStore(tmp_path / "audit.jsonl")
+
+    assert store.head.event_hash == GENESIS_PREV_HASH
+    assert store.head.sequence_number is None
+
+
+def test_head_anchor_serializes_the_head_for_results_json(tmp_path: Path) -> None:
+    """head_anchor produces a JSON-serializable chain_anchor block carrying the
+    head hash and sequence, the value an eval run commits (ADR-031)."""
+    path, events = _written_chain(tmp_path, count=3)
+    store = JsonLinesAuditStore(path)
+
+    anchor = head_anchor(store.head)
+
+    assert anchor == {
+        "chain_anchor": {
+            "head_hash": events[-1].event_hash,
+            "head_sequence": 2,
+        }
+    }
+    # It must round-trip through JSON, since it is written into results.json.
+    assert json.loads(json.dumps(anchor)) == anchor
