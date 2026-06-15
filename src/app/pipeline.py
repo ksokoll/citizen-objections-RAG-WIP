@@ -77,6 +77,19 @@ class Pipeline:
         briefing: BriefingService,
         audit: AuditLogService,
     ) -> None:
+        # Single-run assumption (ADR-026, declared simplification). This
+        # Coordinator assumes one synchronous run per process: the span exporter
+        # and the metric registry it drives are process-global, not run-scoped,
+        # and run() clears finished spans at entry (clear_finished_spans below)
+        # rather than isolating spans per run. The simplification is correct for
+        # the current CLI, one document per process; it breaks under concurrent
+        # runs in one process (a FastAPI worker serving overlapping requests),
+        # where two runs would interleave spans and metrics. The retrofit when
+        # that arrives is run-scoped span collection plus registry injection
+        # (inject the instrumentation here at construction instead of reaching
+        # module globals); the FastAPI server is the declared trigger. The
+        # assumption is recorded here, where a concurrency author edits, not only
+        # in the ADR.
         self._ingestion = ingestion
         self._triage = triage
         self._retrieval = retrieval
@@ -107,9 +120,13 @@ class Pipeline:
             RetrievalError: If norm retrieval fails.
         """
         # The run owner defines the run (M5): discard the previous run's
-        # finished spans here at run start, not via a parentage heuristic in
-        # the instrumentation layer. Single-run assumption: the global exporter
-        # is cleared, not run-scoped (ADR-026, declared assumption).
+        # finished spans here at run start, not via a parentage heuristic in the
+        # instrumentation layer. This is the single-run assumption in action
+        # (ADR-026, declared simplification, see the constructor): the global
+        # span exporter is cleared, not run-scoped, which is correct for one
+        # synchronous run per process and breaks under concurrent runs. The
+        # retrofit is run-scoped span collection plus registry injection, with
+        # the FastAPI server as the declared trigger.
         clear_finished_spans()
 
         try:

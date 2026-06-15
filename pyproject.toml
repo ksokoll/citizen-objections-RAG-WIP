@@ -30,6 +30,7 @@ dev = [
     "pytest-cov>=5.0",
     "ruff>=0.4",
     "mypy>=1.10",
+    "import-linter==2.11",
 ]
 # The vector-search reference implementation under
 # experiments/vector_retrieval_reference (E5Embedder, FaissNormIndex). Evaluated
@@ -75,3 +76,54 @@ markers = [
     "external: tests that make real network calls to external providers (costs money, non-deterministic, opt-in only)",
 ]
 addopts = "-m 'not external'"
+
+# Architectural fitness functions (H2, ADR-034). These turn the structural rules
+# the architecture reviews asked for from prose into mechanism: a build-time
+# check that fails on a violation rather than a convention a reviewer must catch
+# by eye. The contracts are run by tests/small_scale/test_import_contracts.py,
+# so a violation breaks the same `pytest -q` gate that proves behavior.
+[tool.importlinter]
+root_packages = ["app"]
+
+[[tool.importlinter.contracts]]
+# observability is a cross-cutting layer, not a bounded context: contexts may
+# depend on it as middleware, it depends on no context. The vocabulary union
+# (observability_registry) is a composition root, not the layer, so it is not
+# covered here; it legitimately imports each context's declared events.
+name = "Observability is a cross-cutting layer and imports no bounded context"
+type = "forbidden"
+source_modules = ["app.observability"]
+forbidden_modules = [
+    "app.document_ingestion",
+    "app.triage",
+    "app.retrieval",
+    "app.briefing",
+    "app.audit_log",
+]
+
+[[tool.importlinter.contracts]]
+# The bounded-context isolation rule: no context imports another. Cross-context
+# wiring is the Coordinator's (pipeline.py), via core DTOs.
+name = "Bounded contexts are mutually independent"
+type = "independence"
+modules = [
+    "app.document_ingestion",
+    "app.triage",
+    "app.retrieval",
+    "app.briefing",
+    "app.audit_log",
+]
+
+[[tool.importlinter.contracts]]
+# The shared kernel holds only cross-context contracts (Commit 1, Commit 2): it
+# imports no bounded context, so a context's internals can never leak into core.
+name = "Core is the shared kernel and imports no bounded context"
+type = "forbidden"
+source_modules = ["app.core"]
+forbidden_modules = [
+    "app.document_ingestion",
+    "app.triage",
+    "app.retrieval",
+    "app.briefing",
+    "app.audit_log",
+]
