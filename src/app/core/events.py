@@ -6,6 +6,14 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 # Naming convention: German for domain events, English for code identifiers
 
+#: einwendungs_id carried by process-wide chain events that are not tied to a
+#: citizen objection: the store's recovery event (ADR-030) and the startup
+#: configuration event (ADR-031). A fixed non-objection sentinel so such a
+#: custody record satisfies the required non-empty id without claiming an
+#: Einwendung. Both process-wide events share this one sentinel, so a query for
+#: system events finds them together regardless of which wrote them.
+SYSTEM_EINWENDUNGS_ID: Final[str] = "SYSTEM"
+
 #: Maximum length of any string in an AuditEvent payload. The hash chain must
 #: stay content-free so it can coexist with the right to erasure: the chain is
 #: undeletable, erasure hits only the raw store, and that holds only if the
@@ -55,11 +63,13 @@ def _payload_value_is_allowed(value: object) -> bool:
 class AuditEventType(StrEnum):
     """Classification of an audit event.
 
-    Most members name a pipeline stage. WIEDERHERSTELLUNG is the exception: it
-    is a store-integrity event, not a pipeline step, recorded when the store
-    quarantines a damaged tail at open and writes a recovery event into the
-    chain (ADR-030). It lives here because AuditEvent.event_type is typed against
-    this enum and the recovery event is a custody record like any other.
+    Most members name a pipeline stage. Two are exceptions, both process-wide
+    custody records rather than pipeline steps: WIEDERHERSTELLUNG, recorded when
+    the store quarantines a damaged tail at open (ADR-030), and STARTKONFIGURATION,
+    recorded at process start to prove the active controls after the fact
+    (ADR-031). Both carry the SYSTEM_EINWENDUNGS_ID sentinel. They live here
+    because AuditEvent.event_type is typed against this enum and each is a
+    custody record like any other.
     """
 
     EINGANG = "eingang"
@@ -71,6 +81,7 @@ class AuditEventType(StrEnum):
     FREIGABE = "freigabe"
     PIPELINE_FEHLER = "pipeline_fehler"
     WIEDERHERSTELLUNG = "wiederherstellung"
+    STARTKONFIGURATION = "startkonfiguration"
 
 
 class AuditEvent(BaseModel):

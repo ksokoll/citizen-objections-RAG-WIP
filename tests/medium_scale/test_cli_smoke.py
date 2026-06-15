@@ -19,7 +19,9 @@ import pytest
 from tests.conftest import FakeLLMClient
 
 import app.__main__ as cli
+from app.audit_log.store import JsonLinesAuditStore, verify_chain_file
 from app.core import EinwendungsTyp
+from app.core.events import SYSTEM_EINWENDUNGS_ID, AuditEventType
 from app.observability.logging_config import LOG_FILENAME
 from app.observability_registry import STARTUP_CONFIG
 from app.triage.llm_schema import LLMArgument, LLMTriageOutput
@@ -117,3 +119,60 @@ def test_process_prints_parseable_briefing_json_with_provenance(
     # destination the allowlist check admitted is recorded in startup_config
     # (K1, ADR-027).
     assert startups[0]["mistral_endpoint"] == cli.DEFAULT_MISTRAL_ENDPOINT
+
+
+def test_process_writes_a_content_free_startup_config_chain_event(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """process proves the active controls after the fact in the chain (ADR-031).
+
+    Given the production wiring with a faked Triage LLM, when process runs, then
+    the audit chain carries exactly one STARTKONFIGURATION event under the SYSTEM
+    sentinel as its genesis (sequence 0, before any objection event), its payload
+    proves the controls (git sha, log format, tracing flag, allowlist size, model
+    id, package versions) while carrying no objection text, and the chain still
+    verifies.
+    """
+    monkeypatch.setattr(
+        cli,
+        "_build_triage_llm",
+        lambda base_url: FakeLLMClient(parse_response=_TRIAGE_OUTPUT),
+    )
+    document = tmp_path / "einwendung.txt"
+    document.write_text(SAMPLE_EINWENDUNG, encoding="utf-8")
+    audit_log = tmp_path / "audit.jsonl"
+
+    exit_code = cli.main(
+        [
+            "--log-dir",
+            str(tmp_path / "logs"),
+            "process",
+            str(document),
+            "--xml-dir",
+            str(_XML_DIR),
+            "--raw-store",
+            str(tmp_path / "raw"),
+            "--audit-log",
+            str(audit_log),
+        ]
+    )
+    assert exit_code == 0, capsys.readouterr().err
+
+    store = JsonLinesAuditStore(audit_log)
+    config_events = store.query(event_type=AuditEventType.STARTKONFIGURATION)
+    assert len(config_events) == 1
+    event = config_events[0]
+    assert event.einwendungs_id == SYSTEM_EINWENDUNGS_ID
+    assert event.sequence_number == 0  # the chain's genesis, before any objection
+    assert event.payload["git_sha"]
+    assert event.payload["log_format"] == "json"
+    assert event.payload["tracing_enabled"] is False
+    assert event.payload["allowlist_size"] > 0
+    assert event.payload["model_id"] == cli.TRIAGE_MODEL_ID
+    assert "structlog" in event.payload["package_versions"]
+    # Content-free: no fragment of the objection text reaches the chain.
+    assert SAMPLE_EINWENDUNG not in json.dumps(event.payload)
+    # It participates in the chain and the whole chain still verifies.
+    assert verify_chain_file(audit_log).ok

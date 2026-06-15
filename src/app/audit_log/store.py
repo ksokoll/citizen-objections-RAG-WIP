@@ -17,18 +17,12 @@ from filelock import FileLock, Timeout
 
 from app.audit_log.events import AUDIT_RECOVERED
 from app.audit_log.serialization import GENESIS_PREV_HASH, compute_event_hash
-from app.core.events import AuditEvent, AuditEventType
+from app.core.events import SYSTEM_EINWENDUNGS_ID, AuditEvent, AuditEventType
 from app.core.failures import AuditLogError
 
 #: Module logger for the store's recovery event. Routes through the same
 #: governed chain as every other event (ADR-026).
 _log = structlog.get_logger()
-
-#: einwendungs_id carried by the system recovery event, which is not tied to a
-#: citizen objection. A fixed non-objection sentinel so the recovery custody
-#: record satisfies the required non-empty id without claiming an Einwendung
-#: (ADR-030).
-RECOVERY_EINWENDUNGS_ID: Final[str] = "SYSTEM"
 
 #: How many trailing events are verified at store open: the last K, not the
 #: whole file, so startup stays fast as the trail grows (ADR-031). The full walk
@@ -630,8 +624,9 @@ class JsonLinesAuditStore:
 
         Carries the quarantined bytes' hash and a line count in its payload, so
         what was removed is attributable without the raw content ever entering
-        the chain. It is a WIEDERHERSTELLUNG event with the system sentinel id,
-        not an objection event (ADR-030).
+        the chain. It is a WIEDERHERSTELLUNG event with the shared system
+        sentinel id (SYSTEM_EINWENDUNGS_ID, core/events.py), not an objection
+        event (ADR-030).
 
         Args:
             quarantined_hash: SHA-256 hex of the quarantined bytes.
@@ -639,7 +634,7 @@ class JsonLinesAuditStore:
         return AuditEvent(
             event_id=str(uuid.uuid4()),
             event_type=AuditEventType.WIEDERHERSTELLUNG,
-            einwendungs_id=RECOVERY_EINWENDUNGS_ID,
+            einwendungs_id=SYSTEM_EINWENDUNGS_ID,
             payload={"quarantined_hash": quarantined_hash, "quarantined_lines": 1},
         )
 

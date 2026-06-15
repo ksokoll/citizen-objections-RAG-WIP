@@ -8,7 +8,10 @@ a bootstrap failure aborts startup with an actionable message and no
 traceback, and after a successful bootstrap the registered startup_config
 event records the active toolset: git_sha, model_id, package versions,
 corpus_id, allowlist size, tracing flag, log format, and the resolved store
-paths.
+paths. For the process command the same content-free provenance (no paths) is
+additionally written into the tamper-evident chain as a STARTKONFIGURATION
+event under the SYSTEM sentinel, so the controls' activity is provable after
+the fact and not only in the retention-bound log (ADR-031).
 
 Persistent store paths (raw store, audit log, log sink) have no CWD-relative
 defaults (S5, Round 16.1): they default to locations under the app home
@@ -45,6 +48,7 @@ import argparse
 import os
 import subprocess
 import sys
+import uuid
 from importlib import metadata
 from pathlib import Path
 
@@ -54,6 +58,7 @@ from app.audit_log.service import AuditLogService
 from app.audit_log.store import JsonLinesAuditStore, verify_chain_file
 from app.briefing.serialization import to_json
 from app.briefing.service import BriefingService
+from app.core.events import SYSTEM_EINWENDUNGS_ID, AuditEvent, AuditEventType
 from app.core.failures import (
     IngestionError,
     RetrievalError,
@@ -188,40 +193,82 @@ def _package_versions() -> dict[str, str]:
     return versions
 
 
-def _emit_startup_config(
+def _startup_config_provenance(
     log_format: str,
-    paths: dict[str, Path],
     corpus_id: str | None = None,
     model_id: str | None = None,
     endpoint: str | None = None,
-) -> None:
-    """Emit the registered startup_config event after bootstrap.
+) -> dict[str, object]:
+    """Build the content-free provenance of the active controls.
 
-    Records the active toolset that produces this process's output. corpus_id,
-    model_id, and endpoint apply only to commands that load the corpus and wire
-    the LLM (process); show-document omits them rather than reporting stale or
-    invented values. The endpoint is the destination the startup allowlist check
-    admitted (K1), so a run's output is attributable to the endpoint it actually
-    reached. paths carries the resolved absolute store paths under their
-    allowlisted keys (app_home, log_dir, raw_store, audit_log), so which stores a
-    run actually hit is determinable afterward (S5).
+    The fields that prove, after the fact, which toolset produced this run's
+    output: the git sha, the package versions, the allowlist size, the tracing
+    flag, the log format, and (for the process command) the corpus hash, the
+    model id, and the admitted endpoint. Deliberately no store paths: a path can
+    exceed the payload length bound and is not part of the proof, so it stays in
+    the log event (S5) and out of the content-free chain event (ADR-031). Every
+    value here is a simple type or a flat version map, so it satisfies the
+    AuditEvent payload allowlist.
     """
-    fields: dict[str, object] = {
+    provenance: dict[str, object] = {
         "git_sha": _git_short_sha(),
         "package_versions": _package_versions(),
         "allowlist_size": len(allowed_keys()),
         "tracing_enabled": tracing_enabled(),
         "log_format": log_format,
     }
-    for name, path in paths.items():
-        fields[name] = str(path)
     if corpus_id is not None:
-        fields["corpus_id"] = corpus_id
+        provenance["corpus_id"] = corpus_id
     if model_id is not None:
-        fields["model_id"] = model_id
+        provenance["model_id"] = model_id
     if endpoint is not None:
-        fields["mistral_endpoint"] = endpoint
-    _log.info(STARTUP_CONFIG, **fields)
+        provenance["mistral_endpoint"] = endpoint
+    return provenance
+
+
+def _emit_startup_config(
+    log_format: str,
+    paths: dict[str, Path],
+    *,
+    store: JsonLinesAuditStore | None = None,
+    corpus_id: str | None = None,
+    model_id: str | None = None,
+    endpoint: str | None = None,
+) -> None:
+    """Record the active toolset: a governed log event always, a chain event too.
+
+    Records the active toolset that produces this process's output. corpus_id,
+    model_id, and endpoint apply only to commands that load the corpus and wire
+    the LLM (process); show-document omits them rather than reporting stale or
+    invented values. The endpoint is the destination the startup allowlist check
+    admitted (K1), so a run's output is attributable to the endpoint it actually
+    reached.
+
+    The log event carries the resolved absolute store paths under their
+    allowlisted keys (app_home, log_dir, raw_store, audit_log), so which stores a
+    run actually hit is determinable afterward (S5). When a store is wired (the
+    process command), the same content-free provenance is also written into the
+    tamper-evident chain as a STARTKONFIGURATION event under the SYSTEM sentinel,
+    so the controls' activity is provable after the fact and survives in the
+    chain, not only the retention-bound log (ADR-031). Paths are omitted from the
+    chain event: not part of the proof, and a path can exceed the payload bound.
+    """
+    provenance = _startup_config_provenance(log_format, corpus_id, model_id, endpoint)
+
+    log_fields = dict(provenance)
+    for name, path in paths.items():
+        log_fields[name] = str(path)
+    _log.info(STARTUP_CONFIG, **log_fields)
+
+    if store is not None:
+        store.publish(
+            AuditEvent(
+                event_id=str(uuid.uuid4()),
+                event_type=AuditEventType.STARTKONFIGURATION,
+                einwendungs_id=SYSTEM_EINWENDUNGS_ID,
+                payload=provenance,
+            )
+        )
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -452,9 +499,16 @@ def _run_process(args: argparse.Namespace, paths: dict[str, Path]) -> int:
         print(f"startup aborted: {exc}", file=sys.stderr)
         return 2
     retrieval = NormRetrievalService(corpus)
+    # The audit store is opened before the startup_config is recorded so the
+    # configuration custody event becomes the chain's genesis: the controls are
+    # attested before any objection event is appended (ADR-031).
+    audit_store = JsonLinesAuditStore(args.audit_log)
     _emit_startup_config(
         log_format=args.log_format,
         paths=paths,
+        # The process command wires the audit store, so the startup_config is
+        # additionally written into the chain (ADR-031), not only logged.
+        store=audit_store,
         # The startup_config corpus_id field keeps its name (provenance of the
         # statute corpus, ADR-026); its value is the retriever's
         # source_revision, which for this corpus-based retriever is the corpus
@@ -474,7 +528,7 @@ def _run_process(args: argparse.Namespace, paths: dict[str, Path]) -> int:
         triage=TriageService(llm=llm),
         retrieval=retrieval,
         briefing=BriefingService(),
-        audit=AuditLogService(store=JsonLinesAuditStore(args.audit_log)),
+        audit=AuditLogService(store=audit_store),
     )
 
     try:
