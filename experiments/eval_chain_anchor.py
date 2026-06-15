@@ -28,7 +28,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from app.audit_log.store import JsonLinesAuditStore, head_anchor
+from app.audit_log.anchor import head_anchor
+from app.audit_log.store import JsonLinesAuditStore
 
 
 def write_results_with_anchor(

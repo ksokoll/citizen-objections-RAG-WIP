@@ -12,13 +12,10 @@ from pathlib import Path
 import pytest
 from filelock import FileLock
 
+from app.audit_log.anchor import head_anchor
 from app.audit_log.serialization import GENESIS_PREV_HASH, compute_event_hash
-from app.audit_log.store import (
-    JsonLinesAuditStore,
-    head_anchor,
-    verify_chain,
-    verify_chain_file,
-)
+from app.audit_log.store import JsonLinesAuditStore, verify_chain_file
+from app.audit_log.verification import verify_chain
 from app.core.events import AuditEvent, AuditEventType
 from app.core.failures import AuditLogError
 
