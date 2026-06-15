@@ -43,17 +43,3 @@ class ExtrahiertesArgument:
     einwendungs_typ: EinwendungsTyp
     zitierte_normen: list[str] = field(default_factory=list)
     argument_verified: bool = False
-
-
-@dataclass(frozen=True)
-class Einwendung:
-    """Raw citizen objection as received at the system boundary.
-
-    Carries the original input text and document identity. Referenced
-    by einwendungs_id throughout the pipeline. Immutable after ingestion.
-    PII is present here; downstream contexts receive only masked text.
-    """
-
-    einwendungs_id: str
-    document_id: str
-    raw_text: str

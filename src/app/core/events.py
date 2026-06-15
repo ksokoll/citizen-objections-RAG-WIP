@@ -33,6 +33,18 @@ class AuditEventType(StrEnum):
     id as its einwendungs_id (the natural correlation), not the SYSTEM sentinel.
     A query for everything touching one objection then finds its read accesses
     alongside its pipeline events (ADR-033).
+
+    Why this is a central enum while the structured-log event vocabulary is
+    per-context (M1, Round 20). The asymmetry is deliberate, not an oversight.
+    The audit event types are a closed contract between exactly two parties: the
+    Coordinator that emits and the store that persists, and AuditEvent.event_type
+    is typed against this one enum, so both parties must name the same fixed set.
+    The log vocabulary is the opposite: open and growing, each context declaring
+    the events it emits, so by the coupling-hub rule it is owned per context and
+    unioned at the composition root (observability_registry, H2). A closed
+    two-party contract belongs in one shared type; an open per-context-growing
+    set belongs with its owners. The previously undocumented inconsistency
+    between the two was the finding; this declaration closes it.
     """
 
     EINGANG = "eingang"

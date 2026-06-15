@@ -1,7 +1,6 @@
 """Core domain models and protocols."""
 
 from .entities import (
-    Einwendung,
     EinwendungsTyp,
     ExtrahiertesArgument,
 )
@@ -25,7 +24,6 @@ from .results import (
 # shared failures, and the audit event vocabulary.
 __all__ = [
     # Entities
-    "Einwendung",
     "EinwendungsTyp",
     "ExtrahiertesArgument",
     # Results
