@@ -28,7 +28,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from app.audit_log.anchor import head_anchor
+from app.audit_log.anchor import results_with_anchor
 from app.audit_log.store import JsonLinesAuditStore
 
 
@@ -37,16 +37,17 @@ def write_results_with_anchor(
 ) -> None:
     """Write eval results with the chain head anchored, as committed JSON.
 
-    Merges the chain-head anchor block (head_anchor) into the results and writes
-    them to path. The anchor lives under the reserved "chain_anchor" key, so it
-    does not collide with the eval's own metrics.
+    The anchor's core logic (merging the chain head into the results under the
+    reserved "chain_anchor" key) lives under src/app, mypy- and ruff-checked
+    (results_with_anchor, A4). This module keeps only the eval-glue file write,
+    which stays under experiments/.
 
     Args:
         results: The eval's own result mapping (metrics, per-document outcomes).
         store: The audit store whose current head is anchored.
         path: Where to write the committed results.json.
     """
-    document = {**results, **head_anchor(store.head)}
+    document = results_with_anchor(results, store.head)
     path.write_text(
         json.dumps(document, ensure_ascii=False, indent=2), encoding="utf-8"
     )

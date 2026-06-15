@@ -44,3 +44,22 @@ def head_anchor(head: ChainHead) -> dict[str, object]:
             "head_sequence": head.sequence_number,
         }
     }
+
+
+def results_with_anchor(
+    results: dict[str, object], head: ChainHead
+) -> dict[str, object]:
+    """Merge the chain-head anchor block into an eval's results (ADR-031).
+
+    The load-bearing anchor logic, here under src/app so it is mypy- and
+    ruff-checked rather than escaping static analysis under experiments/ (A4):
+    it merges head_anchor(head) into the results under the reserved chain_anchor
+    key, so the committed results.json witnesses the chain's tip without
+    colliding with the eval's own metrics. Writing the file is eval glue that
+    stays under experiments/.
+
+    Args:
+        results: The eval's own result mapping (metrics, per-document outcomes).
+        head: The audit store's current chain head.
+    """
+    return {**results, **head_anchor(head)}

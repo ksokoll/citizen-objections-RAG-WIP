@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 from filelock import FileLock
 
-from app.audit_log.anchor import head_anchor
+from app.audit_log.anchor import head_anchor, results_with_anchor
 from app.audit_log.serialization import GENESIS_PREV_HASH, compute_event_hash
 from app.audit_log.store import JsonLinesAuditStore, verify_chain_file
 from app.audit_log.verification import verify_chain
@@ -943,3 +943,23 @@ def test_head_anchor_serializes_the_head_for_results_json(tmp_path: Path) -> Non
     }
     # It must round-trip through JSON, since it is written into results.json.
     assert json.loads(json.dumps(anchor)) == anchor
+
+
+def test_results_with_anchor_merges_the_head_into_eval_results(
+    tmp_path: Path,
+) -> None:
+    """results_with_anchor merges the chain_anchor block into the eval's own
+    results without colliding with its metrics, the load-bearing anchor logic now
+    under src/app and static analysis (A4, ADR-032)."""
+    path, events = _written_chain(tmp_path, count=3)
+    store = JsonLinesAuditStore(path)
+    store.recover()
+
+    document = results_with_anchor({"recall": 0.9, "precision": 0.95}, store.head)
+
+    assert document["recall"] == 0.9
+    assert document["chain_anchor"] == {
+        "head_hash": events[-1].event_hash,
+        "head_sequence": 2,
+    }
+    assert json.loads(json.dumps(document)) == document
