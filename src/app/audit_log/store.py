@@ -354,40 +354,141 @@ class JsonLinesAuditStore:
     def _recover_and_seed(self) -> None:
         """Seed the in-memory head from disk, recovering a damaged tail (ADR-030).
 
-        The body of recover(), under the single-writer lock: it both seeds the
-        head and recovers, so seeding is never a second reader divergent from
-        recovery. It reads the chain to its last valid line and seeds the head
-        from it. If the last line is damaged (invalid JSON at EOF, or a hash that
-        does not chain from its predecessor), the damaged line is quarantined, a
-        recovery event is appended to the chain, and the recovery is logged. Only
-        the last line is healed: an interior break is left for verify_chain (18c)
-        to surface, because a partial last line is directly observable while a
-        lost interior event is not without an external anchor.
+        The body of recover(), under the single-writer lock. The clean path is
+        O(K): it reads only the last tail_window+1 lines from the file end
+        (Sec-2, ADR-032), seeds the head from the last valid event, and returns
+        without parsing the whole trail. A damaged last line (invalid JSON at
+        EOF, or a hash that does not chain) falls back to the full read its
+        rewrite needs: recovery quarantines the damaged tail, appends a recovery
+        event, and logs it. Only the last line is healed; an interior break is
+        left for verify_chain (18c) to surface, because a partial last line is
+        directly observable while a lost interior event is not without an
+        external anchor.
 
         The tail-window verification is no longer part of seeding: it is the
         separate verify_open() step the writing path runs after recover(), so a
         read-only consumer that never calls it does not abort on a tampered tail
         (A5, ADR-031).
         """
+        lines, _ = self._read_last_lines(self._tail_window + 1)
+        events, damaged = self._parse_tail_for_recovery(lines)
+        if not damaged:
+            self._seed_head_from(events)
+            return
+        # A damaged last line: the rewrite needs the full valid prefix, so the
+        # rare damaged path falls back to the full read. Only the clean seeding
+        # read is O(K) (Sec-2: recovery's tail handling stays).
+        self._recover_full()
+
+    def _recover_full(self) -> None:
+        """Full-file recovery for a damaged last line: quarantine and seed.
+
+        The fallback _recover_and_seed takes only when the O(K) tail read found a
+        damaged last line. It re-reads the whole file (the rewrite of the healed
+        prefix needs every valid line), seeds the head, and quarantines the
+        damaged tail with a recovery event. An interior unparseable line raises
+        here, as it did before the O(K) optimization.
+        """
         valid_events, valid_lines, damaged_line = self._read_chain_with_tail_check()
         self._seed_head_from(valid_events)
         if damaged_line is not None:
             self._quarantine_and_record(damaged_line, valid_lines)
 
+    def _parse_tail_for_recovery(
+        self, lines: list[str]
+    ) -> tuple[list[AuditEvent], bool]:
+        """Parse the tail lines, flagging a damaged last line for the full path.
+
+        The windowed counterpart of _read_chain_with_tail_check used by the O(K)
+        clean path: lines are the last tail_window+1 file lines (read from the
+        end), so the last line here is the file's last line. An unparseable last
+        line, or a last line that parses but does not chain, is the EOF damage
+        recovery heals, reported as damaged=True so the caller falls back to the
+        full read. An unparseable non-last line is an interior break that raises,
+        as in the full read.
+
+        Returns:
+            (events, damaged). damaged is True when the last line is the EOF
+            damage case; events then excludes nothing (the caller re-reads).
+
+        Raises:
+            AuditLogError: If a non-last line in the window fails to parse.
+        """
+        events: list[AuditEvent] = []
+        for index, line in enumerate(lines):
+            try:
+                events.append(AuditEvent.model_validate_json(line))
+            except ValueError as exc:
+                if index == len(lines) - 1:
+                    return events, True
+                raise AuditLogError(
+                    f"audit store {self._path} has a damaged interior line near "
+                    f"the tail (window position {index}); recovery heals only a "
+                    "damaged last line, an interior break is for verify_chain "
+                    "to surface (18c)"
+                ) from exc
+        if not events:
+            return events, False
+        return events, not self._last_event_chains(events)
+
     def _tail_events(self) -> list[AuditEvent]:
         """Read the events verify_open checks: the window plus its predecessor.
 
-        Returns the last tail_window+1 events (the window and the predecessor
-        verify_chain seeds the tail walk from), or the whole chain when it is no
-        longer than the window. The break verify_open reports is therefore
-        indexed within this returned sequence, the documented meaning of a
-        ChainBreak index for a windowed walk. The read is over the healed file,
-        so it is called after recover().
+        Reads only the last tail_window+1 lines from the file end (Sec-2,
+        ADR-032), so verify_open is O(K) and the tail-window promise that open
+        does not parse the whole trail holds. Returns those events (the window
+        and the predecessor verify_chain seeds the tail walk from), or the whole
+        chain when it is no longer than the window. The break verify_open reports
+        is therefore indexed within this returned sequence, the documented
+        meaning of a ChainBreak index for a windowed walk. Called after
+        recover(), so the tail it reads is the healed tail.
         """
-        events = self._read_all()
-        if len(events) <= self._tail_window:
-            return events
-        return events[-(self._tail_window + 1) :]
+        lines, _ = self._read_last_lines(self._tail_window + 1)
+        return [AuditEvent.model_validate_json(line) for line in lines]
+
+    def _read_last_lines(self, max_lines: int) -> tuple[list[str], bool]:
+        """Read up to the last max_lines non-empty lines, seeking from the end.
+
+        Reads the file backwards in blocks until it has more than max_lines line
+        terminators or reaches the start, so a clean open is O(max_lines), not
+        O(file): the head is seeded and the tail window verified from the last
+        lines without parsing the whole trail (Sec-2, ADR-032). Splitting on raw
+        b"\\n" is safe for utf-8, since 0x0A never occurs inside a multibyte
+        sequence.
+
+        Args:
+            max_lines: How many trailing lines to return at most.
+
+        Returns:
+            (lines, reached_start). lines are the last complete non-empty lines,
+            at most max_lines, in file order. reached_start is True exactly when
+            the returned lines are the whole chain (the file has at most max_lines
+            lines, so the first is genesis), False when lines is a proper suffix.
+            A partial leading line from the backward read is never returned.
+        """
+        if not self._path.exists():
+            return [], True
+        block_size = 8192
+        with self._path.open("rb") as f:
+            f.seek(0, os.SEEK_END)
+            position = f.tell()
+            buffer = b""
+            while position > 0:
+                read_size = min(block_size, position)
+                position -= read_size
+                f.seek(position)
+                buffer = f.read(read_size) + buffer
+                if buffer.count(b"\n") > max_lines:
+                    break
+            read_whole_file = position == 0
+        lines = [line for line in buffer.decode("utf-8").splitlines() if line.strip()]
+        # reached_start is the genesis-included claim, not merely "the read hit
+        # byte 0": a small file read whole in one block still yields only a
+        # suffix once trimmed to max_lines. Trimming also drops the partial
+        # leading line a mid-file backward read leaves (there are then more than
+        # max_lines complete lines after it, so the slice excludes it).
+        reached_start = read_whole_file and len(lines) <= max_lines
+        return lines[-max_lines:], reached_start
 
     def _verify_tail_window(self, events: list[AuditEvent]) -> None:
         """Verify the last tail_window events, raising loudly on a break.

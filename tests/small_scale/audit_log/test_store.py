@@ -806,6 +806,95 @@ def test_a_read_only_open_of_a_tampered_file_does_not_abort(tmp_path: Path) -> N
     assert len(results) == 5
 
 
+def test_open_seeds_and_verifies_without_a_full_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Given a multi-event chain, when the writing path recovers and verifies the
+    tail, then it parses only the last K lines, never the whole file: open is
+    O(K), so the tail-window's documented promise that open does not scan the
+    trail holds (Sec-2, ADR-032).
+
+    The two full-file readers are made to fail; a clean recover()+verify_open()
+    that still seeds the correct head proves neither was used.
+    """
+    path, _ = _written_chain(tmp_path, count=6)
+    store = JsonLinesAuditStore(path, tail_window=2)
+
+    def _boom(*args: object, **kwargs: object) -> list[AuditEvent]:
+        raise AssertionError("open must not read the whole file (Sec-2)")
+
+    monkeypatch.setattr(store, "_read_all", _boom)
+    monkeypatch.setattr(store, "_read_chain_with_tail_check", _boom)
+
+    store.recover()  # seeds from the last K+1 lines only
+    store.verify_open()  # verifies the last K+1 lines only
+
+    assert store.head.sequence_number == 5
+
+
+def _chained_lines(payloads: list[dict]) -> list[str]:
+    """Build correctly hash-chained EINGANG lines for the given payloads.
+
+    Bypasses the store's write-entry schema gate by computing hashes directly,
+    so a payload the gate would reject can still be written as a valid,
+    integrity-sound line for a read-path tolerance test.
+    """
+    prev_hash = GENESIS_PREV_HASH
+    lines: list[str] = []
+    for seq, payload in enumerate(payloads):
+        event = AuditEvent(
+            event_id=str(uuid.uuid4()),
+            event_type=AuditEventType.EINGANG,
+            einwendungs_id=f"EW-{seq:03d}",
+            payload=payload,
+            sequence_number=seq,
+        )
+        event = event.model_copy(
+            update={"event_hash": compute_event_hash(event, prev_hash)}
+        )
+        prev_hash = event.event_hash  # type: ignore[assignment]
+        lines.append(event.model_dump_json())
+    return lines
+
+
+def test_a_non_conforming_inner_line_does_not_fail_open(tmp_path: Path) -> None:
+    """Given a chain whose interior line carries a payload the write-entry schema
+    would reject (but correctly hash-chained), when the store is opened and the
+    writing path recovers and verifies, then it does not fail: the schema is a
+    write-entry gate, the read path is tolerant, and the hash chain (not a
+    content rule) checks integrity (Sec-3, ADR-032).
+    """
+    path = tmp_path / "audit.jsonl"
+    lines = _chained_lines(
+        [
+            {"document_id": "d0"},
+            {"namen": ["Max Mustermann"]},  # declared on no event: write would reject
+            {"document_id": "d2"},
+        ]
+    )
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    store = JsonLinesAuditStore(path)
+    store.recover()  # does not raise on the non-conforming payload
+    store.verify_open()  # the hash chain is intact, so the tail verifies
+
+    read_back = store.query()
+    assert len(read_back) == 3
+    assert read_back[1].payload == {"namen": ["Max Mustermann"]}
+    assert verify_chain_file(path).ok
+
+    # Integrity is still the hash chain's job, not the content rule's: break the
+    # non-conforming line's recorded hash and the full walk surfaces it.
+    broken = AuditEvent.model_validate_json(lines[1]).model_copy(
+        update={"event_hash": "a" * 64}
+    )
+    path.write_text(
+        "\n".join([lines[0], broken.model_dump_json(), lines[2]]) + "\n",
+        encoding="utf-8",
+    )
+    assert not verify_chain_file(path).ok
+
+
 def test_verify_chain_is_vacuously_ok_for_an_empty_chain(tmp_path: Path) -> None:
     """Given a fresh store with no events, when its chain is verified, then it is
     ok: an empty chain has nothing to break."""
