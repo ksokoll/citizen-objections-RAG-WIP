@@ -15,7 +15,7 @@
 │              pipeline.py (Coordinator)       │
 │  - Sequential BC orchestration               │
 │  - Protocol dependency injection             │
-│  - AuditEvent emission after each step       │
+│  - AuditEvent emission (fail-closed, ADR-033)│
 │  - Failure routing and status mapping        │
 └──┬───────────┬───────────┬───────────┬────────┘
    │           │           │           │
@@ -452,13 +452,13 @@ list[AuditEvent]  # in write order
 ### 5. Business Rules
 
 1. **Append-only.** Events are never updated or deleted. An `event_id` is unique; a second write of the same ID is an error.
-2. **Write failure does not suppress domain results.** An `AuditLogError` is logged at ERROR level; the pipeline result is returned to the caller regardless.
+2. **Custody-event write failure is fail-closed.** A failed custody-event write is logged at ERROR and counted (`audit_write_failures_total`), then re-raised so the run aborts: no result is returned that would imply a complete trail it lacks (ADR-027, armed in ADR-033). A telemetry write failure, outside the custody set, does not abort a run.
 3. **Writable on failure.** AuditLog must accept events that record the failure of other contexts. It cannot depend on any domain context succeeding.
 
 ### 6. Error Strategy
 
-- Store write failure: raise `AuditLogError`. The Coordinator logs it at ERROR and returns the pipeline result regardless.
-- Duplicate `event_id`: raise `AuditLogError` on the second write.
+- Custody-event store write failure: raise `AuditLogError`. The Coordinator logs it at ERROR, increments `audit_write_failures_total`, and re-raises it, so the run aborts fail-closed (ADR-027, armed in ADR-033).
+- Duplicate `event_id`: not detected. The store keys the chain off an in-memory head and does not scan per append (ADR-030); the pipeline mints a fresh id per event, so this is a deliberate trade, not a guarantee.
 
 ### 7. Dependencies
 
@@ -500,14 +500,23 @@ BCs communicate only through input arguments and return values passed through th
 ### Error Propagation
 
 ```
-IngestionError    →  Pipeline aborted, AuditEvent(INGESTION_FAILED) emitted
-TriageError       →  Pipeline aborted, AuditEvent(TRIAGE_FAILED) emitted
-NoMatchEvent      →  Pipeline terminated (valid), AuditEvent(NO_MATCH) emitted
-RetrievalError    →  Pipeline aborted, AuditEvent(RETRIEVAL_FAILED) emitted
-AuditLogError     →  Logged at ERROR, pipeline result returned regardless
+IngestionError    →  Pipeline aborted before a document_id exists; no AuditEvent
+                     can be keyed, only the terminal metric is recorded (ADR-027)
+TriageError       →  Pipeline aborted, AuditEvent(PIPELINE_FEHLER) emitted
+NoMatchEvent      →  Pipeline terminated (valid), AuditEvent(KEIN_TREFFER) emitted
+RetrievalError    →  Pipeline aborted, AuditEvent(PIPELINE_FEHLER) emitted
+AuditLogError     →  Custody-event write failure: logged at ERROR, counted in
+                     audit_write_failures_total, then re-raised so the run aborts
+                     fail-closed (ADR-027, armed in ADR-033). One type carries it:
+                     duplicate detection was removed (ADR-030)
 ```
 
 Note: `RetrievalError` originates from the Retrieval context (citation resolution). An unresolved citation is not a `RetrievalError`; it is a valid `NormWithSource(resolved=False)` that produces a `NORM_UNRESOLVED` entry in Briefing. Briefing has no generation error: assembly is deterministic and cannot fail with a generation failure.
+
+Note: the read path is also under custody. show-document records a
+`ROHDOKUMENT_ZUGRIFF` event in the chain before printing a raw document, and a
+failed write aborts the read fail-closed (ADR-033), the read-side analogue of
+the completion-before-return ordering.
 
 ### Testing Strategy
 
@@ -525,7 +534,7 @@ E2E smoke test:     Full pipeline with LLM stub. One test. Asserts a
 ## Design Decisions
 
 **Why is AuditLog a separate BC and not a Coordinator service?**
-AuditLog could be a service layer within the Coordinator rather than a separate BC. Separation was chosen because AuditLog has a different failure mode (write failure must not suppress domain results), a different persistence contract (append-only), and a different lifecycle (it must be writable when other BCs fail). These are three independent Disintegrators that justify the boundary.
+AuditLog could be a service layer within the Coordinator rather than a separate BC. Separation was chosen because AuditLog has a different failure mode (a custody-event write failure aborts the run fail-closed, while a telemetry write failure does not), a different persistence contract (append-only), and a different lifecycle (it must be writable when other BCs fail). These are three independent Disintegrators that justify the boundary. The write-failure propagation policy for custody events is fail-closed; see ADR-027 (armed in ADR-033).
 
 **Why is Retrieval separate from Briefing?**
 Citation resolution (norm to source text) and briefing assembly are two different steps with two different change axes. Resolution is exact-match lookup over a fixed statute corpus (ADR-021). Briefing is deterministic presentation and status derivation. Binding them would couple the statute corpus to the briefing shape and status rules. Separating them lets Briefing consume already-resolved norms in its tests and lets the resolution strategy evolve independently. See ADR-020.
@@ -535,74 +544,3 @@ The Sachbearbeiter does not wait on a queue: they submit a document and expect a
 
 **Why does Briefing receive the arguments and resolved norms from the Coordinator?**
 Briefing assembles a per-argument artifact, so it needs the extracted arguments (as plain dicts) and the resolved norms mapped by the Coordinator into `ResolvedNormEntry`. It also receives `einwendungs_typ` to carry the document-level classification onto the briefing, not to select an LLM prompt strategy (there is no LLM in this context). The Coordinator owns the cross-context mapping so that Briefing imports nothing from Triage or Retrieval.
-
-
-# BOUNDED_CONTEXTS.md: Required Edits for ADR-027
-
-Two locations in the current BOUNDED_CONTEXTS.md still encode the old
-fail-open audit behavior and contradict ADR-027. Apply both edits in the
-same commit that flips ADR-027 to Accepted.
-
-The AuditLog *boundary rationale* (the "Why is AuditLog a separate BC"
-design note) stays as written: AuditLog still has a distinct failure mode
-and an append-only contract. What changes is only how a write failure
-propagates, not why the context is separate. The phrase "write failure must
-not suppress domain results" in that note is now stale for custody events and
-should be softened to reflect that a custody-event write failure aborts the
-run (ADR-027), while a telemetry write failure does not.
-
-## Edit 1: Error Propagation block
-
-Current:
-
-```
-IngestionError    →  Pipeline aborted, AuditEvent(INGESTION_FAILED) emitted
-TriageError       →  Pipeline aborted, AuditEvent(TRIAGE_FAILED) emitted
-NoMatchEvent      →  Pipeline terminated (valid), AuditEvent(NO_MATCH) emitted
-RetrievalError    →  Pipeline aborted, AuditEvent(RETRIEVAL_FAILED) emitted
-AuditLogError     →  Logged at ERROR, pipeline result returned regardless
-```
-
-Replace the last line, and add a line, so the block reads:
-
-```
-IngestionError    →  Pipeline aborted, AuditEvent(PIPELINE_FEHLER) emitted
-TriageError       →  Pipeline aborted, AuditEvent(PIPELINE_FEHLER) emitted
-NoMatchEvent      →  Pipeline terminated (valid), AuditEvent(KEIN_TREFFER) emitted
-RetrievalError    →  Pipeline aborted, AuditEvent(PIPELINE_FEHLER) emitted
-AuditWriteError   →  Custody event: pipeline aborted (fail-closed, ADR-027),
-                     audit_write_failures_total incremented, ERROR timing log
-AuditLogError     →  Duplicate or query failure (not a write failure):
-                     surfaced to the caller, does not silently pass
-```
-
-Rationale for the event-name corrections: the prose used placeholder names
-(INGESTION_FAILED, TRIAGE_FAILED, NO_MATCH, RETRIEVAL_FAILED) that do not
-match the actual AuditEventType members in core/events.py (PIPELINE_FEHLER,
-KEIN_TREFFER, etc.) as wired in pipeline.py. Align the doc to the code while
-making this edit.
-
-## Edit 2: Context Map Coordinator box
-
-Current bullet list inside the Coordinator box:
-
-```
-│  - Sequential BC orchestration               │
-│  - Protocol dependency injection             │
-│  - AuditEvent emission after each step        │
-│  - Failure routing and status mapping         │
-```
-
-Change the AuditEvent line to make the fail-closed posture visible at the
-map level:
-
-```
-│  - AuditEvent emission (fail-closed, ADR-027) │
-```
-
-## Edit 3: cross-reference
-
-In the "Why is AuditLog a separate BC" note, append one sentence:
-
-"The write-failure propagation policy for custody events is fail-closed; see
-ADR-027."
