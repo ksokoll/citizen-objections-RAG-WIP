@@ -502,13 +502,12 @@ def _run_process(args: argparse.Namespace, paths: dict[str, Path]) -> int:
     retrieval = NormRetrievalService(corpus)
     # The audit store is opened before the startup_config is recorded so the
     # configuration custody event becomes the chain's genesis: the controls are
-    # attested before any objection event is appended (ADR-031). Opening is
-    # side-effect-free (A5); this is the writing path, so it explicitly seeds and
-    # heals the head (recover) and runs the fast tail-window check (verify_open)
-    # before continuing the chain. A tampered tail aborts the run here, loudly.
-    audit_store = JsonLinesAuditStore(args.audit_log)
-    audit_store.recover()
-    audit_store.verify_open()
+    # attested before any objection event is appended (ADR-031). This is the
+    # writing path, so it is composed through open_for_writing, the one factory
+    # that seeds and heals the head (recover) then runs the fast tail-window
+    # check (verify_open) in order before the chain continues. A tampered tail
+    # aborts the run here, loudly. The bare constructor stays the read path (A5).
+    audit_store = JsonLinesAuditStore.open_for_writing(args.audit_log)
     audit_service = AuditLogService(store=audit_store)
     provenance = _emit_startup_config(
         log_format=args.log_format,
@@ -564,10 +563,10 @@ def _run_show_document(args: argparse.Namespace, paths: dict[str, Path]) -> int:
     at open, the append itself) aborts the read with a nonzero exit and prints
     nothing.
 
-    The audit store is opened as a writing path (recover then verify_open, like
-    process): recover seeds the chain head so the read event chains onto the real
-    tail rather than re-seeding genesis, and verify_open refuses to disclose PII
-    onto a chain whose tail does not verify.
+    The audit store is opened as a writing path via open_for_writing (recover
+    then verify_open, like process): recover seeds the chain head so the read
+    event chains onto the real tail rather than re-seeding genesis, and
+    verify_open refuses to disclose PII onto a chain whose tail does not verify.
     """
     _emit_startup_config(log_format=args.log_format, paths=paths)
     try:
@@ -576,9 +575,7 @@ def _run_show_document(args: argparse.Namespace, paths: dict[str, Path]) -> int:
         print(str(exc), file=sys.stderr)
         return 1
     try:
-        audit_store = JsonLinesAuditStore(args.audit_log)
-        audit_store.recover()
-        audit_store.verify_open()
+        audit_store = JsonLinesAuditStore.open_for_writing(args.audit_log)
         AuditLogService(store=audit_store).record_raw_document_read(args.document_id)
     except AuditLogError as exc:
         print(

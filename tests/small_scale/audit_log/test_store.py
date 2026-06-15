@@ -832,6 +832,64 @@ def test_open_seeds_and_verifies_without_a_full_read(
     assert store.head.sequence_number == 5
 
 
+def test_open_for_writing_seeds_the_head_so_the_chain_continues(
+    tmp_path: Path,
+) -> None:
+    """Given a chain written by an earlier store, when a writing store is opened
+    via the open_for_writing factory, then its head is seeded from the last event
+    on disk: the factory ran recover(), so the next append continues the chain
+    rather than re-seeding genesis (M3, ADR-031).
+    """
+    path, events = _written_chain(tmp_path, count=4)
+
+    store = JsonLinesAuditStore.open_for_writing(path)
+
+    assert store.head.sequence_number == 3
+    assert store.head.event_hash == events[-1].event_hash
+
+
+def test_open_for_writing_aborts_on_a_tampered_tail(tmp_path: Path) -> None:
+    """Given a chain with an in-place edit near the tail, when a writing store is
+    opened via the factory, then it raises: the factory ran verify_open(), so a
+    writing store cannot be assembled onto a tail that does not verify (M3). The
+    bare constructor would not have aborted (the read path,
+    test_a_read_only_open_of_a_tampered_file_does_not_abort); routing the writing
+    path through the factory is what guarantees the check.
+    """
+    path, _ = _written_chain(tmp_path, count=5)
+    lines = path.read_text(encoding="utf-8").splitlines()
+    tampered = AuditEvent.model_validate_json(lines[3])
+    lines[3] = tampered.model_copy(
+        update={"payload": {"tampered": True}}
+    ).model_dump_json()
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    with pytest.raises(AuditLogError):
+        JsonLinesAuditStore.open_for_writing(path)
+
+
+def test_open_for_writing_recovers_before_it_verifies(tmp_path: Path) -> None:
+    """Given a chain whose last line was partially written, when a writing store
+    is opened via the factory, then it returns without raising and the damaged
+    tail is quarantined: recover() healed the tail before verify_open() checked
+    it, which pins the two steps to that order (M3, ADR-030). Were the order
+    reversed, verify_open would choke on the unparseable last line and raise.
+    """
+    path = tmp_path / "audit.jsonl"
+    seeding = JsonLinesAuditStore(path)
+    seeding.publish(_make_event(einwendungs_id="EW-001"))
+    with path.open("a", encoding="utf-8") as f:
+        f.write(_PARTIAL_LAST_LINE + "\n")
+
+    store = JsonLinesAuditStore.open_for_writing(path)
+
+    # The recovery event sits at sequence 1, after the healed EW-001 at 0: the
+    # head advanced through recover(), and verify_open() passed on the healed tail.
+    assert store.head.sequence_number == 1
+    assert _PARTIAL_LAST_LINE not in path.read_text(encoding="utf-8")
+    assert len(list(tmp_path.glob("audit.jsonl.corrupt.*"))) == 1
+
+
 def _chained_lines(payloads: list[dict]) -> list[str]:
     """Build correctly hash-chained EINGANG lines for the given payloads.
 

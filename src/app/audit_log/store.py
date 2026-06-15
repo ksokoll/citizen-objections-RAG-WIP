@@ -86,10 +86,13 @@ class JsonLinesAuditStore:
     a later verify path will recompute with, so the two cannot diverge.
 
     Opening is cheap and side-effect-free (A5): the constructor reads, writes,
-    and verifies nothing. A writing path continues the chain by calling the
-    explicit recover() and verify_open() steps after construction; a read-only
-    consumer skips them, so a reader never triggers a recovery write or a
-    tail-verify abort just by opening the store.
+    and verifies nothing, and is the marked read path (query, an auditor). A
+    writing store is composed through the open_for_writing() factory, which runs
+    the explicit recover() and verify_open() steps in order after construction,
+    so the open ceremony lives in one place and a writing store cannot be
+    assembled with verification skipped or the steps reordered. A read-only
+    consumer uses the bare constructor and so never triggers a recovery write or
+    a tail-verify abort just by opening the store.
 
     Durability, locking, and the chain head (ADR-030):
     - Durable append: each line is flushed and fsynced to stable storage before
@@ -129,11 +132,13 @@ class JsonLinesAuditStore:
         consumer (query, an auditor) therefore never triggers a recovery write
         or a tail-verify abort just by opening the store.
 
-        A writing composition path continues the chain by calling the explicit
-        steps after construction: recover() seeds the head from disk and heals a
-        damaged tail, and verify_open() runs the fast tail-window check. They are
-        opt-in so the cost and the side effects land only on the path that
-        writes (ADR-030, ADR-031).
+        A writing composition path is built through the open_for_writing()
+        factory, which runs the explicit steps in order after construction:
+        recover() seeds the head from disk and heals a damaged tail, then
+        verify_open() runs the fast tail-window check. They are opt-in so the
+        cost and the side effects land only on the path that writes, and routing
+        them through the one factory keeps a writing store from being assembled
+        with a step skipped or reordered (ADR-030, ADR-031).
 
         Args:
             path: Path to the JSON Lines file. Created (including parent
@@ -155,6 +160,52 @@ class JsonLinesAuditStore:
         path.parent.mkdir(parents=True, exist_ok=True)
         if not path.exists():
             path.touch()
+
+    @classmethod
+    def open_for_writing(
+        cls,
+        path: Path,
+        lock_timeout: float = 10.0,
+        tail_window: int = OPEN_VERIFY_TAIL_WINDOW,
+    ) -> JsonLinesAuditStore:
+        """Open a store on the writing path: construct, recover, then verify_open.
+
+        The one composition point for a writing store, so the open ceremony lives
+        in a single place rather than being hand-rolled at each call site. The
+        bare constructor is deliberately side-effect-free (A5, ADR-031);
+        continuing the chain takes two further steps in a fixed order: recover()
+        seeds the in-memory head from disk and heals a damaged last line, then
+        verify_open() runs the fast tail-window check before the first append.
+        This factory runs exactly that sequence. A caller that needs a writing
+        store calls this rather than assembling the steps itself, so a future
+        third writing site cannot compose a store that skips verify_open() (the
+        fail-open the design exists to prevent, 18d) or runs the two out of order.
+
+        The read path keeps the bare constructor by design: a query consumer or an
+        auditor must not pay recovery's cost or abort on a tampered tail merely by
+        opening the store (A5, ADR-031). The constructor is therefore the marked
+        read path and this factory is the marked write path.
+
+        Args:
+            path: Path to the JSON Lines audit file; created if absent, never
+                truncated.
+            lock_timeout: Seconds to wait for the single-writer lock, forwarded to
+                the constructor.
+            tail_window: How many trailing events verify_open checks, forwarded to
+                the constructor.
+
+        Returns:
+            A store whose head is seeded from disk and whose tail has verified,
+            ready for the first append.
+
+        Raises:
+            AuditLogError: If recovery cannot acquire the single-writer lock, an
+                interior line fails to parse, or the tail window does not verify.
+        """
+        store = cls(path, lock_timeout=lock_timeout, tail_window=tail_window)
+        store.recover()
+        store.verify_open()
+        return store
 
     def recover(self) -> None:
         """Seed the head from disk, healing a damaged tail. A writing-path step.
