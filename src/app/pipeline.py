@@ -184,6 +184,14 @@ class Pipeline:
                     else AuditEventType.BRIEFING_ERSTELLT
                 )
                 inc_objection_processed(status=event_type.value)
+                # End-to-end ordering (ADR-033): the completion custody event is
+                # emitted, and with the durable-append guarantee (fsync before
+                # head-advance, ADR-030) made durable, BEFORE run() returns the
+                # briefing. The return is the system's claim that the objection
+                # was processed and recorded; that claim must not precede its
+                # evidence on disk. Fail-closed (above) means a failed completion
+                # write raises here, so no briefing is returned without its
+                # durable completion proof.
                 self._emit(
                     einwendungs_id,
                     event_type,
@@ -312,39 +320,46 @@ class Pipeline:
         event_type: AuditEventType,
         payload: dict[str, Any],
     ) -> None:
-        """Emit an audit event. Interim: log a governed ERROR on store failure.
+        """Emit a custody event fail-closed: log, count, then abort on failure.
 
-        Interim policy (ADR-027): a failed publish is logged as a registered
-        ERROR event (AUDIT_APPEND_FAILED) and swallowed, not raised. The
-        fail-closed abort specified in ADR-027 for the six custody events lands
-        in Round C behind this same log line, once the chain invariants that
-        make an abort diagnosable exist (ADR-024).
+        Fail-closed armed (ADR-033, realizing ADR-027): a failed custody write
+        is recorded (the AUDIT_APPEND_FAILED ERROR event and the
+        audit_write_failures_total metric, the visibility built in Round 15.x as
+        the interim half of this gate) and then RAISED, not swallowed. The
+        AuditLogError propagates out of run(), so no briefing is returned that
+        would implicitly claim a complete custody trail it does not have. The
+        abort applies uniformly to all six custody events: a missing TRIAGE
+        event is as much a hole as a missing completion event.
 
-        Only the recoverable store-failure class is swallowed: AuditLogError.
-        The publisher contract (core/protocols.py) obliges every store
-        implementation to translate raw I/O failures into AuditLogError, so a
-        raw OSError arriving here is a contract violation, not an expected
-        store failure. It propagates, like every programming error (TypeError,
-        ValueError, a bug in the publish path), so the violation surfaces in
-        development instead of being silently treated like a transient I/O
-        hiccup (failure-routing rule, ADR-027).
+        Only the recoverable store-failure class is routed this way:
+        AuditLogError. The publisher contract (core/protocols.py) obliges every
+        store implementation to translate raw I/O failures into AuditLogError, so
+        a raw OSError arriving here is a contract violation, not an expected
+        store failure. It propagates already, like every programming error
+        (TypeError, ValueError, a bug in the publish path; the 18d narrowing).
+        This change adds the recoverable class to what propagates, so a
+        persistent store failure aborts rather than producing unaudited output
+        (failure-routing rule, ADR-027).
 
-        This replaces the previous stderr print, which bypassed every logging
-        control and interpolated the raw exception text, itself a violation of
-        the exception policy (ADR-026). The exception is attached via exc_info
-        and reduced to type plus location by the logging chain; its message is
-        never written. The _log.error call is itself guarded: by the
-        never-raises contract of this interim emit, a failure in the logging
-        path (a sabotaged or degraded sink) must not turn into a raise either.
-        The audit_write_failures_total increment before it is the
-        sink-independent visibility for that double failure (ADR-027 interim
-        section): it counts even when the log sink is also down, and the
-        contained metrics helper cannot raise.
+        The visibility is emitted before the raise and the _log.error call stays
+        guarded: a failure in the logging path (a sabotaged or degraded sink)
+        must not mask or replace the AuditLogError that is about to abort the
+        run. The exception is attached via exc_info and reduced to type plus
+        location by the logging chain; its message is never written. The
+        audit_write_failures_total increment is the sink-independent visibility
+        for the store-and-sink double failure (ADR-027): it counts even when the
+        log sink is also down, and the contained metrics helper cannot raise.
+        That double failure now degrades visibility only; it no longer lets the
+        run return unproven output, because the AuditLogError still propagates.
 
         Args:
             einwendungs_id: ID of the objection being processed.
             event_type: Type of audit event.
             payload: Event-specific detail.
+
+        Raises:
+            AuditLogError: If the custody write fails (fail-closed abort). The
+                error is logged and counted first, then re-raised.
         """
         try:
             self._audit.publish(
@@ -364,7 +379,9 @@ class Pipeline:
                     exc_info=True,
                 )
             except Exception:
-                # Never-raises contract: even a failing sink must not abort the
-                # run from inside the interim emit. The metric increment above
-                # already counted the failure, sink-independently.
+                # The visibility channel is best-effort: a failing sink must not
+                # mask the custody-write failure. The metric increment above
+                # already counted it, sink-independently. The original
+                # AuditLogError is re-raised below regardless.
                 pass
+            raise

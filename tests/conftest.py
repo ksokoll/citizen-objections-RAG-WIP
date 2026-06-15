@@ -213,12 +213,13 @@ class FakeRetriever:
 class RaisingAuditStoreFake:
     """AuditEventPublisherProtocol fake whose publish always raises.
 
-    Drives the interim _emit failure path (ADR-027): every custody emit fails,
-    is logged at ERROR as AUDIT_APPEND_FAILED, and is swallowed in Round A. In
-    Round C the same fake will make run() raise AuditWriteError; the pipeline
-    logging test notes that pending mutation in its docstring. publish_calls
-    records how many publishes were attempted, so a test can assert the failure
-    path was exercised.
+    Drives the fail-closed _emit path (ADR-027 armed, ADR-033): the first custody
+    emit fails, is logged at ERROR as AUDIT_APPEND_FAILED, counted in
+    audit_write_failures_total, and then raised, so run() aborts at that first
+    emit rather than swallowing and continuing. The abort is carried by the
+    existing AuditLogError (no new type; ADR-033). publish_calls records how many
+    publishes were attempted, so a test can assert the run aborted at the first
+    one rather than walking the whole stage sequence.
     """
 
     def __init__(self, error: Exception | None = None) -> None:

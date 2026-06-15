@@ -1,8 +1,10 @@
-"""Behaviour tests for the pipeline's governed logging (ADR-026, ADR-027).
+"""Behaviour tests for the pipeline's governed logging and fail-closed custody.
 
-The pipeline anchors every log event of a run on the document_id correlation
-id and, in the interim Round A policy, logs a failed audit publish as a
-governed ERROR event and swallows it. Both behaviours are asserted at the sink.
+The pipeline anchors every log event of a run on the document_id correlation id
+and, fail-closed (ADR-027 armed, ADR-033), records a failed custody publish (the
+governed AUDIT_APPEND_FAILED ERROR event plus the audit_write_failures_total
+metric) and then aborts the run by re-raising the AuditLogError. The visibility
+is asserted at the sink and the metric; the abort is asserted at run()'s edge.
 """
 
 from __future__ import annotations
@@ -15,6 +17,7 @@ from pathlib import Path
 import pytest
 
 from app.audit_log.events import AUDIT_APPEND_FAILED
+from app.core.failures import AuditLogError
 from app.observability import metrics
 from app.observability.logging_config import LOG_FILENAME, configure_logging
 from app.pipeline import Pipeline
@@ -54,62 +57,57 @@ def log_sink(tmp_path: Path) -> Callable[[], list[dict]]:
     configure_logging(log_dir=tmp_path, fmt="json")
 
 
-def test_correlation_id_is_constant_across_all_events_of_a_run(
-    pipeline_with_failing_audit: tuple[Pipeline, RaisingAuditStoreFake],
-    log_sink: Callable[[], list[dict]],
-) -> None:
-    """Every log event of a single run carries the same correlation id.
+def _stored_document_id(tmp_path: Path) -> str:
+    """The document id of the run's single raw-store file.
 
-    Given a run whose audit store fails on every publish (so each custody emit
-    produces a governed ERROR event), when the run completes, then all of those
-    events carry the one correlation id anchored on the run's document_id.
+    Ingestion stores the unmasked original as ``<document_id>.txt`` before the
+    first custody emit, so even a run that aborts at that first emit leaves the
+    file behind. Reading its stem recovers the document id the run anchored its
+    correlation scope on, without the briefing the aborted run never returns.
     """
-    pipeline, _ = pipeline_with_failing_audit
-
-    briefing = pipeline.run(_SAMPLE_EINWENDUNG)
-
-    lines = log_sink()
-    failures = [line for line in lines if line["event"] == AUDIT_APPEND_FAILED]
-    assert len(failures) >= 2
-    correlation_ids = {line["correlation_id"] for line in failures}
-    assert correlation_ids == {briefing.document_id}
+    stored = list((tmp_path / "raw").glob("*.txt"))
+    assert len(stored) == 1
+    return stored[0].stem
 
 
-def test_emit_failure_is_logged_at_error_and_swallowed(
+def test_custody_write_failure_is_logged_counted_then_aborts_the_run(
+    tmp_path: Path,
     pipeline_with_failing_audit: tuple[Pipeline, RaisingAuditStoreFake],
     log_sink: Callable[[], list[dict]],
 ) -> None:
-    """A failed audit publish is logged at ERROR, counted, and swallowed.
+    """A failed custody publish is logged, counted, then aborts run (fail-closed).
 
-    Interim Round A policy (ADR-027): the run still returns a briefing and each
-    failed publish is a governed AUDIT_APPEND_FAILED ERROR event carrying only
-    the audit_event_type, never the exception message. Round B addition: each
-    failed publish also increments audit_write_failures_total, the
-    sink-independent visibility for the interim double-failure risk.
-
-    Round C mutation: when fail-closed lands, this assertion flips to
-    pytest.raises(AuditWriteError) and the run returns no briefing.
+    Fail-closed armed (ADR-027 realized in ADR-033): given a run whose audit
+    store raises the recoverable AuditLogError, when run() reaches its first
+    custody emit, then the failure is made visible first (a governed
+    AUDIT_APPEND_FAILED ERROR event carrying only the audit_event_type, never the
+    exception message, and one audit_write_failures_total increment) and then the
+    AuditLogError propagates out of run(): no briefing is returned. The run
+    aborts at the first emit, so exactly one publish is attempted, not the whole
+    stage sequence. The ERROR event is still anchored on the run's correlation
+    id. This was the Round 15.x swallow test; fail-closed flips it to a raises
+    test while the ERROR-log and metric assertions are retained, not weakened.
     """
     pipeline, raising_store = pipeline_with_failing_audit
     failures_before = (
         metrics.REGISTRY.get_sample_value("audit_write_failures_total") or 0
     )
 
-    briefing = pipeline.run(_SAMPLE_EINWENDUNG)
+    with pytest.raises(AuditLogError):
+        pipeline.run(_SAMPLE_EINWENDUNG)
 
-    assert briefing is not None
-    assert raising_store.publish_calls >= 1
+    assert raising_store.publish_calls == 1
 
     lines = log_sink()
     failures = [line for line in lines if line["event"] == AUDIT_APPEND_FAILED]
-    assert failures
-    assert all(line["level"] == "error" for line in failures)
-    assert all("audit_event_type" in line for line in failures)
-    rendered = json.dumps(failures)
-    assert "simulated audit store write failure" not in rendered
+    assert len(failures) == 1
+    assert failures[0]["level"] == "error"
+    assert "audit_event_type" in failures[0]
+    assert failures[0]["correlation_id"] == _stored_document_id(tmp_path)
+    assert "simulated audit store write failure" not in json.dumps(failures)
 
     failures_after = metrics.REGISTRY.get_sample_value("audit_write_failures_total")
-    assert failures_after - failures_before == raising_store.publish_calls
+    assert failures_after - failures_before == 1
 
 
 def test_store_programming_error_propagates_out_of_run(
@@ -129,18 +127,20 @@ def test_store_programming_error_propagates_out_of_run(
         pipeline.run(_SAMPLE_EINWENDUNG)
 
 
-def test_emit_does_not_raise_when_store_and_sink_both_fail(
+def test_sink_failure_does_not_mask_the_custody_write_error(
     pipeline_with_failing_audit: tuple[Pipeline, RaisingAuditStoreFake],
     log_sink: Callable[[], list[dict]],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A double failure (store down and logger sabotaged) still does not raise.
+    """A sabotaged sink does not mask or replace the aborting AuditLogError.
 
     Given a run whose audit store raises the recoverable AuditLogError and whose
-    sink logger itself raises on every call, when the run completes, then _emit
-    neither propagates the store error nor the logging error: the never-raises
-    contract holds even when the failure-visibility channel is also down. The
-    interim accepts this blind spot; the Round B metric closes it (ADR-027).
+    sink logger itself raises on every call, when run() reaches the first custody
+    emit, then the AuditLogError (the custody-write failure) is what propagates,
+    not the sink's RuntimeError: the guarded _log.error swallows the sink failure
+    so the visibility channel being down degrades visibility only, it never
+    changes which error aborts the run. The sink-independent
+    audit_write_failures_total still counts the failure (ADR-027).
     """
     pipeline, _ = pipeline_with_failing_audit
 
@@ -149,7 +149,12 @@ def test_emit_does_not_raise_when_store_and_sink_both_fail(
             raise RuntimeError("logging sink sabotaged")
 
     monkeypatch.setattr("app.pipeline._log", SabotagedLogger())
+    failures_before = (
+        metrics.REGISTRY.get_sample_value("audit_write_failures_total") or 0
+    )
 
-    briefing = pipeline.run(_SAMPLE_EINWENDUNG)
+    with pytest.raises(AuditLogError):
+        pipeline.run(_SAMPLE_EINWENDUNG)
 
-    assert briefing is not None
+    failures_after = metrics.REGISTRY.get_sample_value("audit_write_failures_total")
+    assert failures_after - failures_before == 1
