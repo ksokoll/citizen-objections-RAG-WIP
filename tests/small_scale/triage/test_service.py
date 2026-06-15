@@ -148,6 +148,53 @@ class TestArgumentVerification:
         assert all(not a.argument_verified for a in result.extracted_arguments)
         assert all(a.zitierte_normen == [] for a in result.extracted_arguments)
 
+    def test_empty_quote_is_never_verified_via_the_service_backstop(self) -> None:
+        # Given the reproduced bug: an LLMArgument whose original_zitat is the
+        # empty string, built with model_construct to bypass the schema edge.
+        # str.find("") returns 0, so before the fix the empty quote was "found"
+        # at position 0 and marked verified with no evidence at all. The schema
+        # now rejects this at construction; model_construct exercises the
+        # service-level backstop for any path that reaches the find logic with
+        # an empty quote.
+        argument = LLMArgument.model_construct(
+            catalog_id="baugb",
+            einwendungs_typ=EinwendungsTyp.TYP_2,
+            argument_text="Behauptung ohne Beleg",
+            original_zitat="",
+        )
+        fake_llm = FakeLLMClient(parse_response=LLMTriageOutput(argumente=[argument]))
+        service = TriageService(llm=fake_llm)
+
+        # When triage runs over any source text
+        result = service.triage("Beliebiger Quelltext ohne passendes Zitat.")
+
+        # Then the empty quote is not verified and carries no norms, so the
+        # briefing derives ZITAT_NICHT_VERIFIZIERT and never BRIEFING_READY (the
+        # verdict-to-status mapping is covered in tests/small_scale/briefing)
+        assert result.extracted_arguments[0].argument_verified is False
+        assert result.extracted_arguments[0].zitierte_normen == []
+
+    def test_whitespace_only_quote_is_never_verified_via_the_service_backstop(
+        self,
+    ) -> None:
+        # Given an LLMArgument whose original_zitat is only whitespace, bypassing
+        # the schema edge: after the existing strip it is empty, the same
+        # degenerate case as the empty string
+        argument = LLMArgument.model_construct(
+            catalog_id="baugb",
+            einwendungs_typ=EinwendungsTyp.TYP_2,
+            argument_text="Behauptung ohne Beleg",
+            original_zitat="   \t  ",
+        )
+        fake_llm = FakeLLMClient(parse_response=LLMTriageOutput(argumente=[argument]))
+        service = TriageService(llm=fake_llm)
+
+        # When triage runs
+        result = service.triage("Beliebiger Quelltext ohne passendes Zitat.")
+
+        # Then the whitespace-only quote is not verified
+        assert result.extracted_arguments[0].argument_verified is False
+
 
 class TestPromptDataFencing:
     """The Einwendung travels as fenced data with a precedence rule (S3)."""

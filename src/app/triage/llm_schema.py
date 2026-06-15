@@ -9,7 +9,7 @@ are infrastructure concerns not exposed to the LLM.
 
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from app.core import EinwendungsTyp
 from app.triage.catalog import CatalogId
@@ -33,6 +33,7 @@ class LLMArgument(BaseModel):
     )
     original_zitat: str = Field(
         ...,
+        min_length=1,
         description=(
             "Verbatim substring from the source text. Must be exactly "
             "reproducible from the source; verified downstream."
@@ -49,6 +50,21 @@ class LLMArgument(BaseModel):
         ...,
         description=("TYP_1 (informal citizen) or TYP_2 (formal legal argumentation)."),
     )
+
+    @field_validator("original_zitat")
+    @classmethod
+    def _reject_blank_zitat(cls, value: str) -> str:
+        """Reject a whitespace-only quote at the trust boundary.
+
+        min_length=1 excludes the empty string, but a quote of only spaces
+        passes a length check and strips to empty at the verification site,
+        where str.find("") returns 0 and the empty quote would count as
+        verified (ADR-006 Layer 1). Rejecting it here excludes the degenerate
+        case at entry; TriageService applies the same guard as the backstop.
+        """
+        if not value.strip():
+            raise ValueError("original_zitat must not be blank or whitespace-only")
+        return value
 
 
 class LLMTriageOutput(BaseModel):

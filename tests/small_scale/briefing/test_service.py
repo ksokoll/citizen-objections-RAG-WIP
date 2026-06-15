@@ -123,6 +123,26 @@ def test_unverified_argument_is_zitat_nicht_verifiziert_never_ready():
     assert entry.requires_case_context is False
 
 
+def test_empty_quote_argument_is_not_briefing_ready_via_the_verdict():
+    # Given the reproduced empty-quote case as it reaches the briefing: the
+    # triage backstop already set argument_verified=False for the empty quote
+    # (the briefing honors the boolean verdict, not the quote text), and the
+    # argument still carries a catalog match and a resolved norm
+    service = BriefingService()
+    argument = _argument(argument_id="arg-1", argument_verified=False)
+    argument["original_zitat"] = ""
+    norms = {"arg-1": [_resolved_norm(resolved=True)]}
+
+    # When the briefing is assembled
+    briefing = _assemble(service, "doc-1", "TYP_2", [argument], norms)
+
+    # Then the empty-quote argument is not BRIEFING_READY: the verification
+    # verdict dominates and the entry takes ZITAT_NICHT_VERIFIZIERT (ADR-028)
+    entry = briefing.entries[0]
+    assert entry.status == BriefingStatus.ZITAT_NICHT_VERIFIZIERT
+    assert entry.status != BriefingStatus.BRIEFING_READY
+
+
 def test_verified_argument_carries_the_verdict_in_the_entry():
     # Given a verified argument with a catalog match and a resolved norm
     service = BriefingService()

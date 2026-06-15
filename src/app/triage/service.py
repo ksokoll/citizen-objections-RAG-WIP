@@ -196,7 +196,16 @@ class TriageService:
             ExtrahiertesArgument with all six fields populated.
         """
         zitat = raw.original_zitat.strip()
-        start = clean_text.find(zitat)
+        # str.find("") returns 0, not -1, so an empty or whitespace-only quote
+        # would otherwise count as found at position 0 and pass verification
+        # with no evidence at all: the cleanest fabrication case the verbatim
+        # check exists to catch, and a non-adversarial one too (a model that
+        # legitimately returns no quote for an argument was falsely verified).
+        # ADR-006 Layer 1. Guarding find on a non-empty zitat keeps the empty
+        # string from being "found"; the schema edge (llm_schema.py) rejects
+        # the degenerate quote at construction and this is the backstop for any
+        # path that bypasses the schema.
+        start = clean_text.find(zitat) if zitat else -1
         is_verified = start != -1
 
         zitierte_normen: list[str] = []
