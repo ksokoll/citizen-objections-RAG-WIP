@@ -491,8 +491,13 @@ def _run_process(args: argparse.Namespace, paths: dict[str, Path]) -> int:
     retrieval = NormRetrievalService(corpus)
     # The audit store is opened before the startup_config is recorded so the
     # configuration custody event becomes the chain's genesis: the controls are
-    # attested before any objection event is appended (ADR-031).
+    # attested before any objection event is appended (ADR-031). Opening is
+    # side-effect-free (A5); this is the writing path, so it explicitly seeds and
+    # heals the head (recover) and runs the fast tail-window check (verify_open)
+    # before continuing the chain. A tampered tail aborts the run here, loudly.
     audit_store = JsonLinesAuditStore(args.audit_log)
+    audit_store.recover()
+    audit_store.verify_open()
     audit_service = AuditLogService(store=audit_store)
     provenance = _emit_startup_config(
         log_format=args.log_format,

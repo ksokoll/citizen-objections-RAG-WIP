@@ -84,26 +84,33 @@ class JsonLinesAuditStore:
     The hash is computed from the canonical serializer (serialization.py) that
     a later verify path will recompute with, so the two cannot diverge.
 
+    Opening is cheap and side-effect-free (A5): the constructor reads, writes,
+    and verifies nothing. A writing path continues the chain by calling the
+    explicit recover() and verify_open() steps after construction; a read-only
+    consumer skips them, so a reader never triggers a recovery write or a
+    tail-verify abort just by opening the store.
+
     Durability, locking, and the chain head (ADR-030):
     - Durable append: each line is flushed and fsynced to stable storage before
       the in-memory head advances, so a crash can never leave the head asserting
       an event the disk lacks.
-    - Single-writer advisory lock: an advisory filelock covers open+recovery and
+    - Single-writer advisory lock: an advisory filelock covers recover() and
       each append, so two starts cannot recover the same file concurrently and
       two writers cannot interleave an append. It guards against accidental
       concurrency (a retry thread, a cron replay), not a deliberate second
       writer (ADR-027 threat model). The single-process assumption (15.2) holds:
       no second process holds the file on the Windows host.
     - The in-memory head (last hash, last sequence) is the sole duplicate
-      mechanism: publish() does not scan the file. The file is read only at
-      open, to seed the head, by the recovery path below (not a second reader).
-    - Recovery at open: a damaged or partial last line (invalid JSON at EOF, or
-      a line whose hash does not chain) is moved to a quarantine file, its bytes'
-      hash is recorded, and a recovery event is written into the chain. Only the
-      last line is healed: a mid-file break is not silently fixed here, it is for
-      verify_chain (18c) to surface, because a partial last line is directly
-      observable while lost interior events are not without an external anchor
-      (ADR-030).
+      mechanism: publish() does not scan the file. The file is read only by
+      recover() (to seed the head) and verify_open() (to check the tail), the
+      explicit writing-path steps, never on the bare open.
+    - Recovery (recover()): a damaged or partial last line (invalid JSON at EOF,
+      or a line whose hash does not chain) is moved to a quarantine file, its
+      bytes' hash is recorded, and a recovery event is written into the chain.
+      Only the last line is healed: a mid-file break is not silently fixed here,
+      it is for verify_chain (18c) to surface, because a partial last line is
+      directly observable while lost interior events are not without an external
+      anchor (ADR-030).
     """
 
     def __init__(
@@ -112,13 +119,20 @@ class JsonLinesAuditStore:
         lock_timeout: float = 10.0,
         tail_window: int = OPEN_VERIFY_TAIL_WINDOW,
     ) -> None:
-        """Initialize the store, ensure the backing file exists, seed the head.
+        """Initialize the store: paths, the lock object, the genesis head.
 
-        Seeding reads the file under the single-writer lock, so open+recovery is
-        one critical section (ADR-030). After seeding, the last `tail_window`
-        events are verified for startup speed: a tampered or non-chaining line
-        near the tail is surfaced loudly at open, while the full walk is the
-        auditor's CLI command (ADR-031).
+        Opening is cheap and side-effect-free (A5, ADR-031): the constructor
+        reads nothing, writes nothing, and verifies nothing. It records the
+        paths, builds the single-writer lock, seeds the in-memory head to the
+        genesis sentinel, and ensures the backing file exists. A read-only
+        consumer (query, an auditor) therefore never triggers a recovery write
+        or a tail-verify abort just by opening the store.
+
+        A writing composition path continues the chain by calling the explicit
+        steps after construction: recover() seeds the head from disk and heals a
+        damaged tail, and verify_open() runs the fast tail-window check. They are
+        opt-in so the cost and the side effects land only on the path that
+        writes (ADR-030, ADR-031).
 
         Args:
             path: Path to the JSON Lines file. Created (including parent
@@ -127,14 +141,9 @@ class JsonLinesAuditStore:
             lock_timeout: Seconds to wait for the single-writer lock before
                 failing loudly. A finite default surfaces accidental contention
                 as an AuditLogError rather than hanging; tests pass a small value.
-            tail_window: How many trailing events to verify at open. The default
+            tail_window: How many trailing events verify_open checks. The default
                 bounds startup cost as the trail grows; tests pass a small value
                 to exercise the window boundary.
-
-        Raises:
-            AuditLogError: If another writer holds the lock past lock_timeout
-                (open cannot recover concurrently with another start), or if the
-                tail-window verification finds a break (ADR-031).
         """
         self._path = path
         self._lock_timeout = lock_timeout
@@ -145,8 +154,47 @@ class JsonLinesAuditStore:
         path.parent.mkdir(parents=True, exist_ok=True)
         if not path.exists():
             path.touch()
+
+    def recover(self) -> None:
+        """Seed the head from disk, healing a damaged tail. A writing-path step.
+
+        The explicit recovery step a writing composition path calls after
+        opening (A5): the slim constructor does no read and no write, so a
+        read-only consumer never pays for recovery. recover() acquires the
+        single-writer lock, reads the chain to its last valid line and seeds the
+        head from it, and if the last line is damaged (invalid JSON at EOF, or a
+        hash that does not chain from its predecessor) quarantines it and appends
+        a recovery event. Only the last line is healed: an interior break is left
+        for verify_chain (18c) to surface, because a partial last line is
+        directly observable while a lost interior event is not without an
+        external anchor (ADR-030). Idempotent on a clean chain: it re-seeds the
+        same head and writes nothing.
+
+        Raises:
+            AuditLogError: If another writer holds the lock past lock_timeout
+                (recovery cannot run concurrently with another start), or if an
+                interior (non-last) line fails to parse (ADR-030).
+        """
         with self._single_writer():
             self._recover_and_seed()
+
+    def verify_open(self) -> None:
+        """Verify the last tail_window events, raising on a break. A writing step.
+
+        The fast startup check (ADR-031), an explicit step the writing path calls
+        after recover(): a read-only consumer skips it, so opening a tampered
+        file for a query never aborts. Recovery heals only a damaged last line,
+        so a parseable-but-non-chaining interior line near the tail (a naive
+        in-place edit) would otherwise pass open silently and surface only at the
+        next full verify; verify_open catches such a break near the end and
+        raises it with location. A break before the window is the full walk's job
+        (verify_chain_file), deliberately not done here for startup speed.
+
+        Raises:
+            AuditLogError: If the tail window does not verify, carrying the first
+                break's content-free description.
+        """
+        self._verify_tail_window(self._tail_events())
 
     @contextmanager
     def _single_writer(self) -> Iterator[None]:
@@ -291,27 +339,40 @@ class JsonLinesAuditStore:
     def _recover_and_seed(self) -> None:
         """Seed the in-memory head from disk, recovering a damaged tail (ADR-030).
 
-        This is the single open-time read path: it both seeds the head and
-        recovers, so seeding is never a second reader divergent from recovery.
-        It reads the chain to its last valid line and seeds the head from it. If
-        the last line is damaged (invalid JSON at EOF, or a hash that does not
-        chain from its predecessor), the damaged line is quarantined, a recovery
-        event is appended to the chain, and the recovery is logged. Only the last
-        line is healed: an interior break is left for verify_chain (18c) to
-        surface, because a partial last line is directly observable while a lost
-        interior event is not without an external anchor.
+        The body of recover(), under the single-writer lock: it both seeds the
+        head and recovers, so seeding is never a second reader divergent from
+        recovery. It reads the chain to its last valid line and seeds the head
+        from it. If the last line is damaged (invalid JSON at EOF, or a hash that
+        does not chain from its predecessor), the damaged line is quarantined, a
+        recovery event is appended to the chain, and the recovery is logged. Only
+        the last line is healed: an interior break is left for verify_chain (18c)
+        to surface, because a partial last line is directly observable while a
+        lost interior event is not without an external anchor.
 
-        Called under the single-writer lock from __init__, so open, recovery, and
-        the recovery event's append are one critical section. After seeding (and
-        any tail recovery), the kept events' tail window is verified so a
-        tampered or non-chaining interior line near the end is surfaced at open
-        with detail, not left for the next CLI run (ADR-031).
+        The tail-window verification is no longer part of seeding: it is the
+        separate verify_open() step the writing path runs after recover(), so a
+        read-only consumer that never calls it does not abort on a tampered tail
+        (A5, ADR-031).
         """
         valid_events, valid_lines, damaged_line = self._read_chain_with_tail_check()
         self._seed_head_from(valid_events)
         if damaged_line is not None:
             self._quarantine_and_record(damaged_line, valid_lines)
-        self._verify_tail_window(valid_events)
+
+    def _tail_events(self) -> list[AuditEvent]:
+        """Read the events verify_open checks: the window plus its predecessor.
+
+        Returns the last tail_window+1 events (the window and the predecessor
+        verify_chain seeds the tail walk from), or the whole chain when it is no
+        longer than the window. The break verify_open reports is therefore
+        indexed within this returned sequence, the documented meaning of a
+        ChainBreak index for a windowed walk. The read is over the healed file,
+        so it is called after recover().
+        """
+        events = self._read_all()
+        if len(events) <= self._tail_window:
+            return events
+        return events[-(self._tail_window + 1) :]
 
     def _verify_tail_window(self, events: list[AuditEvent]) -> None:
         """Verify the last tail_window events, raising loudly on a break.
@@ -325,7 +386,8 @@ class JsonLinesAuditStore:
         (verify_chain_file), deliberately not done here for startup speed.
 
         Args:
-            events: The kept (valid) events, the damaged tail already excluded.
+            events: The tail events to verify, the window plus its predecessor,
+                as returned by _tail_events.
 
         Raises:
             AuditLogError: If the tail window does not verify, carrying the
