@@ -287,9 +287,12 @@ def _caller_location() -> str:
 def never_raise(processor: Processor) -> Processor:
     """Wrap an own processor so a runtime exception can never reach the caller.
 
-    Round A enforcement could abort a business call from inside the telemetry:
-    a processor exception propagated out of the log call. This wrapper contains
-    that. On a processor exception, the original event dict is discarded (a
+    This is a systems-design decision, not infra robustness: the instrumentation
+    path must not tear down the business path (a monitoring error must not kill
+    the pipeline). Round A enforcement could abort a business call from inside
+    the telemetry: a processor exception propagated out of the log call. This
+    wrapper contains that. On a processor exception, the original event dict is
+    discarded (a
     processor that failed mid-chain may hold half-processed, untrusted data) and
     replaced by a substitute PROCESSOR_FAILED event naming the failing
     processor, which then flows through the remaining chain and the allowlist.

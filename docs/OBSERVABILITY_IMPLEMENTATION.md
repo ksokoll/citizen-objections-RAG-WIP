@@ -43,7 +43,9 @@ detailed specifications live in ADRs and are not repeated here:
   chain-head quarantine recovery, and single-writer enforcement that ADR-030
   added were rolled back in Round 21 as out of demo scope; ADR-030 superseded.)
 - ADR-026: Observability Logging Policy (one sink, default-deny allowlist,
-  message and exception policy, time-based retention).
+  message and exception policy). (Time-based retention, file-permission
+  hardening, the sink-size metric, and the guarded bootstrap were rolled back in
+  Round 21b as out of demo scope; see the ADR-026 banner.)
 - ADR-027: Audit-Write Failure Policy (completeness vs availability,
   see the Completeness section).
 
@@ -79,10 +81,10 @@ of Step 1.
 Done together because all of it touches the logging path or the briefing data
 model. (Decision: ADR-023.)
 
-Round A status (implemented): items 1 (structured logging plus time-based
-rotation), 2 (correlation id on document_id), 6 (PII discipline), and the
-AuditEvent layout fields (serialization_version, event_hash) are done and
-tested at the sink.
+Round A status (implemented): items 1 (structured logging; the time-based
+rotation built here was rolled back in Round 21b, ADR-026 banner), 2
+(correlation id on document_id), 6 (PII discipline), and the AuditEvent layout
+fields (serialization_version, event_hash) are done and tested at the sink.
 
 Round B status (implemented): items 3, 4, 5, and 7 are done. The @traced
 decorator sits on the five context service methods and Pipeline.run(),
@@ -108,8 +110,10 @@ Review-driven additions beyond the original Step 1, all in Round A (ADR-026):
   fails loudly. Exception policy: exceptions reduce to type plus location,
   never str() or a rendered traceback.
 - The default-deny key allowlist is frozen by a golden test.
-- Retention is time-based (TimedRotatingFileHandler at midnight UTC) plus a
-  startup mtime sweep, not size-based rotation.
+- Retention was time-based (TimedRotatingFileHandler at midnight UTC plus a
+  startup mtime sweep), rolled back in Round 21b: a single plain file handler
+  appends to one log file, no rotation and no time-based retention (ADR-026
+  banner; operational retention is a deferral restored in production).
 - The interim _emit fix: a failed audit publish is a governed ERROR event
   (AUDIT_APPEND_FAILED), not a stderr print; the fail-closed raise lands in
   Round C (ADR-027).
@@ -130,13 +134,14 @@ processor (item 6) is no longer ordered relative to the other items; it is
 enforced at logging-module import time (see item 6), so there is no bootstrap
 window in which items 1 to 5 could log unsafely.
 
-1. Structured logging (structlog). JSON vs console via OBSERVABILITY_FORMAT;
+1. Structured logging (structlog). JSON vs console via the --log-format flag;
    ISO-8601 UTC timestamp, level, message, correlation id per event. Log
-   retention is implemented in this phase, not deferred: rotation with a defined
-   max age and max size (RotatingFileHandler or equivalent). Unlike the audit
-   chain, logs are technically deletable, so the storage-limitation obligation
-   for this third store of pseudonymous data is satisfied by rotation here
-   rather than by the conceptual retention placeholder in Step 2.
+   retention (time-based rotation plus an mtime sweep) was implemented in this
+   phase, then rolled back in Round 21b as out of demo scope: a single plain
+   file handler now appends to one log file. Unlike the audit chain, logs are
+   technically deletable, so the storage-limitation obligation for this third
+   store of pseudonymous data is met in production by restoring the deferred
+   retention mechanism (ADR-026 banner), not by a conceptual placeholder.
 
 2. Correlation id via contextvars.ContextVar, anchored on document_id.
 
@@ -222,8 +227,9 @@ window in which items 1 to 5 could log unsafely.
    possible through the raw-store mapping while it exists. Because the logs carry
    document_id, the structured logs are a third store of pseudonymous personal
    data alongside the chain and the raw store, covered by the same erasure
-   concept (raw-store deletion severs re-identifiability in the logs too) and by
-   the log rotation defined in item 1.
+   concept (raw-store deletion severs re-identifiability in the logs too); the
+   time-based log retention from item 1 was rolled back in Round 21b and is a
+   production deferral (ADR-026 banner).
 
 7. Corpus reproducibility. Add created_at and a corpus identifier to
    WuerdigungsBriefing. The corpus identifier is the per-statute standangabe (the
@@ -288,11 +294,12 @@ data-model precondition. (Decision: ADR-024.)
 
 2. Retention. The audit chain itself is append-only and immutable, so its
    retention is conceptual: statutory periods are sector administrative law
-   (VwVfG and domain rules) and are documented, not implemented. The two
-   technically-deletable stores have concrete retention already: the raw store
-   via erasure on request, the logs via rotation (Step 1 item 1). The mechanism
-   that reconciles erasure with the immutable chain is in the Defensibility
-   backbone section.
+   (VwVfG and domain rules) and are documented, not implemented. Of the two
+   technically-deletable stores the raw store has concrete retention via erasure
+   on request; the logs' time-based retention (Step 1 item 1) was rolled back in
+   Round 21b and is a production deferral (ADR-026 banner). The mechanism that
+   reconciles erasure with the immutable chain is in the Defensibility backbone
+   section.
 
 Design-model precondition (why Step 2 is not independent of Step 1): the
 AuditEvent structure, including the serialization-version field and the
