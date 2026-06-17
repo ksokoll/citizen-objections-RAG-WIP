@@ -25,9 +25,11 @@ wording is kept narrower than "legal defensibility" for that reason.
 
 Enforce, do not document. A recurring principle in this revision: an invariant
 that is only written down is an implicit dependency, that is, a bug waiting to
-happen. Where a property is load-bearing (single writer, processor wiring,
-durable append) the plan specifies enforcement and a loud failure, not a
-convention.
+happen. Where a property is load-bearing (processor wiring, the content-free
+payload gate, fail-closed on a custody-write failure) the plan specifies
+enforcement and a loud failure, not a convention. (The single-writer and
+durable-append examples this paragraph once cited were rolled back in Round 21
+as out of demo scope; ADR-030 superseded.)
 
 This is a living roadmap: it records the order of work and its status. The
 detailed specifications live in ADRs and are not repeated here:
@@ -36,11 +38,14 @@ detailed specifications live in ADRs and are not repeated here:
   adaptation to a deterministic pipeline, and the tracing-off-by-default
   posture).
 - ADR-024: Tamper-Evident Audit Trail via Hash Chaining. Covers the
-  canonical-serialization specification and its versioning, durable append and
-  chain-head recovery, single-writer enforcement, and the erasure-coexistence
-  rationale.
+  canonical-serialization specification and its versioning, the in-memory
+  chain-head, and the erasure-coexistence rationale. (The durable append, the
+  chain-head quarantine recovery, and single-writer enforcement that ADR-030
+  added were rolled back in Round 21 as out of demo scope; ADR-030 superseded.)
 - ADR-026: Observability Logging Policy (one sink, default-deny allowlist,
-  message and exception policy, time-based retention).
+  message and exception policy). (Time-based retention, file-permission
+  hardening, the sink-size metric, and the guarded bootstrap were rolled back in
+  Round 21b as out of demo scope; see the ADR-026 banner.)
 - ADR-027: Audit-Write Failure Policy (completeness vs availability,
   see the Completeness section).
 
@@ -76,10 +81,10 @@ of Step 1.
 Done together because all of it touches the logging path or the briefing data
 model. (Decision: ADR-023.)
 
-Round A status (implemented): items 1 (structured logging plus time-based
-rotation), 2 (correlation id on document_id), 6 (PII discipline), and the
-AuditEvent layout fields (serialization_version, event_hash) are done and
-tested at the sink.
+Round A status (implemented): items 1 (structured logging; the time-based
+rotation built here was rolled back in Round 21b, ADR-026 banner), 2
+(correlation id on document_id), 6 (PII discipline), and the AuditEvent layout
+fields (serialization_version, event_hash) are done and tested at the sink.
 
 Round B status (implemented): items 3, 4, 5, and 7 are done. The @traced
 decorator sits on the five context service methods and Pipeline.run(),
@@ -105,8 +110,10 @@ Review-driven additions beyond the original Step 1, all in Round A (ADR-026):
   fails loudly. Exception policy: exceptions reduce to type plus location,
   never str() or a rendered traceback.
 - The default-deny key allowlist is frozen by a golden test.
-- Retention is time-based (TimedRotatingFileHandler at midnight UTC) plus a
-  startup mtime sweep, not size-based rotation.
+- Retention was time-based (TimedRotatingFileHandler at midnight UTC plus a
+  startup mtime sweep), rolled back in Round 21b: a single plain file handler
+  appends to one log file, no rotation and no time-based retention (ADR-026
+  banner; operational retention is a deferral restored in production).
 - The interim _emit fix: a failed audit publish is a governed ERROR event
   (AUDIT_APPEND_FAILED), not a stderr print; the fail-closed raise lands in
   Round C (ADR-027).
@@ -127,13 +134,14 @@ processor (item 6) is no longer ordered relative to the other items; it is
 enforced at logging-module import time (see item 6), so there is no bootstrap
 window in which items 1 to 5 could log unsafely.
 
-1. Structured logging (structlog). JSON vs console via OBSERVABILITY_FORMAT;
+1. Structured logging (structlog). JSON vs console via the --log-format flag;
    ISO-8601 UTC timestamp, level, message, correlation id per event. Log
-   retention is implemented in this phase, not deferred: rotation with a defined
-   max age and max size (RotatingFileHandler or equivalent). Unlike the audit
-   chain, logs are technically deletable, so the storage-limitation obligation
-   for this third store of pseudonymous data is satisfied by rotation here
-   rather than by the conceptual retention placeholder in Step 2.
+   retention (time-based rotation plus an mtime sweep) was implemented in this
+   phase, then rolled back in Round 21b as out of demo scope: a single plain
+   file handler now appends to one log file. Unlike the audit chain, logs are
+   technically deletable, so the storage-limitation obligation for this third
+   store of pseudonymous data is met in production by restoring the deferred
+   retention mechanism (ADR-026 banner), not by a conceptual placeholder.
 
 2. Correlation id via contextvars.ContextVar, anchored on document_id.
 
@@ -219,8 +227,9 @@ window in which items 1 to 5 could log unsafely.
    possible through the raw-store mapping while it exists. Because the logs carry
    document_id, the structured logs are a third store of pseudonymous personal
    data alongside the chain and the raw store, covered by the same erasure
-   concept (raw-store deletion severs re-identifiability in the logs too) and by
-   the log rotation defined in item 1.
+   concept (raw-store deletion severs re-identifiability in the logs too); the
+   time-based log retention from item 1 was rolled back in Round 21b and is a
+   production deferral (ADR-026 banner).
 
 7. Corpus reproducibility. Add created_at and a corpus identifier to
    WuerdigungsBriefing. The corpus identifier is the per-statute standangabe (the
@@ -241,6 +250,14 @@ data-model precondition. (Decision: ADR-024.)
    convention, not tamper-evidence. The full specification is in ADR-024; the
    load-bearing invariants are split below into enforced (the implementation
    must make them fail loudly) and assumed.
+
+   Round 21 note: three of the "Enforced" invariants below, single writer,
+   durable append before head advance, and chain-head quarantine recovery, were
+   deliberately rolled back as out of demo scope (ADR-030 superseded). What
+   stands today: the hash chain itself, the in-memory head (advanced only after a
+   successful write), and a loud failure at open on a damaged chain instead of
+   recovery. Read those three bullets as the record of what was built, then
+   rolled back.
 
    Enforced:
    - Single writer. Not merely documented: an advisory file lock on the append
@@ -277,11 +294,12 @@ data-model precondition. (Decision: ADR-024.)
 
 2. Retention. The audit chain itself is append-only and immutable, so its
    retention is conceptual: statutory periods are sector administrative law
-   (VwVfG and domain rules) and are documented, not implemented. The two
-   technically-deletable stores have concrete retention already: the raw store
-   via erasure on request, the logs via rotation (Step 1 item 1). The mechanism
-   that reconciles erasure with the immutable chain is in the Defensibility
-   backbone section.
+   (VwVfG and domain rules) and are documented, not implemented. Of the two
+   technically-deletable stores the raw store has concrete retention via erasure
+   on request; the logs' time-based retention (Step 1 item 1) was rolled back in
+   Round 21b and is a production deferral (ADR-026 banner). The mechanism that
+   reconciles erasure with the immutable chain is in the Defensibility backbone
+   section.
 
 Design-model precondition (why Step 2 is not independent of Step 1): the
 AuditEvent structure, including the serialization-version field and the
@@ -334,10 +352,10 @@ event is silently absent. Combined with the in-memory chain-head, a degrading
 audit store (disk full, lock contention, FS latency) would produce months of
 successful briefings with missing links and an in-memory head that has advanced
 past disk, surfacing only at the next restart or verify_chain(), with no alarm
-because the swallow never reached a metric. The durable-append-before-head-
-advance invariant (Step 2) and the audit_write_failures_total metric and an
-ERROR span status (Step 1) together make the failure visible regardless of the
-policy chosen.
+because the swallow never reached a metric. The head-advances-only-after-a-
+successful-write ordering (Step 2; ADR-030's fsync was rolled back in Round 21)
+and the audit_write_failures_total metric and an ERROR span status (Step 1)
+together make the failure visible regardless of the policy chosen.
 
 Decided in ADR-027: the audit-write failure policy, completeness
 versus availability.

@@ -26,7 +26,6 @@ from app.observability.events import (
     reset_registered_events,
 )
 from app.observability.logging_config import (
-    ObservabilityBootstrapError,
     ProcessorChainError,
     UnregisteredLogKeyError,
     allowed_keys,
@@ -34,11 +33,9 @@ from app.observability.logging_config import (
     register_keys,
     reset_registered_keys,
     set_strict_mode,
-    sweep_expired_logs,
 )
 
 __all__ = [
-    "ObservabilityBootstrapError",
     "ProcessorChainError",
     "UnregisteredLogEventError",
     "UnregisteredLogKeyError",
@@ -54,5 +51,4 @@ __all__ = [
     "reset_registered_keys",
     "set_correlation_id",
     "set_strict_mode",
-    "sweep_expired_logs",
 ]

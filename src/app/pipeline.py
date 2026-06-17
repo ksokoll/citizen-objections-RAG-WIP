@@ -202,13 +202,14 @@ class Pipeline:
                 )
                 inc_objection_processed(status=event_type.value)
                 # End-to-end ordering (ADR-033): the completion custody event is
-                # emitted, and with the durable-append guarantee (fsync before
-                # head-advance, ADR-030) made durable, BEFORE run() returns the
+                # emitted, written, and flushed BEFORE run() returns the
                 # briefing. The return is the system's claim that the objection
                 # was processed and recorded; that claim must not precede its
-                # evidence on disk. Fail-closed (above) means a failed completion
+                # record on disk. Fail-closed (above) means a failed completion
                 # write raises here, so no briefing is returned without its
-                # durable completion proof.
+                # completion proof. (The fsync-before-head-advance durability
+                # promise of ADR-030 was rolled back in Round 21 as out of demo
+                # scope; the ordering and the fail-closed abort stay.)
                 self._emit(
                     einwendungs_id,
                     event_type,

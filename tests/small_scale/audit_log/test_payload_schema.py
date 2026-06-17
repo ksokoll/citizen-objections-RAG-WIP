@@ -122,10 +122,6 @@ def test_the_emitted_events_payloads_all_validate() -> None:
     validate_payload(AuditEventType.KEIN_TREFFER, {"entry_count": 0})
     validate_payload(AuditEventType.PIPELINE_FEHLER, {"reason": "pipeline error"})
     validate_payload(
-        AuditEventType.WIEDERHERSTELLUNG,
-        {"quarantined_hash": "a" * 64, "quarantined_lines": 1},
-    )
-    validate_payload(
         AuditEventType.ROHDOKUMENT_ZUGRIFF,
         {"document_id": "doc-1"},
     )

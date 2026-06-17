@@ -1,11 +1,12 @@
 """Behaviour tests for the end-to-end completion ordering (ADR-033).
 
 The return value of run() is the system's claim that an objection was processed
-and recorded. Fail-closed plus the durable-append guarantee (fsync before
-head-advance, ADR-030) make that claim never precede its evidence: the
-completion custody event is durably appended before the briefing is returned,
-and a completion-write failure returns no briefing at all. These tests pin both
-halves through a store that records its appends and can fail one event type.
+and recorded. Fail-closed plus the append-before-return ordering make that claim
+never precede its record: the completion custody event is appended before the
+briefing is returned, and a completion-write failure returns no briefing at all.
+These tests pin both halves through a store that records its appends and can fail
+one event type. (The fsync durability promise of ADR-030 was rolled back in
+Round 21; the ordering and the fail-closed abort it leans on are unchanged.)
 """
 
 from __future__ import annotations

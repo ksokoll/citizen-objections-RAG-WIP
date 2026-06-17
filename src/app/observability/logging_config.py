@@ -1,8 +1,8 @@
 """One-sink, default-deny logging configuration (ADR-026).
 
 All log output, from our structlog calls and from third-party stdlib loggers
-alike, passes through a single shared processor chain into a single owner-only
-TimedRotatingFileHandler. The chain enforces default-deny by both key and
+alike, passes through a single shared processor chain into a single file handler
+that appends to one log file. The chain enforces default-deny by both key and
 origin, following lift-stamp-filter ordering (ADR-026): foreign data is lifted
 first or not at all, authoritative truth is stamped after, filtering is last.
 The controls at the sink:
@@ -24,11 +24,6 @@ The controls at the sink:
 - exception reduction to type plus location, so an exception message (foreign
   authored text) is never written to disk.
 
-The sink is owner-only on POSIX (directory 0o700, files 0o600, rotated files
-inherit the mode) to match the raw store (ADR-025), with a world-readable
-self-check; on Windows POSIX modes do not map to ACLs (documented limitation,
-ADR-026).
-
 structlog routes into stdlib via ProcessorFormatter.wrap_for_formatter; foreign
 stdlib records route through the same shared processors via
 ProcessorFormatter(foreign_pre_chain=shared). Configuration is an explicit
@@ -41,10 +36,10 @@ The test suite configures via an explicit session fixture in conftest.
 The two enforcement phases are deliberately separated (ADR-026, phase
 separation): strict at configuration time, unbreakable at request time.
 
-- Strict bootstrap. configure_logging() fails loud: any directory, handler, or
-  structlog setup failure becomes ObservabilityBootstrapError with an
-  actionable message, and a missing default-deny allowlist raises
-  ProcessorChainError, both at configure time. There is no degradation to a
+- Strict bootstrap. configure_logging() sets up the sink directly and fails
+  loud: a directory, handler, or structlog setup failure propagates the
+  underlying error, and a missing default-deny allowlist raises
+  ProcessorChainError at configure time. There is no degradation to a
   NullHandler or bare stderr, because running without the governed sink would
   be fail-open for the central PII control (ADR-026, no-degradation rationale).
   The allowlist self-check therefore runs once at configure time, not per event.
@@ -55,24 +50,15 @@ separation): strict at configuration time, unbreakable at request time.
   suite) an unregistered name raises so CI catches every typo; in production it
   substitutes the unregistered_log_event constant plus the caller location and
   discards the original name entirely (it is potential payload).
-
-Retention is time-based: the handler rotates at midnight UTC and keeps
-RETENTION_DAYS backups; sweep_expired_logs() removes over-age rotated files by
-mtime, covering boundaries the process was not alive for, and is wired into
-configure_logging() so a startup always enforces the horizon.
 """
 
 from __future__ import annotations
 
 import functools
-import io
 import logging
 import os
-import stat
 import sys
 from collections.abc import Iterable
-from datetime import UTC, datetime, timedelta
-from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
 from types import FrameType
 from typing import cast
@@ -82,21 +68,11 @@ from structlog.typing import EventDict, Processor, WrappedLogger
 
 from app.observability.correlation import add_correlation_id
 from app.observability.events import (
-    LOG_SINK_SIZE_BYTES,
-    LOG_SINK_WORLD_READABLE,
     PROCESSOR_FAILED,
     UNREGISTERED_LOG_EVENT,
     UnregisteredLogEventError,
     registered_events,
 )
-
-#: Module logger for the sink self-checks. Routes through the same governed
-#: chain as every other event.
-_log = structlog.get_logger()
-
-#: Documented placeholder retention. The legal determination of the period is
-#: out of scope (ADR-026, Retention).
-RETENTION_DAYS: int = 30
 
 LOG_FILENAME: str = "observability.log"
 
@@ -117,12 +93,6 @@ ENV_STRICT: str = "OBSERVABILITY_STRICT"
 #: OBSERVABILITY_STRICT reading; the test conftest sets it True.
 _STRICT_MODE: bool = False
 
-#: Owner-only modes for the sink, matching the raw store (ADR-025, ADR-026).
-#: Enforced on POSIX; on Windows POSIX modes do not map to ACLs (documented
-#: limitation, ADR-026).
-_LOG_DIR_MODE: int = 0o700
-_LOG_FILE_MODE: int = 0o600
-
 #: Upper bound on a foreign record's ``event`` value (the arbitrary third-party
 #: message text). Bounds the unredacted foreign-message residual; closure
 #: remains with the deferred sink scan and redaction (ADR-026).
@@ -137,11 +107,11 @@ _CONTROL_CHAR_TABLE: dict[int, None] = {codepoint: None for codepoint in range(0
 #: These are the mechanism's own fields, not domain knowledge, so they live
 #: here and seed the registry at import: the chain's authoritative stamps and
 #: exception reduction (event, level, timestamp, correlation_id, exc_type,
-#: exc_location), the self-instrumentation fields (sink_size_bytes,
-#: failed_processor, caller_location), and the @traced decorator's stage timing
-#: fields (stage, duration_ms, status). Each is operational metadata, never
-#: payload. Domain field names are declared per context in <context>/events.py
-#: and unioned in at the composition root (H3).
+#: exc_location), the self-instrumentation fields (failed_processor,
+#: caller_location), and the @traced decorator's stage timing fields (stage,
+#: duration_ms, status). Each is operational metadata, never payload. Domain
+#: field names are declared per context in <context>/events.py and unioned in
+#: at the composition root (H3).
 OBSERVABILITY_KEYS: frozenset[str] = frozenset(
     {
         "event",
@@ -150,7 +120,6 @@ OBSERVABILITY_KEYS: frozenset[str] = frozenset(
         "correlation_id",
         "exc_type",
         "exc_location",
-        "sink_size_bytes",
         "failed_processor",
         "caller_location",
         "stage",
@@ -239,18 +208,6 @@ class ProcessorChainError(Exception):
     """
 
 
-class ObservabilityBootstrapError(Exception):
-    """Raised when the logging configuration cannot be installed at startup.
-
-    Fail-loud, no degradation (ADR-026): a directory, handler, or structlog
-    setup failure aborts configuration with a named, actionable message
-    (operation, path, what to check) rather than falling back to a NullHandler
-    or bare stderr. Running the pipeline without its governed sink would be
-    fail-open for the central PII control, so a bootstrap failure must stop the
-    process, not silently downgrade it.
-    """
-
-
 class UnregisteredLogKeyError(Exception):
     """Raised in strict mode when a registered own event carries a key that is
     not in the assembled allowlist.
@@ -330,9 +287,12 @@ def _caller_location() -> str:
 def never_raise(processor: Processor) -> Processor:
     """Wrap an own processor so a runtime exception can never reach the caller.
 
-    Round A enforcement could abort a business call from inside the telemetry:
-    a processor exception propagated out of the log call. This wrapper contains
-    that. On a processor exception, the original event dict is discarded (a
+    This is a systems-design decision, not infra robustness: the instrumentation
+    path must not tear down the business path (a monitoring error must not kill
+    the pipeline). Round A enforcement could abort a business call from inside
+    the telemetry: a processor exception propagated out of the log call. This
+    wrapper contains that. On a processor exception, the original event dict is
+    discarded (a
     processor that failed mid-chain may hold half-processed, untrusted data) and
     replaced by a substitute PROCESSOR_FAILED event naming the failing
     processor, which then flows through the remaining chain and the allowlist.
@@ -601,89 +561,22 @@ def _build_renderer(fmt: str) -> Processor:
     return structlog.processors.JSONRenderer()
 
 
-class _OwnerOnlyTimedRotatingFileHandler(TimedRotatingFileHandler):
-    """TimedRotatingFileHandler that creates sink files owner-only on POSIX.
-
-    The base handler opens the active log file with the process umask, which
-    routinely yields a world-readable file. The logs are a third store of
-    pseudonymous data (ADR-026), so the sink is held to the same owner-only
-    posture as the raw store (ADR-025). ``_open`` is overridden to create the
-    file via ``os.open`` with mode 0o600 and to chmod it on every open, so the
-    active file and every rotated file (created by renaming the active file)
-    end up owner-only. On Windows POSIX modes do not map to ACLs, so the base
-    behavior is used unchanged (documented limitation, ADR-026).
-    """
-
-    def _open(self) -> io.TextIOWrapper:
-        if os.name != "posix":
-            return super()._open()
-        open_flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND
-        file_descriptor = os.open(self.baseFilename, open_flags, _LOG_FILE_MODE)
-        # os.open's mode is masked by umask and does not touch a pre-existing
-        # file; chmod unconditionally so a reopened or inherited file is bounded.
-        os.chmod(self.baseFilename, _LOG_FILE_MODE)
-        # self.mode is a text mode ("a"), so fdopen returns a TextIOWrapper; the
-        # non-literal mode makes os.fdopen's overload widen the type to IO[Any].
-        return cast(
-            io.TextIOWrapper,
-            os.fdopen(
-                file_descriptor,
-                self.mode,
-                encoding=self.encoding,
-                errors=self.errors,
-            ),
-        )
-
-
-def _warn_if_sink_world_readable(log_dir: Path) -> None:
-    """Warn on POSIX if the sink directory is world-accessible.
-
-    Mirrors the raw-store world-readable check (ADR-025): verifies the design's
-    access claim against what the filesystem actually enforces. A world-readable
-    sink is a misconfiguration, not a logging outcome, so it is logged (mode
-    count only, never the path) and processing continues. Skipped on Windows,
-    where POSIX mode bits do not apply.
-    """
-    if os.name != "posix" or not log_dir.exists():
-        return
-    mode = log_dir.stat().st_mode
-    if mode & (stat.S_IROTH | stat.S_IWOTH | stat.S_IXOTH):
-        _log.warning(
-            LOG_SINK_WORLD_READABLE,
-            store_mode=f"{stat.S_IMODE(mode):#o}",
-        )
-
-
-def _emit_log_sink_size(log_dir: Path) -> None:
-    """Emit the active sink file size once, after configuration.
-
-    Surfaces the Windows rotation failure mode (ADR-026): if a second process
-    holds the active file open, the midnight rename fails silently and the file
-    grows without bound. The size reported at the next startup makes that
-    visible. The file may not exist yet (the handler opens with delay), in which
-    case the size is 0.
-    """
-    log_path = log_dir / LOG_FILENAME
-    size_bytes = log_path.stat().st_size if log_path.exists() else 0
-    _log.info(LOG_SINK_SIZE_BYTES, sink_size_bytes=size_bytes)
-
-
 def configure_logging(
     log_dir: Path,
     fmt: str = "json",
     strict: bool | None = None,
-    retention_days: int = RETENTION_DAYS,
 ) -> None:
     """Install the one-sink, default-deny logging configuration.
 
-    Strict at bootstrap (ADR-026, phase separation): a directory, handler, or
-    structlog setup failure raises ObservabilityBootstrapError with an
-    actionable message, and a missing allowlist raises ProcessorChainError. No
-    degradation to a NullHandler or bare stderr. Idempotent: a second call
-    replaces the handler this module installed rather than stacking a second
-    sink. Called explicitly by the composition root (the CLI entrypoint, the
-    conftest fixture); the sink path is a parameter resolved at the entrypoint,
-    never an environment read in this module (ADR-026, composition-root wiring).
+    Strict at bootstrap (ADR-026, phase separation): the sink is set up directly
+    and configuration fails loud. A directory, handler, or structlog setup
+    failure propagates the underlying error, and a missing allowlist raises
+    ProcessorChainError. No degradation to a NullHandler or bare stderr.
+    Idempotent: a second call replaces the handler this module installed rather
+    than stacking a second sink. Called explicitly by the composition root (the
+    CLI entrypoint, the conftest fixture); the sink path is a parameter resolved
+    at the entrypoint, never an environment read in this module (ADR-026,
+    composition-root wiring).
 
     Args:
         log_dir: Sink directory, resolved by the caller at the entrypoint.
@@ -693,13 +586,13 @@ def configure_logging(
             composition root passes an explicit bool (the CLI from
             OBSERVABILITY_STRICT, the test conftest True). Forwarded to
             set_strict_mode (ADR-026, composition-root wiring).
-        retention_days: Rotated-backup count and sweep horizon.
 
     Raises:
-        ObservabilityBootstrapError: If the log directory, the structlog chain,
-            or the sink handler cannot be set up.
         ProcessorChainError: If the default-deny allowlist processor is not in
             the configured chain.
+        OSError: If the log directory or the sink file cannot be set up; the
+            underlying error propagates unwrapped (the demo does not translate
+            it into a named startup abort).
     """
     global _INSTALLED_HANDLER
 
@@ -709,66 +602,39 @@ def configure_logging(
     resolved_dir = log_dir
     resolved_fmt = fmt.lower()
 
-    try:
-        resolved_dir.mkdir(parents=True, exist_ok=True)
-        if os.name == "posix":
-            # mkdir's mode is masked by umask, so set it explicitly afterwards.
-            os.chmod(resolved_dir, _LOG_DIR_MODE)
-    except OSError as exc:
-        raise ObservabilityBootstrapError(
-            f"could not create or secure the log directory '{resolved_dir}': "
-            "check that the path is a directory and not an existing file, that "
-            "the parent exists and is writable, and that the filesystem is not "
-            "read-only"
-        ) from exc
+    resolved_dir.mkdir(parents=True, exist_ok=True)
 
     shared = _build_shared_processors()
 
-    try:
-        structlog.configure(
-            processors=[
-                *shared,
-                structlog.stdlib.ProcessorFormatter.wrap_for_formatter,
-            ],
-            logger_factory=structlog.stdlib.LoggerFactory(),
-            wrapper_class=structlog.stdlib.BoundLogger,
-            # Disabled so tests can reconfigure the chain and have the change
-            # take effect on the next event.
-            cache_logger_on_first_use=False,
-        )
-    except Exception as exc:
-        raise ObservabilityBootstrapError(
-            "could not configure the structlog processor chain: check the "
-            "observability.logging_config processor definitions"
-        ) from exc
+    structlog.configure(
+        processors=[
+            *shared,
+            structlog.stdlib.ProcessorFormatter.wrap_for_formatter,
+        ],
+        logger_factory=structlog.stdlib.LoggerFactory(),
+        wrapper_class=structlog.stdlib.BoundLogger,
+        # Disabled so tests can reconfigure the chain and have the change
+        # take effect on the next event.
+        cache_logger_on_first_use=False,
+    )
 
     # Configure-time self-check (not per event): the default-deny control must
-    # be in the chain we just installed, or bootstrap fails loud.
+    # be in the chain we just installed, or configure fails loud.
     _assert_allowlist_in_chain()
 
-    try:
-        formatter = structlog.stdlib.ProcessorFormatter(
-            foreign_pre_chain=shared,
-            processors=[
-                structlog.stdlib.ProcessorFormatter.remove_processors_meta,
-                _build_renderer(resolved_fmt),
-            ],
-        )
-        handler = _OwnerOnlyTimedRotatingFileHandler(
-            filename=resolved_dir / LOG_FILENAME,
-            when="midnight",
-            utc=True,
-            backupCount=retention_days,
-            encoding="utf-8",
-            delay=True,
-        )
-        handler.setFormatter(formatter)
-    except OSError as exc:
-        raise ObservabilityBootstrapError(
-            f"could not open the log sink file '{resolved_dir / LOG_FILENAME}': "
-            "check directory permissions and that no other process holds the "
-            "active file open"
-        ) from exc
+    formatter = structlog.stdlib.ProcessorFormatter(
+        foreign_pre_chain=shared,
+        processors=[
+            structlog.stdlib.ProcessorFormatter.remove_processors_meta,
+            _build_renderer(resolved_fmt),
+        ],
+    )
+    handler = logging.FileHandler(
+        filename=resolved_dir / LOG_FILENAME,
+        encoding="utf-8",
+        delay=True,
+    )
+    handler.setFormatter(formatter)
 
     root = logging.getLogger()
     if _INSTALLED_HANDLER is not None and _INSTALLED_HANDLER in root.handlers:
@@ -780,47 +646,3 @@ def configure_logging(
 
     for name in _THIRD_PARTY_LOGGERS:
         logging.getLogger(name).setLevel(logging.WARNING)
-
-    # Enforce the retention horizon on every startup, covering rotation
-    # boundaries the process was not alive for (ADR-026, retention).
-    sweep_expired_logs(log_dir=resolved_dir, retention_days=retention_days)
-    # Sink is configured; emit its size (rotation-failure signal) and verify its
-    # access posture, both through the governed chain.
-    _emit_log_sink_size(resolved_dir)
-    _warn_if_sink_world_readable(resolved_dir)
-
-
-def sweep_expired_logs(
-    log_dir: Path,
-    retention_days: int = RETENTION_DAYS,
-    now: datetime | None = None,
-) -> list[Path]:
-    """Delete rotated log files whose mtime is past the retention horizon.
-
-    Only rotated files (``observability.log.*``) are considered; the active log
-    is never swept. Belt-and-suspenders beyond the handler's backupCount: it
-    catches over-age files left when the process was not alive at a rotation
-    boundary.
-
-    Args:
-        log_dir: Sink directory to sweep, resolved by the caller.
-        retention_days: Files older than this many days are deleted.
-        now: Reference time (UTC). Defaults to the current time; injectable for
-            tests.
-
-    Returns:
-        The list of deleted file paths.
-    """
-    resolved_dir = log_dir
-    reference = now or datetime.now(UTC)
-    cutoff = reference - timedelta(days=retention_days)
-
-    deleted: list[Path] = []
-    if not resolved_dir.exists():
-        return deleted
-    for rotated in resolved_dir.glob(f"{LOG_FILENAME}.*"):
-        mtime = datetime.fromtimestamp(rotated.stat().st_mtime, UTC)
-        if mtime < cutoff:
-            rotated.unlink()
-            deleted.append(rotated)
-    return deleted

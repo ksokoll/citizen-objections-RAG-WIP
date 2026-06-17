@@ -2,15 +2,12 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
-import os
 import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
-from filelock import FileLock
 
 from app.audit_log.anchor import head_anchor, results_with_anchor
 from app.audit_log.serialization import GENESIS_PREV_HASH, compute_event_hash
@@ -83,58 +80,6 @@ def test_publish_translates_io_failure_into_audit_log_error(tmp_path: Path) -> N
     assert isinstance(exc_info.value.__cause__, OSError)
 
 
-def test_fsync_precedes_the_head_advance(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Given a publish, when its fsync runs, then the in-memory head still points
-    at the previous event; only after the publish returns has it advanced.
-
-    fsync-before-head-advance is the durability invariant (ADR-030): the head is
-    the claim that an event exists, so it must not advance until the bytes are on
-    stable storage. Observing the head at fsync time is the seam that proves the
-    order.
-    """
-    store = JsonLinesAuditStore(tmp_path / "audit.jsonl")
-    store.publish(_make_event(einwendungs_id="EW-001"))  # head is now at seq 0
-
-    captured: dict[str, int | None] = {}
-    real_fsync = os.fsync
-
-    def recording_fsync(fd: int) -> None:
-        # The head must not yet reflect the event whose bytes we are fsyncing.
-        captured["head_sequence_at_fsync"] = store._head_sequence
-        real_fsync(fd)
-
-    monkeypatch.setattr(os, "fsync", recording_fsync)
-    store.publish(_make_event(einwendungs_id="EW-002"))  # should advance to seq 1
-
-    assert captured["head_sequence_at_fsync"] == 0
-    assert store._head_sequence == 1
-
-
-def test_a_write_failing_before_fsync_leaves_the_head_unadvanced(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Given a publish whose fsync fails, when it raises, then the head has not
-    advanced: a failed durable append leaves the in-memory chain level with disk,
-    never ahead of it (ADR-030).
-    """
-    store = JsonLinesAuditStore(tmp_path / "audit.jsonl")
-    store.publish(_make_event(einwendungs_id="EW-001"))
-    head_sequence_before = store._head_sequence
-    head_hash_before = store._head_hash
-
-    def failing_fsync(fd: int) -> None:
-        raise OSError("simulated fsync failure before the head advances")
-
-    monkeypatch.setattr(os, "fsync", failing_fsync)
-    with pytest.raises(AuditLogError):
-        store.publish(_make_event(einwendungs_id="EW-002"))
-
-    assert store._head_sequence == head_sequence_before
-    assert store._head_hash == head_hash_before
-
-
 def test_publish_does_not_read_the_whole_file_per_append(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -155,50 +100,6 @@ def test_publish_does_not_read_the_whole_file_per_append(
     # Read the file directly (query() legitimately reads; only publish must not).
     lines = path.read_text(encoding="utf-8").splitlines()
     assert len(lines) == 2
-
-
-def test_a_second_writer_is_blocked_while_the_lock_is_held(tmp_path: Path) -> None:
-    """Given the audit store lock is already held, when the store tries to
-    publish, then it fails loudly with AuditLogError instead of interleaving;
-    once the lock is released the publish proceeds and the chain stays valid.
-
-    The single-writer advisory lock (ADR-030) serializes writers: two writers
-    cannot interleave an append. A held lock is the stand-in for a concurrent
-    writer; the contended store must fail loudly on the documented type, not hang
-    or write a conflicting line.
-    """
-    path = tmp_path / "audit.jsonl"
-    store = JsonLinesAuditStore(path, lock_timeout=0.1)
-
-    contending_lock = FileLock(f"{path}.lock")
-    with contending_lock:
-        with pytest.raises(AuditLogError):
-            store.publish(_make_event(einwendungs_id="EW-001"))
-
-    # The blocked event never reached disk, so after release the chain is clean:
-    # the next publish is sequence 0 and chains from the genesis sentinel.
-    store.publish(_make_event(einwendungs_id="EW-002"))
-    events = store.query()
-    assert [event.sequence_number for event in events] == [0]
-    assert events[0].event_hash == compute_event_hash(events[0], GENESIS_PREV_HASH)
-
-
-def test_concurrent_recovery_is_blocked_while_the_lock_is_held(tmp_path: Path) -> None:
-    """Given the audit store lock is held, when a store recovers on the same
-    path, then its recover() fails loudly rather than recovering concurrently.
-
-    recover() is inside the critical section (A5, ADR-030): two starts must not
-    seed the head from the same file at once. The bare open is side-effect-free
-    and takes no lock; recover() is where the writing path acquires it, so a held
-    lock makes the second start's recover() fail on the documented type.
-    """
-    path = tmp_path / "audit.jsonl"
-    JsonLinesAuditStore(path).publish(_make_event(einwendungs_id="EW-001"))
-
-    contending_lock = FileLock(f"{path}.lock")
-    with contending_lock:
-        with pytest.raises(AuditLogError):
-            JsonLinesAuditStore(path, lock_timeout=0.1).recover()
 
 
 def test_query_by_einwendungs_id(tmp_path: Path) -> None:
@@ -453,19 +354,20 @@ def test_store_assigns_chain_fields_and_ignores_caller_supplied_ones(
 
 
 # A distinctive, invalid-JSON tail standing in for a crash mid-write: it cannot
-# parse, and it shares no substring with a real event line, so absence checks
-# against the healed live file are unambiguous.
+# parse, and it shares no substring with a real event line, so checks against
+# the unchanged file are unambiguous.
 _PARTIAL_LAST_LINE = '{"truncated_partial_write": "PARTIAL'
 
 
-def test_a_truncated_last_line_is_quarantined_with_a_recovery_event(
+def test_a_damaged_last_line_raises_at_open_instead_of_being_quarantined(
     tmp_path: Path,
 ) -> None:
     """Given a chain whose last line was partially written (a crash mid-append),
-    when the store reopens, then the partial line is quarantined (absent from the
-    live file, present in audit.jsonl.corrupt.<timestamp>) and a recovery event
-    carrying the quarantined bytes' hash and a count, with no raw content, is in
-    the chain (ADR-030).
+    when the writing path opens it, then recover() raises AuditLogError and the
+    store does not open: the damaged file is left untouched (no quarantine
+    sibling, the partial line stays). The quarantine recovery was rolled back to
+    a loud failure at open (Round 21, ADR-030 superseded): if the chain is
+    damaged, the store does not open.
     """
     path = tmp_path / "audit.jsonl"
     store = JsonLinesAuditStore(path)
@@ -473,59 +375,24 @@ def test_a_truncated_last_line_is_quarantined_with_a_recovery_event(
     store.publish(_make_event(einwendungs_id="EW-002"))
     with path.open("a", encoding="utf-8") as f:
         f.write(_PARTIAL_LAST_LINE + "\n")
-    expected_hash = hashlib.sha256(_PARTIAL_LAST_LINE.encode("utf-8")).hexdigest()
+    before = path.read_text(encoding="utf-8")
 
-    reopened = JsonLinesAuditStore(path)
-    reopened.recover()  # the writing path heals the damaged tail
+    with pytest.raises(AuditLogError):
+        JsonLinesAuditStore(path).recover()
 
-    # The partial line is gone from the live file and preserved in quarantine.
-    assert _PARTIAL_LAST_LINE not in path.read_text(encoding="utf-8")
-    corrupt_files = list(tmp_path.glob("audit.jsonl.corrupt.*"))
-    assert len(corrupt_files) == 1
-    assert corrupt_files[0].read_text(encoding="utf-8").strip() == _PARTIAL_LAST_LINE
-
-    # A recovery event records the quarantine: the bytes' hash and a count, never
-    # the raw content.
-    [recovery] = reopened.query(event_type=AuditEventType.WIEDERHERSTELLUNG)
-    assert recovery.payload["quarantined_hash"] == expected_hash
-    assert recovery.payload["quarantined_lines"] == 1
-    assert _PARTIAL_LAST_LINE not in json.dumps(recovery.payload)
+    # Nothing was healed: no quarantine sibling and the file is byte-for-byte
+    # unchanged, the loud failure replaced quarantine-and-continue.
+    assert list(tmp_path.glob("audit.jsonl.corrupt.*")) == []
+    assert path.read_text(encoding="utf-8") == before
 
 
-def test_the_chain_continues_from_the_recovery_event_after_recovery(
-    tmp_path: Path,
-) -> None:
-    """Given recovery quarantined a damaged tail, when a new event is published,
-    then the head reflects the recovered chain and the new event chains onto the
-    recovery event: the chain is continuous across the heal (ADR-030).
-    """
-    path = tmp_path / "audit.jsonl"
-    store = JsonLinesAuditStore(path)
-    store.publish(_make_event(einwendungs_id="EW-001"))
-    with path.open("a", encoding="utf-8") as f:
-        f.write(_PARTIAL_LAST_LINE + "\n")
-
-    reopened = JsonLinesAuditStore(path)
-    reopened.recover()  # recovery seeds the head and appends the recovery event
-    reopened.publish(_make_event(einwendungs_id="EW-002"))
-
-    events = reopened.query()
-    # EW-001 (0), the recovery event (1), EW-002 (2): one continuous chain.
-    assert [event.sequence_number for event in events] == [0, 1, 2]
-    assert events[1].event_type == AuditEventType.WIEDERHERSTELLUNG
-    prev_hash = GENESIS_PREV_HASH
-    for event in events:
-        assert event.event_hash == compute_event_hash(event, prev_hash)
-        prev_hash = event.event_hash
-
-
-def test_a_last_line_whose_hash_does_not_chain_is_quarantined(
+def test_a_last_line_whose_hash_does_not_chain_raises_at_open(
     tmp_path: Path,
 ) -> None:
     """Given a last line that parses but whose hash does not chain from its
-    predecessor, when the store reopens, then it is quarantined like a truncated
-    line: a damaged tail is a damaged tail whether the damage is partial bytes or
-    a broken link (ADR-030).
+    predecessor, when the writing path opens it, then recover() raises: a damaged
+    tail is a damaged tail whether the damage is partial bytes or a broken link,
+    and the chain does not open on either (Round 21, ADR-030 superseded).
     """
     path = tmp_path / "audit.jsonl"
     store = JsonLinesAuditStore(path)
@@ -536,24 +403,18 @@ def test_a_last_line_whose_hash_does_not_chain_is_quarantined(
     with path.open("a", encoding="utf-8") as f:
         f.write(forged.model_dump_json() + "\n")
 
-    reopened = JsonLinesAuditStore(path)
-    reopened.recover()  # the writing path quarantines the non-chaining tail
-
-    # The forged line is quarantined and a recovery event replaces it in the chain.
-    assert len(list(tmp_path.glob("audit.jsonl.corrupt.*"))) == 1
-    sequences = [event.sequence_number for event in reopened.query()]
-    assert sequences == [0, 1]  # EW-001 then the recovery event
-    [recovery] = reopened.query(event_type=AuditEventType.WIEDERHERSTELLUNG)
-    assert recovery.sequence_number == 1
+    with pytest.raises(AuditLogError):
+        JsonLinesAuditStore(path).recover()
 
 
-def test_an_interior_damaged_line_is_not_healed_but_surfaces_loudly(
+def test_an_interior_damaged_line_raises_at_open(
     tmp_path: Path,
 ) -> None:
     """Given a damaged line that is not the last (an interior break), when the
-    writing path recovers, then it raises rather than silently truncating:
-    recovery heals only the observable EOF case, interior breaks are for
-    verify_chain (ADR-030).
+    writing path opens it, then recover() raises rather than silently truncating:
+    a damaged line at any tail-window position fails the open loudly (Round 21).
+    The full walk (verify_chain_file) is what diagnoses a break before the
+    window.
     """
     path = tmp_path / "audit.jsonl"
     store = JsonLinesAuditStore(path)
@@ -769,21 +630,22 @@ def test_verify_open_does_not_see_a_break_before_the_window(
 
 def test_a_slim_open_performs_no_write_and_no_verify(tmp_path: Path) -> None:
     """Given a chain with a damaged tail, when a store is merely opened (no
-    recover, no verify_open), then nothing is quarantined and no recovery event
-    is written: opening is side-effect-free, the heal is the explicit recover()
-    step (A5, ADR-031).
+    recover, no verify_open), then the bare open neither writes nor raises: the
+    damaged file is byte-for-byte untouched. Opening is the side-effect-free read
+    path; the loud failure on a damaged tail is the explicit recover() step the
+    writing path takes (A5, ADR-031), not a cost the constructor pays.
     """
     path = tmp_path / "audit.jsonl"
     seeding = JsonLinesAuditStore(path)
     seeding.publish(_make_event(einwendungs_id="EW-001"))
     with path.open("a", encoding="utf-8") as f:
         f.write(_PARTIAL_LAST_LINE + "\n")
+    before = path.read_text(encoding="utf-8")
 
-    JsonLinesAuditStore(path)  # a bare open: no recover, no verify_open
+    JsonLinesAuditStore(path)  # a bare open: no recover, no verify_open, no raise
 
-    # The damaged tail is untouched: no quarantine file, the partial line stays.
-    assert list(tmp_path.glob("audit.jsonl.corrupt.*")) == []
-    assert _PARTIAL_LAST_LINE in path.read_text(encoding="utf-8")
+    # The damaged tail is untouched: the bare open wrote nothing.
+    assert path.read_text(encoding="utf-8") == before
 
 
 def test_a_read_only_open_of_a_tampered_file_does_not_abort(tmp_path: Path) -> None:
@@ -809,13 +671,13 @@ def test_a_read_only_open_of_a_tampered_file_does_not_abort(tmp_path: Path) -> N
 def test_open_seeds_and_verifies_without_a_full_read(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Given a multi-event chain, when the writing path recovers and verifies the
+    """Given a multi-event chain, when the writing path seeds and verifies the
     tail, then it parses only the last K lines, never the whole file: open is
     O(K), so the tail-window's documented promise that open does not scan the
     trail holds (Sec-2, ADR-032).
 
-    The two full-file readers are made to fail; a clean recover()+verify_open()
-    that still seeds the correct head proves neither was used.
+    The full-file reader is made to fail; a clean recover()+verify_open() that
+    still seeds the correct head proves it was not used.
     """
     path, _ = _written_chain(tmp_path, count=6)
     store = JsonLinesAuditStore(path, tail_window=2)
@@ -824,7 +686,6 @@ def test_open_seeds_and_verifies_without_a_full_read(
         raise AssertionError("open must not read the whole file (Sec-2)")
 
     monkeypatch.setattr(store, "_read_all", _boom)
-    monkeypatch.setattr(store, "_read_chain_with_tail_check", _boom)
 
     store.recover()  # seeds from the last K+1 lines only
     store.verify_open()  # verifies the last K+1 lines only
@@ -868,12 +729,12 @@ def test_open_for_writing_aborts_on_a_tampered_tail(tmp_path: Path) -> None:
         JsonLinesAuditStore.open_for_writing(path)
 
 
-def test_open_for_writing_recovers_before_it_verifies(tmp_path: Path) -> None:
+def test_open_for_writing_aborts_on_a_damaged_tail(tmp_path: Path) -> None:
     """Given a chain whose last line was partially written, when a writing store
-    is opened via the factory, then it returns without raising and the damaged
-    tail is quarantined: recover() healed the tail before verify_open() checked
-    it, which pins the two steps to that order (M3, ADR-030). Were the order
-    reversed, verify_open would choke on the unparseable last line and raise.
+    is opened via the factory, then it raises: recover() fails loudly on the
+    damaged tail before the chain continues (Round 21, ADR-030 superseded). The
+    quarantine heal that previously let the factory return on a damaged tail is
+    gone; a damaged chain does not open.
     """
     path = tmp_path / "audit.jsonl"
     seeding = JsonLinesAuditStore(path)
@@ -881,13 +742,8 @@ def test_open_for_writing_recovers_before_it_verifies(tmp_path: Path) -> None:
     with path.open("a", encoding="utf-8") as f:
         f.write(_PARTIAL_LAST_LINE + "\n")
 
-    store = JsonLinesAuditStore.open_for_writing(path)
-
-    # The recovery event sits at sequence 1, after the healed EW-001 at 0: the
-    # head advanced through recover(), and verify_open() passed on the healed tail.
-    assert store.head.sequence_number == 1
-    assert _PARTIAL_LAST_LINE not in path.read_text(encoding="utf-8")
-    assert len(list(tmp_path.glob("audit.jsonl.corrupt.*"))) == 1
+    with pytest.raises(AuditLogError):
+        JsonLinesAuditStore.open_for_writing(path)
 
 
 def _chained_lines(payloads: list[dict]) -> list[str]:

@@ -4,8 +4,9 @@ The one front door of the system and its first non-fixture wiring. The CLI
 owns bootstrap: configure_logging is called explicitly with the log directory
 resolved here at the entrypoint and passed as a parameter (security finding
 5: the sink path is never read from the process environment at import time),
-a bootstrap failure aborts startup with an actionable message and no
-traceback, and after a successful bootstrap the registered startup_config
+a missing default-deny allowlist aborts startup cleanly with no traceback
+(ProcessorChainError) while any other configure failure propagates the
+underlying error, and after a successful bootstrap the registered startup_config
 event records the active toolset: git_sha, model_id, package versions,
 corpus_id, allowlist size, tracing flag, log format, and the resolved store
 paths. For the process command the same content-free provenance (no paths) is
@@ -73,7 +74,6 @@ from app.document_ingestion.service import (
     load_raw_document,
 )
 from app.observability import (
-    ObservabilityBootstrapError,
     ProcessorChainError,
     configure_logging,
 )
@@ -504,9 +504,10 @@ def _run_process(args: argparse.Namespace, paths: dict[str, Path]) -> int:
     # configuration custody event becomes the chain's genesis: the controls are
     # attested before any objection event is appended (ADR-031). This is the
     # writing path, so it is composed through open_for_writing, the one factory
-    # that seeds and heals the head (recover) then runs the fast tail-window
-    # check (verify_open) in order before the chain continues. A tampered tail
-    # aborts the run here, loudly. The bare constructor stays the read path (A5).
+    # that seeds the head (recover) then runs the fast tail-window check
+    # (verify_open) in order before the chain continues. A damaged or tampered
+    # tail aborts the run here, loudly. The bare constructor stays the read path
+    # (A5).
     audit_store = JsonLinesAuditStore.open_for_writing(args.audit_log)
     audit_service = AuditLogService(store=audit_store)
     provenance = _emit_startup_config(
@@ -647,7 +648,7 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         configure_logging(log_dir=args.log_dir, fmt=args.log_format, strict=strict)
-    except (ObservabilityBootstrapError, ProcessorChainError) as exc:
+    except ProcessorChainError as exc:
         print(f"startup aborted: {exc}", file=sys.stderr)
         return 2
 
