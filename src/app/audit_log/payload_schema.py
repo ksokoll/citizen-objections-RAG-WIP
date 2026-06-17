@@ -85,10 +85,6 @@ PAYLOAD_SCHEMAS: dict[AuditEventType, dict[str, type | FlatDict]] = {
     AuditEventType.PIPELINE_FEHLER: {
         "reason": str,
     },
-    AuditEventType.WIEDERHERSTELLUNG: {
-        "quarantined_hash": str,
-        "quarantined_lines": int,
-    },
     AuditEventType.STARTKONFIGURATION: {
         "git_sha": str,
         "package_versions": FlatDict(str),

@@ -17,26 +17,17 @@ from typing import Final
 
 #: Interim governed event for a failed audit publish (ADR-027). Emitted at
 #: ERROR by Pipeline._emit in place of the former stderr print. Round C turns
-#: the same call site fail-closed; the log line stays.
+#: the same call site fail-closed; the log line stays. (The AUDIT_RECOVERED
+#: event of ADR-030 was removed in Round 21 with the quarantine recovery.)
 AUDIT_APPEND_FAILED: Final[str] = "audit.append_failed"
-
-#: The store quarantined a damaged tail at open and recorded a recovery event in
-#: the chain (ADR-030). Emitted at WARNING by the store when recovery runs, so a
-#: recovery is visible operationally (logs are alertable) in addition to the
-#: chain-level custody record. Carries the quarantined bytes' hash and a line
-#: count, never the raw quarantined content.
-AUDIT_RECOVERED: Final[str] = "audit.recovered"
 
 #: Event constants this context emits, unioned into the registry at the
 #: composition root.
-AUDIT_EVENTS: Final[frozenset[str]] = frozenset({AUDIT_APPEND_FAILED, AUDIT_RECOVERED})
+AUDIT_EVENTS: Final[frozenset[str]] = frozenset({AUDIT_APPEND_FAILED})
 
 #: Allowlisted log field names this context emits, unioned into ALLOWED_KEYS at
 #: the composition root (ADR-026, default-deny). audit_event_type is the
-#: AuditEventType value the failed publish carried; quarantined_hash and
-#: quarantined_lines are the recovery event's fields (the SHA-256 of the
-#: quarantined bytes and how many lines were quarantined). All operational
-#: metadata, never payload or raw content.
-AUDIT_KEYS: Final[frozenset[str]] = frozenset(
-    {"audit_event_type", "quarantined_hash", "quarantined_lines"}
-)
+#: AuditEventType value the failed publish carried, operational metadata, never
+#: payload or raw content. (The recovery event's quarantined_hash and
+#: quarantined_lines keys were removed in Round 21 with the quarantine recovery.)
+AUDIT_KEYS: Final[frozenset[str]] = frozenset({"audit_event_type"})

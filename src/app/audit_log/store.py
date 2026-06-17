@@ -2,26 +2,17 @@
 
 from __future__ import annotations
 
-import hashlib
 import os
-import uuid
-from datetime import UTC, datetime
+from datetime import datetime
 from pathlib import Path
 from typing import Final
 
-import structlog
-
 from app.audit_log.anchor import ChainHead
-from app.audit_log.events import AUDIT_RECOVERED
 from app.audit_log.payload_schema import validate_payload
 from app.audit_log.serialization import GENESIS_PREV_HASH, compute_event_hash
 from app.audit_log.verification import ChainBreak, VerificationResult, verify_chain
-from app.core.events import SYSTEM_EINWENDUNGS_ID, AuditEvent, AuditEventType
+from app.core.events import AuditEvent, AuditEventType
 from app.core.failures import AuditLogError
-
-#: Module logger for the store's recovery event. Routes through the same
-#: governed chain as every other event (ADR-026).
-_log = structlog.get_logger()
 
 #: How many trailing events are verified at store open: the last K, not the
 #: whole file, so startup stays fast as the trail grows (ADR-031). The full walk
@@ -34,9 +25,9 @@ def verify_chain_file(path: Path) -> VerificationResult:
     """Read the on-disk chain and verify it fully, reporting the first break.
 
     Non-mutating by design: it reads and parses the file directly rather than
-    opening the store, so an auditor's verification never triggers recovery or
-    appends a recovery event (the auditor reads the chain as it stands). A line
-    that does not parse is itself reported as a break rather than crashing the
+    opening the store, so an auditor's verification never seeds a head or raises
+    an open-time failure (the auditor reads the chain as it stands). A line that
+    does not parse is itself reported as a break rather than crashing the
     command, so a corrupt line is diagnosed like any other.
 
     Args:
@@ -88,8 +79,8 @@ class JsonLinesAuditStore:
     the explicit recover() and verify_open() steps in order after construction,
     so the open ceremony lives in one place and a writing store cannot be
     assembled with verification skipped or the steps reordered. A read-only
-    consumer uses the bare constructor and so never triggers a recovery write or
-    a tail-verify abort just by opening the store.
+    consumer uses the bare constructor and so never seeds a head or hits a
+    tail-verify abort just by opening the store.
 
     Durability, locking, and the chain head (ADR-030):
     - Append and head advance: each line is written and flushed, and the
@@ -105,13 +96,13 @@ class JsonLinesAuditStore:
       mechanism: publish() does not scan the file. The file is read only by
       recover() (to seed the head) and verify_open() (to check the tail), the
       explicit writing-path steps, never on the bare open.
-    - Recovery (recover()): a damaged or partial last line (invalid JSON at EOF,
-      or a line whose hash does not chain) is moved to a quarantine file, its
-      bytes' hash is recorded, and a recovery event is written into the chain.
-      Only the last line is healed: a mid-file break is not silently fixed here,
-      it is for verify_chain (18c) to surface, because a partial last line is
-      directly observable while lost interior events are not without an external
-      anchor (ADR-030).
+    - Loud failure at open (recover()): a damaged line (invalid JSON, or a last
+      line whose hash does not chain) makes recover() raise AuditLogError naming
+      the problem; the store does not open on a damaged chain. The quarantine
+      recovery and the heal/recovery event of ADR-030 were rolled back as out of
+      demo scope (Round 21): "if the chain is damaged, I do not open" is less
+      code and a clearer demo statement than quarantine-and-continue. A break
+      before the tail window is still the full walk's job (verify_chain_file).
     """
 
     def __init__(
@@ -198,23 +189,26 @@ class JsonLinesAuditStore:
         return store
 
     def recover(self) -> None:
-        """Seed the head from disk, healing a damaged tail. A writing-path step.
+        """Seed the head from disk, raising loudly on a damaged tail. A write step.
 
-        The explicit recovery step a writing composition path calls after
+        The explicit head-seeding step a writing composition path calls after
         opening (A5): the slim constructor does no read and no write, so a
-        read-only consumer never pays for recovery. recover() reads the chain to
-        its last valid line and seeds the head from it, and if the last line is
-        damaged (invalid JSON at EOF, or a hash that does not chain from its
-        predecessor) quarantines it and appends a recovery event. Only the last
-        line is healed: an interior break is left for verify_chain (18c) to
-        surface, because a partial last line is directly observable while a lost
-        interior event is not without an external anchor (ADR-030). Idempotent on
-        a clean chain: it re-seeds the same head and writes nothing.
+        read-only consumer never pays for it. recover() reads the last
+        tail_window+1 lines from the file end (O(K), Sec-2), parses them, and
+        seeds the head from the last valid event. A damaged line (invalid JSON,
+        or a last line whose hash does not chain from its predecessor) makes it
+        raise AuditLogError naming the problem: the store does not open on a
+        damaged chain. The quarantine recovery and the heal/recovery event of
+        ADR-030 were rolled back as out of demo scope (Round 21). Idempotent on a
+        clean chain: it re-seeds the same head and writes nothing.
 
         Raises:
-            AuditLogError: If an interior (non-last) line fails to parse (ADR-030).
+            AuditLogError: If a line in the tail window fails to parse, or the
+                last line's hash does not chain from its predecessor.
         """
-        self._recover_and_seed()
+        lines, _ = self._read_last_lines(self._tail_window + 1)
+        events = self._parse_tail_or_raise(lines)
+        self._seed_head_from(events)
 
     def verify_open(self) -> None:
         """Verify the last tail_window events, raising on a break. A writing step.
@@ -356,85 +350,47 @@ class JsonLinesAuditStore:
             results.append(event)
         return results
 
-    def _recover_and_seed(self) -> None:
-        """Seed the in-memory head from disk, recovering a damaged tail (ADR-030).
+    def _parse_tail_or_raise(self, lines: list[str]) -> list[AuditEvent]:
+        """Parse the tail-window lines, raising loudly on any damaged line.
 
-        The body of recover(), under the single-writer lock. The clean path is
-        O(K): it reads only the last tail_window+1 lines from the file end
-        (Sec-2, ADR-032), seeds the head from the last valid event, and returns
-        without parsing the whole trail. A damaged last line (invalid JSON at
-        EOF, or a hash that does not chain) falls back to the full read its
-        rewrite needs: recovery quarantines the damaged tail, appends a recovery
-        event, and logs it. Only the last line is healed; an interior break is
-        left for verify_chain (18c) to surface, because a partial last line is
-        directly observable while a lost interior event is not without an
-        external anchor.
-
-        The tail-window verification is no longer part of seeding: it is the
-        separate verify_open() step the writing path runs after recover(), so a
-        read-only consumer that never calls it does not abort on a tampered tail
-        (A5, ADR-031).
-        """
-        lines, _ = self._read_last_lines(self._tail_window + 1)
-        events, damaged = self._parse_tail_for_recovery(lines)
-        if not damaged:
-            self._seed_head_from(events)
-            return
-        # A damaged last line: the rewrite needs the full valid prefix, so the
-        # rare damaged path falls back to the full read. Only the clean seeding
-        # read is O(K) (Sec-2: recovery's tail handling stays).
-        self._recover_full()
-
-    def _recover_full(self) -> None:
-        """Full-file recovery for a damaged last line: quarantine and seed.
-
-        The fallback _recover_and_seed takes only when the O(K) tail read found a
-        damaged last line. It re-reads the whole file (the rewrite of the healed
-        prefix needs every valid line), seeds the head, and quarantines the
-        damaged tail with a recovery event. An interior unparseable line raises
-        here, as it did before the O(K) optimization.
-        """
-        valid_events, valid_lines, damaged_line = self._read_chain_with_tail_check()
-        self._seed_head_from(valid_events)
-        if damaged_line is not None:
-            self._quarantine_and_record(damaged_line, valid_lines)
-
-    def _parse_tail_for_recovery(
-        self, lines: list[str]
-    ) -> tuple[list[AuditEvent], bool]:
-        """Parse the tail lines, flagging a damaged last line for the full path.
-
-        The windowed counterpart of _read_chain_with_tail_check used by the O(K)
-        clean path: lines are the last tail_window+1 file lines (read from the
-        end), so the last line here is the file's last line. An unparseable last
-        line, or a last line that parses but does not chain, is the EOF damage
-        recovery heals, reported as damaged=True so the caller falls back to the
-        full read. An unparseable non-last line is an interior break that raises,
-        as in the full read.
+        The seeding read's parse step (Round 21, replacing quarantine recovery).
+        lines are the last tail_window+1 file lines (read from the end, O(K)), so
+        the last line here is the file's last line. A line that fails to parse,
+        at any window position, makes the open fail with AuditLogError: the chain
+        does not open on a damaged file, instead of quarantining and continuing.
+        A last line that parses but whose hash does not chain from its
+        predecessor is the same damaged-tail case and raises too. A
+        parseable-but-non-chaining interior line near the tail is left for
+        verify_open() (the tail-window walk) to surface with location; a break
+        before the window is the full walk's job (verify_chain_file).
 
         Returns:
-            (events, damaged). damaged is True when the last line is the EOF
-            damage case; events then excludes nothing (the caller re-reads).
+            The parsed tail events, to seed the head from.
 
         Raises:
-            AuditLogError: If a non-last line in the window fails to parse.
+            AuditLogError: If a tail-window line fails to parse, or the last line
+                does not chain from its predecessor.
         """
         events: list[AuditEvent] = []
         for index, line in enumerate(lines):
             try:
                 events.append(AuditEvent.model_validate_json(line))
             except ValueError as exc:
-                if index == len(lines) - 1:
-                    return events, True
                 raise AuditLogError(
-                    f"audit store {self._path} has a damaged interior line near "
-                    f"the tail (window position {index}); recovery heals only a "
-                    "damaged last line, an interior break is for verify_chain "
-                    "to surface (18c)"
+                    f"audit store {self._path} has a damaged line at tail-window "
+                    f"position {index}; the chain does not open on a damaged file "
+                    "(Round 21: the loud-failure-at-open rule replaced quarantine "
+                    "recovery). Inspect the file or run verify-audit for the full "
+                    "walk."
                 ) from exc
-        if not events:
-            return events, False
-        return events, not self._last_event_chains(events)
+        if events and not self._last_event_chains(events):
+            raise AuditLogError(
+                f"audit store {self._path} has a last line whose hash does not "
+                "chain from its predecessor; the chain does not open on a damaged "
+                "tail (Round 21: loud failure at open replaced quarantine "
+                "recovery)."
+            )
+        return events
 
     def _tail_events(self) -> list[AuditEvent]:
         """Read the events verify_open checks: the window plus its predecessor.
@@ -446,7 +402,7 @@ class JsonLinesAuditStore:
         chain when it is no longer than the window. The break verify_open reports
         is therefore indexed within this returned sequence, the documented
         meaning of a ChainBreak index for a windowed walk. Called after
-        recover(), so the tail it reads is the healed tail.
+        recover(), so the tail it reads is the tail recover() seeded from.
         """
         lines, _ = self._read_last_lines(self._tail_window + 1)
         return [AuditEvent.model_validate_json(line) for line in lines]
@@ -498,12 +454,13 @@ class JsonLinesAuditStore:
     def _verify_tail_window(self, events: list[AuditEvent]) -> None:
         """Verify the last tail_window events, raising loudly on a break.
 
-        The fast startup check (ADR-031): recovery heals only a damaged last
-        line, so a parseable-but-non-chaining interior line (a naive in-place
-        edit) would otherwise pass open silently and surface only at the next
-        full verify. Verifying the tail window catches such a break near the end
-        and raises it with location, so a damaged tail is diagnosed at open, not
-        merely the next audit. A break before the window is the full walk's job
+        The fast startup check (ADR-031): recover() raises only on a damaged last
+        line (unparseable, or a hash that does not chain), so a parseable-but-
+        non-chaining interior line near the tail (a naive in-place edit) would
+        otherwise pass open silently and surface only at the next full verify.
+        Verifying the tail window catches such a break near the end and raises it
+        with location, so a damaged tail is diagnosed at open, not merely the
+        next audit. A break before the window is the full walk's job
         (verify_chain_file), deliberately not done here for startup speed.
 
         Args:
@@ -520,55 +477,6 @@ class JsonLinesAuditStore:
                 f"audit store {self._path} failed tail-window verification at "
                 f"open: {result.first_break.describe()}"
             )
-
-    def _read_chain_with_tail_check(
-        self,
-    ) -> tuple[list[AuditEvent], list[str], str | None]:
-        """Read the on-disk chain, isolating a damaged last line if present.
-
-        Returns the valid events, their source lines (so the live file can be
-        rewritten byte-for-byte without the damaged tail), and the damaged last
-        line or None. The damage cases handled here are the EOF cases: a last
-        line that fails to parse, or one that parses but whose hash does not
-        chain from its predecessor. An interior line that fails to parse is a
-        mid-file break, which recovery does not heal: it raises so the corruption
-        surfaces loudly rather than being silently truncated (ADR-030).
-
-        Returns:
-            (valid_events, valid_lines, damaged_line). damaged_line is None when
-            the chain is intact to its end.
-
-        Raises:
-            AuditLogError: If an interior (non-last) line fails to parse.
-        """
-        if not self._path.exists():
-            return [], [], None
-        lines = [
-            line
-            for line in self._path.read_text(encoding="utf-8").splitlines()
-            if line.strip()
-        ]
-        if not lines:
-            return [], [], None
-
-        events: list[AuditEvent] = []
-        for index, line in enumerate(lines):
-            try:
-                events.append(AuditEvent.model_validate_json(line))
-            except ValueError as exc:
-                if index == len(lines) - 1:
-                    # Truncated or partial last line: the EOF case recovery heals.
-                    return events, lines[:index], line
-                raise AuditLogError(
-                    f"audit store {self._path} has a damaged interior line at "
-                    f"position {index}; recovery heals only a damaged last line, "
-                    "an interior break is for verify_chain to surface (18c)"
-                ) from exc
-
-        if self._last_event_chains(events):
-            return events, lines, None
-        # The last line parsed but its hash does not chain: quarantine it too.
-        return events[:-1], lines[:-1], lines[-1]
 
     def _last_event_chains(self, events: list[AuditEvent]) -> bool:
         """Whether the last event's hash chains from its predecessor.
@@ -599,7 +507,8 @@ class JsonLinesAuditStore:
         seeds the genesis sentinel, so the next event becomes sequence 0.
 
         Args:
-            events: The valid events to seed from (the damaged tail excluded).
+            events: The valid events to seed from (recover() has already raised
+                if the tail was damaged).
         """
         chained = [event for event in events if event.sequence_number is not None]
         if not chained:
@@ -611,79 +520,6 @@ class JsonLinesAuditStore:
             last.event_hash if last.event_hash is not None else GENESIS_PREV_HASH
         )
         self._head_sequence = last.sequence_number
-
-    def _quarantine_and_record(self, damaged_line: str, valid_lines: list[str]) -> None:
-        """Quarantine the damaged tail, heal the file, record a recovery event.
-
-        The damaged line's bytes are written to a timestamped quarantine file,
-        the live file is rewritten durably without the damaged tail, a recovery
-        event carrying the quarantined bytes' hash and a line count (never the
-        raw content) is appended to the chain, and the recovery is logged. The
-        quarantine-not-truncate choice keeps the damaged bytes for later
-        inspection rather than discarding them silently (ADR-030).
-
-        Args:
-            damaged_line: The damaged last line, removed from the live file.
-            valid_lines: The source lines of the valid events, rewritten to the
-                live file byte-for-byte.
-        """
-        quarantined_hash = hashlib.sha256(damaged_line.encode("utf-8")).hexdigest()
-        self._quarantine_path().write_text(damaged_line + "\n", encoding="utf-8")
-        self._rewrite_valid_prefix(valid_lines)
-        self._append_durably(self._recovery_event(quarantined_hash))
-        _log.warning(
-            AUDIT_RECOVERED,
-            quarantined_hash=quarantined_hash,
-            quarantined_lines=1,
-        )
-
-    def _quarantine_path(self) -> Path:
-        """Return a timestamped sibling quarantine path for the damaged bytes."""
-        timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
-        return self._path.with_name(f"{self._path.name}.corrupt.{timestamp}")
-
-    def _rewrite_valid_prefix(self, valid_lines: list[str]) -> None:
-        """Durably rewrite the live file with only the valid lines.
-
-        Recovery is the one operation that rewrites the file rather than
-        appending; it drops the damaged tail and fsyncs, so the heal is itself
-        durable before the recovery event is appended (ADR-030).
-
-        Args:
-            valid_lines: The lines to keep, in order, written byte-for-byte.
-
-        Raises:
-            AuditLogError: If rewriting the healed file fails.
-        """
-        try:
-            with self._path.open("w", encoding="utf-8") as f:
-                for line in valid_lines:
-                    f.write(line + "\n")
-                f.flush()
-                os.fsync(f.fileno())
-        except OSError as exc:
-            raise AuditLogError(
-                f"failed to rewrite the audit store at {self._path} during recovery"
-            ) from exc
-
-    def _recovery_event(self, quarantined_hash: str) -> AuditEvent:
-        """Build the recovery custody event for the chain.
-
-        Carries the quarantined bytes' hash and a line count in its payload, so
-        what was removed is attributable without the raw content ever entering
-        the chain. It is a WIEDERHERSTELLUNG event with the shared system
-        sentinel id (SYSTEM_EINWENDUNGS_ID, core/events.py), not an objection
-        event (ADR-030).
-
-        Args:
-            quarantined_hash: SHA-256 hex of the quarantined bytes.
-        """
-        return AuditEvent(
-            event_id=str(uuid.uuid4()),
-            event_type=AuditEventType.WIEDERHERSTELLUNG,
-            einwendungs_id=SYSTEM_EINWENDUNGS_ID,
-            payload={"quarantined_hash": quarantined_hash, "quarantined_lines": 1},
-        )
 
     def _chain(self, event: AuditEvent) -> AuditEvent:
         """Stamp the next sequence number and chained hash onto an event.

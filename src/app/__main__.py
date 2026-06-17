@@ -504,9 +504,10 @@ def _run_process(args: argparse.Namespace, paths: dict[str, Path]) -> int:
     # configuration custody event becomes the chain's genesis: the controls are
     # attested before any objection event is appended (ADR-031). This is the
     # writing path, so it is composed through open_for_writing, the one factory
-    # that seeds and heals the head (recover) then runs the fast tail-window
-    # check (verify_open) in order before the chain continues. A tampered tail
-    # aborts the run here, loudly. The bare constructor stays the read path (A5).
+    # that seeds the head (recover) then runs the fast tail-window check
+    # (verify_open) in order before the chain continues. A damaged or tampered
+    # tail aborts the run here, loudly. The bare constructor stays the read path
+    # (A5).
     audit_store = JsonLinesAuditStore.open_for_writing(args.audit_log)
     audit_service = AuditLogService(store=audit_store)
     provenance = _emit_startup_config(

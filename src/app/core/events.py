@@ -6,33 +6,34 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 # Naming convention: German for domain events, English for code identifiers
 
-#: einwendungs_id carried by process-wide chain events that are not tied to a
-#: citizen objection: the store's recovery event (ADR-030) and the startup
-#: configuration event (ADR-031). A fixed non-objection sentinel so such a
-#: custody record satisfies the required non-empty id without claiming an
-#: Einwendung. Both process-wide events share this one sentinel, so a query for
-#: system events finds them together regardless of which wrote them.
+#: einwendungs_id carried by a process-wide chain event that is not tied to a
+#: citizen objection: the startup configuration event (ADR-031). A fixed
+#: non-objection sentinel so such a custody record satisfies the required
+#: non-empty id without claiming an Einwendung. (The store's recovery event also
+#: carried this sentinel until Round 21 rolled the quarantine recovery back to a
+#: loud failure at open, leaving STARTKONFIGURATION as the sole holder.)
 SYSTEM_EINWENDUNGS_ID: Final[str] = "SYSTEM"
 
 
 class AuditEventType(StrEnum):
     """Classification of an audit event.
 
-    Most members name a pipeline stage. Three are not pipeline steps:
-    WIEDERHERSTELLUNG, recorded when the store quarantines a damaged tail at open
-    (ADR-030); STARTKONFIGURATION, recorded at process start to prove the active
-    controls after the fact (ADR-031); and ROHDOKUMENT_ZUGRIFF, recorded when the
+    Most members name a pipeline stage. Two are not pipeline steps:
+    STARTKONFIGURATION, recorded at process start to prove the active controls
+    after the fact (ADR-031); and ROHDOKUMENT_ZUGRIFF, recorded when the
     show-document path reads a stored raw document (unmasked PII) back out
     (ADR-033). They live here because AuditEvent.event_type is typed against this
-    enum and each is a custody record like any other.
+    enum and each is a custody record like any other. (A WIEDERHERSTELLUNG
+    recovery event existed until Round 21 rolled the quarantine recovery back to
+    a loud failure at open; the member was removed with it.)
 
-    The sentinel differs by what the record is tied to. WIEDERHERSTELLUNG and
-    STARTKONFIGURATION are process-wide, tied to no objection, so they carry the
-    SYSTEM_EINWENDUNGS_ID sentinel. ROHDOKUMENT_ZUGRIFF is not: a raw-document
-    read is access to one specific objection's PII, so it carries that document's
-    id as its einwendungs_id (the natural correlation), not the SYSTEM sentinel.
-    A query for everything touching one objection then finds its read accesses
-    alongside its pipeline events (ADR-033).
+    The sentinel differs by what the record is tied to. STARTKONFIGURATION is
+    process-wide, tied to no objection, so it carries the SYSTEM_EINWENDUNGS_ID
+    sentinel. ROHDOKUMENT_ZUGRIFF is not: a raw-document read is access to one
+    specific objection's PII, so it carries that document's id as its
+    einwendungs_id (the natural correlation), not the SYSTEM sentinel. A query
+    for everything touching one objection then finds its read accesses alongside
+    its pipeline events (ADR-033).
 
     Why this is a central enum while the structured-log event vocabulary is
     per-context (M1, Round 20). The asymmetry is deliberate, not an oversight.
@@ -55,7 +56,6 @@ class AuditEventType(StrEnum):
     KEIN_TREFFER = "kein_treffer"
     FREIGABE = "freigabe"
     PIPELINE_FEHLER = "pipeline_fehler"
-    WIEDERHERSTELLUNG = "wiederherstellung"
     STARTKONFIGURATION = "startkonfiguration"
     ROHDOKUMENT_ZUGRIFF = "rohdokument_zugriff"
 
