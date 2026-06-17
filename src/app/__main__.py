@@ -4,8 +4,9 @@ The one front door of the system and its first non-fixture wiring. The CLI
 owns bootstrap: configure_logging is called explicitly with the log directory
 resolved here at the entrypoint and passed as a parameter (security finding
 5: the sink path is never read from the process environment at import time),
-a bootstrap failure aborts startup with an actionable message and no
-traceback, and after a successful bootstrap the registered startup_config
+a missing default-deny allowlist aborts startup cleanly with no traceback
+(ProcessorChainError) while any other configure failure propagates the
+underlying error, and after a successful bootstrap the registered startup_config
 event records the active toolset: git_sha, model_id, package versions,
 corpus_id, allowlist size, tracing flag, log format, and the resolved store
 paths. For the process command the same content-free provenance (no paths) is
@@ -73,7 +74,6 @@ from app.document_ingestion.service import (
     load_raw_document,
 )
 from app.observability import (
-    ObservabilityBootstrapError,
     ProcessorChainError,
     configure_logging,
 )
@@ -648,7 +648,7 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         configure_logging(log_dir=args.log_dir, fmt=args.log_format, strict=strict)
-    except (ObservabilityBootstrapError, ProcessorChainError) as exc:
+    except ProcessorChainError as exc:
         print(f"startup aborted: {exc}", file=sys.stderr)
         return 2
 

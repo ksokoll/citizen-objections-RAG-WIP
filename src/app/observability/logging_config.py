@@ -36,10 +36,10 @@ The test suite configures via an explicit session fixture in conftest.
 The two enforcement phases are deliberately separated (ADR-026, phase
 separation): strict at configuration time, unbreakable at request time.
 
-- Strict bootstrap. configure_logging() fails loud: any directory, handler, or
-  structlog setup failure becomes ObservabilityBootstrapError with an
-  actionable message, and a missing default-deny allowlist raises
-  ProcessorChainError, both at configure time. There is no degradation to a
+- Strict bootstrap. configure_logging() sets up the sink directly and fails
+  loud: a directory, handler, or structlog setup failure propagates the
+  underlying error, and a missing default-deny allowlist raises
+  ProcessorChainError at configure time. There is no degradation to a
   NullHandler or bare stderr, because running without the governed sink would
   be fail-open for the central PII control (ADR-026, no-degradation rationale).
   The allowlist self-check therefore runs once at configure time, not per event.
@@ -68,16 +68,11 @@ from structlog.typing import EventDict, Processor, WrappedLogger
 
 from app.observability.correlation import add_correlation_id
 from app.observability.events import (
-    LOG_SINK_SIZE_BYTES,
     PROCESSOR_FAILED,
     UNREGISTERED_LOG_EVENT,
     UnregisteredLogEventError,
     registered_events,
 )
-
-#: Module logger for the sink self-checks. Routes through the same governed
-#: chain as every other event.
-_log = structlog.get_logger()
 
 LOG_FILENAME: str = "observability.log"
 
@@ -112,11 +107,11 @@ _CONTROL_CHAR_TABLE: dict[int, None] = {codepoint: None for codepoint in range(0
 #: These are the mechanism's own fields, not domain knowledge, so they live
 #: here and seed the registry at import: the chain's authoritative stamps and
 #: exception reduction (event, level, timestamp, correlation_id, exc_type,
-#: exc_location), the self-instrumentation fields (sink_size_bytes,
-#: failed_processor, caller_location), and the @traced decorator's stage timing
-#: fields (stage, duration_ms, status). Each is operational metadata, never
-#: payload. Domain field names are declared per context in <context>/events.py
-#: and unioned in at the composition root (H3).
+#: exc_location), the self-instrumentation fields (failed_processor,
+#: caller_location), and the @traced decorator's stage timing fields (stage,
+#: duration_ms, status). Each is operational metadata, never payload. Domain
+#: field names are declared per context in <context>/events.py and unioned in
+#: at the composition root (H3).
 OBSERVABILITY_KEYS: frozenset[str] = frozenset(
     {
         "event",
@@ -125,7 +120,6 @@ OBSERVABILITY_KEYS: frozenset[str] = frozenset(
         "correlation_id",
         "exc_type",
         "exc_location",
-        "sink_size_bytes",
         "failed_processor",
         "caller_location",
         "stage",
@@ -211,18 +205,6 @@ class ProcessorChainError(Exception):
     allowlist processor, not to suppress the error. The check runs once at
     configure time, not per event: post-startup chain tampering is out of scope
     for the runtime path (ADR-026, phase separation).
-    """
-
-
-class ObservabilityBootstrapError(Exception):
-    """Raised when the logging configuration cannot be installed at startup.
-
-    Fail-loud, no degradation (ADR-026): a directory, handler, or structlog
-    setup failure aborts configuration with a named, actionable message
-    (operation, path, what to check) rather than falling back to a NullHandler
-    or bare stderr. Running the pipeline without its governed sink would be
-    fail-open for the central PII control, so a bootstrap failure must stop the
-    process, not silently downgrade it.
     """
 
 
@@ -576,20 +558,6 @@ def _build_renderer(fmt: str) -> Processor:
     return structlog.processors.JSONRenderer()
 
 
-def _emit_log_sink_size(log_dir: Path) -> None:
-    """Emit the active sink file size once, after configuration.
-
-    Surfaces the Windows rotation failure mode (ADR-026): if a second process
-    holds the active file open, the midnight rename fails silently and the file
-    grows without bound. The size reported at the next startup makes that
-    visible. The file may not exist yet (the handler opens with delay), in which
-    case the size is 0.
-    """
-    log_path = log_dir / LOG_FILENAME
-    size_bytes = log_path.stat().st_size if log_path.exists() else 0
-    _log.info(LOG_SINK_SIZE_BYTES, sink_size_bytes=size_bytes)
-
-
 def configure_logging(
     log_dir: Path,
     fmt: str = "json",
@@ -597,14 +565,15 @@ def configure_logging(
 ) -> None:
     """Install the one-sink, default-deny logging configuration.
 
-    Strict at bootstrap (ADR-026, phase separation): a directory, handler, or
-    structlog setup failure raises ObservabilityBootstrapError with an
-    actionable message, and a missing allowlist raises ProcessorChainError. No
-    degradation to a NullHandler or bare stderr. Idempotent: a second call
-    replaces the handler this module installed rather than stacking a second
-    sink. Called explicitly by the composition root (the CLI entrypoint, the
-    conftest fixture); the sink path is a parameter resolved at the entrypoint,
-    never an environment read in this module (ADR-026, composition-root wiring).
+    Strict at bootstrap (ADR-026, phase separation): the sink is set up directly
+    and configuration fails loud. A directory, handler, or structlog setup
+    failure propagates the underlying error, and a missing allowlist raises
+    ProcessorChainError. No degradation to a NullHandler or bare stderr.
+    Idempotent: a second call replaces the handler this module installed rather
+    than stacking a second sink. Called explicitly by the composition root (the
+    CLI entrypoint, the conftest fixture); the sink path is a parameter resolved
+    at the entrypoint, never an environment read in this module (ADR-026,
+    composition-root wiring).
 
     Args:
         log_dir: Sink directory, resolved by the caller at the entrypoint.
@@ -616,10 +585,11 @@ def configure_logging(
             set_strict_mode (ADR-026, composition-root wiring).
 
     Raises:
-        ObservabilityBootstrapError: If the log directory, the structlog chain,
-            or the sink handler cannot be set up.
         ProcessorChainError: If the default-deny allowlist processor is not in
             the configured chain.
+        OSError: If the log directory or the sink file cannot be set up; the
+            underlying error propagates unwrapped (the demo does not translate
+            it into a named startup abort).
     """
     global _INSTALLED_HANDLER
 
@@ -629,60 +599,39 @@ def configure_logging(
     resolved_dir = log_dir
     resolved_fmt = fmt.lower()
 
-    try:
-        resolved_dir.mkdir(parents=True, exist_ok=True)
-    except OSError as exc:
-        raise ObservabilityBootstrapError(
-            f"could not create the log directory '{resolved_dir}': "
-            "check that the path is a directory and not an existing file, that "
-            "the parent exists and is writable, and that the filesystem is not "
-            "read-only"
-        ) from exc
+    resolved_dir.mkdir(parents=True, exist_ok=True)
 
     shared = _build_shared_processors()
 
-    try:
-        structlog.configure(
-            processors=[
-                *shared,
-                structlog.stdlib.ProcessorFormatter.wrap_for_formatter,
-            ],
-            logger_factory=structlog.stdlib.LoggerFactory(),
-            wrapper_class=structlog.stdlib.BoundLogger,
-            # Disabled so tests can reconfigure the chain and have the change
-            # take effect on the next event.
-            cache_logger_on_first_use=False,
-        )
-    except Exception as exc:
-        raise ObservabilityBootstrapError(
-            "could not configure the structlog processor chain: check the "
-            "observability.logging_config processor definitions"
-        ) from exc
+    structlog.configure(
+        processors=[
+            *shared,
+            structlog.stdlib.ProcessorFormatter.wrap_for_formatter,
+        ],
+        logger_factory=structlog.stdlib.LoggerFactory(),
+        wrapper_class=structlog.stdlib.BoundLogger,
+        # Disabled so tests can reconfigure the chain and have the change
+        # take effect on the next event.
+        cache_logger_on_first_use=False,
+    )
 
     # Configure-time self-check (not per event): the default-deny control must
-    # be in the chain we just installed, or bootstrap fails loud.
+    # be in the chain we just installed, or configure fails loud.
     _assert_allowlist_in_chain()
 
-    try:
-        formatter = structlog.stdlib.ProcessorFormatter(
-            foreign_pre_chain=shared,
-            processors=[
-                structlog.stdlib.ProcessorFormatter.remove_processors_meta,
-                _build_renderer(resolved_fmt),
-            ],
-        )
-        handler = logging.FileHandler(
-            filename=resolved_dir / LOG_FILENAME,
-            encoding="utf-8",
-            delay=True,
-        )
-        handler.setFormatter(formatter)
-    except OSError as exc:
-        raise ObservabilityBootstrapError(
-            f"could not open the log sink file '{resolved_dir / LOG_FILENAME}': "
-            "check directory permissions and that no other process holds the "
-            "active file open"
-        ) from exc
+    formatter = structlog.stdlib.ProcessorFormatter(
+        foreign_pre_chain=shared,
+        processors=[
+            structlog.stdlib.ProcessorFormatter.remove_processors_meta,
+            _build_renderer(resolved_fmt),
+        ],
+    )
+    handler = logging.FileHandler(
+        filename=resolved_dir / LOG_FILENAME,
+        encoding="utf-8",
+        delay=True,
+    )
+    handler.setFormatter(formatter)
 
     root = logging.getLogger()
     if _INSTALLED_HANDLER is not None and _INSTALLED_HANDLER in root.handlers:
@@ -694,6 +643,3 @@ def configure_logging(
 
     for name in _THIRD_PARTY_LOGGERS:
         logging.getLogger(name).setLevel(logging.WARNING)
-
-    # Sink is configured; emit its size through the governed chain.
-    _emit_log_sink_size(resolved_dir)

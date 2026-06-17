@@ -22,7 +22,6 @@ from app.audit_log.events import AUDIT_APPEND_FAILED
 from app.observability import logging_config
 from app.observability.correlation import correlation_scope
 from app.observability.events import (
-    LOG_SINK_SIZE_BYTES,
     PROCESSOR_FAILED,
     UNREGISTERED_LOG_EVENT,
     UnregisteredLogEventError,
@@ -30,7 +29,6 @@ from app.observability.events import (
 from app.observability.logging_config import (
     LOG_FILENAME,
     MAX_FOREIGN_EVENT_CHARS,
-    ObservabilityBootstrapError,
     ProcessorChainError,
     UnregisteredLogKeyError,
     _filter_allowlist,
@@ -44,11 +42,10 @@ from app.observability.logging_config import (
 def log_sink(tmp_path: Path) -> Callable[[], list[dict]]:
     """Redirect the single sink to tmp_path; return a JSON-lines reader.
 
-    The reader filters out the startup ``log_sink_size_bytes`` event that
-    configure_logging emits, so a per-test assertion sees only the lines the
-    test produced. Teardown restores a good configuration in the same tmp path
-    so a test that deliberately breaks the chain does not leak a broken
-    structlog config into later tests.
+    A per-test assertion sees only the lines the test produced. Teardown
+    restores a good configuration in the same tmp path so a test that
+    deliberately breaks the chain does not leak a broken structlog config into
+    later tests.
     """
     configure_logging(log_dir=tmp_path, fmt="json")
     log_file = tmp_path / LOG_FILENAME
@@ -59,11 +56,9 @@ def log_sink(tmp_path: Path) -> Callable[[], list[dict]]:
         if not log_file.exists():
             return []
         return [
-            record
+            json.loads(line)
             for line in log_file.read_text(encoding="utf-8").splitlines()
             if line.strip()
-            for record in [json.loads(line)]
-            if record.get("event") != LOG_SINK_SIZE_BYTES
         ]
 
     yield read_lines
@@ -263,49 +258,6 @@ def test_configure_raises_when_allowlist_missing_from_chain(
 
     with pytest.raises(ProcessorChainError):
         configure_logging(log_dir=tmp_path, fmt="json")
-
-
-def test_configure_against_a_file_path_raises_bootstrap_error(
-    tmp_path: Path,
-) -> None:
-    """A log-dir path that is an existing file fails loud with the path named.
-
-    Given a path that already exists as a file, when configure_logging targets
-    it as the log directory, then ObservabilityBootstrapError is raised (no
-    degradation) and its message names the offending path so the operator can
-    act (ADR-026, strict bootstrap).
-    """
-    clash = tmp_path / "not_a_dir"
-    clash.write_text("i am a file, not a directory\n", encoding="utf-8")
-
-    with pytest.raises(ObservabilityBootstrapError) as exc_info:
-        configure_logging(log_dir=clash, fmt="json")
-
-    assert str(clash) in str(exc_info.value)
-
-
-def test_configure_emits_the_sink_size_event(
-    tmp_path: Path,
-) -> None:
-    """A registered log_sink_size_bytes event appears in the sink after configure.
-
-    Given a fresh sink, when configure_logging runs, then a governed
-    log_sink_size_bytes event carrying a sink_size_bytes field is written, the
-    startup signal for the Windows rotation failure mode (ADR-026).
-    """
-    configure_logging(log_dir=tmp_path, fmt="json")
-
-    for handler in logging.getLogger().handlers:
-        handler.flush()
-    lines = [
-        json.loads(line)
-        for line in (tmp_path / LOG_FILENAME).read_text(encoding="utf-8").splitlines()
-        if line.strip()
-    ]
-
-    size_events = [line for line in lines if line["event"] == LOG_SINK_SIZE_BYTES]
-    assert len(size_events) == 1
-    assert "sink_size_bytes" in size_events[0]
 
 
 def test_unregistered_event_is_substituted_in_production(

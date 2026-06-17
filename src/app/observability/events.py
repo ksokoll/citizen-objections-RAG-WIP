@@ -25,12 +25,6 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import Final
 
-#: Size in bytes of the active log sink, emitted once after configuration
-#: (observability). Surfaces the Windows rotation failure mode: if a second
-#: handle on the active file blocks the midnight rename, the file grows without
-#: bound and the size reported at the next startup makes that visible (ADR-026).
-LOG_SINK_SIZE_BYTES: Final[str] = "observability.log_sink_size_bytes"
-
 #: A governed processor raised at runtime and was contained by the never-raise
 #: wrapper (observability). The substitute event carries the failing processor's
 #: name so the bug is attributable, while the business call returns normally
@@ -60,7 +54,6 @@ UNREGISTERED_LOG_EVENT: Final[str] = "observability.unregistered_log_event"
 #: registries in.
 OBSERVABILITY_EVENTS: Final[frozenset[str]] = frozenset(
     {
-        LOG_SINK_SIZE_BYTES,
         PROCESSOR_FAILED,
         STAGE_TIMING,
         UNREGISTERED_LOG_EVENT,

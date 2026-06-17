@@ -48,32 +48,6 @@ def _read_sink(log_dir: Path) -> list[dict]:
     ]
 
 
-def test_bootstrap_failure_aborts_clean_with_exit_code_2(
-    tmp_path: Path,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    """An impossible log directory is a clean startup abort, not a traceback.
-
-    Given a log dir that cannot be created (its parent is an existing file),
-    when the CLI starts, then it exits with code 2 and a stderr message that
-    names the path, and no traceback is dumped.
-    """
-    occupied = tmp_path / "occupied"
-    occupied.write_text("a file, not a directory", encoding="utf-8")
-    impossible_dir = occupied / "logs"
-
-    exit_code = main(
-        ["--log-dir", str(impossible_dir), "show-document", str(uuid.uuid4())]
-    )
-
-    captured = capsys.readouterr()
-    assert exit_code == 2
-    assert "startup aborted" in captured.err
-    assert str(impossible_dir) in captured.err
-    assert "Traceback" not in captured.err
-    assert captured.out == ""
-
-
 def test_show_document_round_trips_a_stored_document(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
