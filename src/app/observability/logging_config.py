@@ -24,10 +24,6 @@ The controls at the sink:
 - exception reduction to type plus location, so an exception message (foreign
   authored text) is never written to disk.
 
-The sink directory is owner-only on POSIX (0o700) to match the raw store
-(ADR-025), with a world-readable self-check; on Windows POSIX modes do not map
-to ACLs (documented limitation, ADR-026).
-
 structlog routes into stdlib via ProcessorFormatter.wrap_for_formatter; foreign
 stdlib records route through the same shared processors via
 ProcessorFormatter(foreign_pre_chain=shared). Configuration is an explicit
@@ -61,7 +57,6 @@ from __future__ import annotations
 import functools
 import logging
 import os
-import stat
 import sys
 from collections.abc import Iterable
 from pathlib import Path
@@ -74,7 +69,6 @@ from structlog.typing import EventDict, Processor, WrappedLogger
 from app.observability.correlation import add_correlation_id
 from app.observability.events import (
     LOG_SINK_SIZE_BYTES,
-    LOG_SINK_WORLD_READABLE,
     PROCESSOR_FAILED,
     UNREGISTERED_LOG_EVENT,
     UnregisteredLogEventError,
@@ -103,11 +97,6 @@ ENV_STRICT: str = "OBSERVABILITY_STRICT"
 #: unless a root opts into strict CI enforcement. The CLI passes the
 #: OBSERVABILITY_STRICT reading; the test conftest sets it True.
 _STRICT_MODE: bool = False
-
-#: Owner-only mode for the sink directory, matching the raw store (ADR-025,
-#: ADR-026). Enforced on POSIX; on Windows POSIX modes do not map to ACLs
-#: (documented limitation, ADR-026).
-_LOG_DIR_MODE: int = 0o700
 
 #: Upper bound on a foreign record's ``event`` value (the arbitrary third-party
 #: message text). Bounds the unredacted foreign-message residual; closure
@@ -587,25 +576,6 @@ def _build_renderer(fmt: str) -> Processor:
     return structlog.processors.JSONRenderer()
 
 
-def _warn_if_sink_world_readable(log_dir: Path) -> None:
-    """Warn on POSIX if the sink directory is world-accessible.
-
-    Mirrors the raw-store world-readable check (ADR-025): verifies the design's
-    access claim against what the filesystem actually enforces. A world-readable
-    sink is a misconfiguration, not a logging outcome, so it is logged (mode
-    count only, never the path) and processing continues. Skipped on Windows,
-    where POSIX mode bits do not apply.
-    """
-    if os.name != "posix" or not log_dir.exists():
-        return
-    mode = log_dir.stat().st_mode
-    if mode & (stat.S_IROTH | stat.S_IWOTH | stat.S_IXOTH):
-        _log.warning(
-            LOG_SINK_WORLD_READABLE,
-            store_mode=f"{stat.S_IMODE(mode):#o}",
-        )
-
-
 def _emit_log_sink_size(log_dir: Path) -> None:
     """Emit the active sink file size once, after configuration.
 
@@ -661,12 +631,9 @@ def configure_logging(
 
     try:
         resolved_dir.mkdir(parents=True, exist_ok=True)
-        if os.name == "posix":
-            # mkdir's mode is masked by umask, so set it explicitly afterwards.
-            os.chmod(resolved_dir, _LOG_DIR_MODE)
     except OSError as exc:
         raise ObservabilityBootstrapError(
-            f"could not create or secure the log directory '{resolved_dir}': "
+            f"could not create the log directory '{resolved_dir}': "
             "check that the path is a directory and not an existing file, that "
             "the parent exists and is writable, and that the filesystem is not "
             "read-only"
@@ -728,7 +695,5 @@ def configure_logging(
     for name in _THIRD_PARTY_LOGGERS:
         logging.getLogger(name).setLevel(logging.WARNING)
 
-    # Sink is configured; emit its size (rotation-failure signal) and verify its
-    # access posture, both through the governed chain.
+    # Sink is configured; emit its size through the governed chain.
     _emit_log_sink_size(resolved_dir)
-    _warn_if_sink_world_readable(resolved_dir)

@@ -10,8 +10,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
-import stat
 import subprocess
 import sys
 from collections.abc import Callable
@@ -39,11 +37,6 @@ from app.observability.logging_config import (
     configure_logging,
     never_raise,
     set_strict_mode,
-)
-
-_POSIX_ONLY = pytest.mark.skipif(
-    os.name != "posix",
-    reason="POSIX mode bits do not apply on Windows (ADR-026 limitation)",
 )
 
 
@@ -467,25 +460,6 @@ def test_correlation_id_is_stamped_inside_the_scope_and_cleared_after(
     after = next(line for line in lines if line.get("audit_event_type") == "after")
     assert inside["correlation_id"] == "doc-scope-0001"
     assert "correlation_id" not in after
-
-
-@_POSIX_ONLY
-def test_sink_file_and_directory_are_owner_only_after_first_write(
-    log_sink: Callable[[], list[dict]],
-    tmp_path: Path,
-) -> None:
-    """The sink file is 0o600 and its directory 0o700 after the first write.
-
-    The logs are a third store of pseudonymous data (ADR-026); the sink is held
-    to the same owner-only posture as the raw store (ADR-025). Asserted at the
-    filesystem on POSIX, skipped on Windows.
-    """
-    structlog.get_logger().error(AUDIT_APPEND_FAILED)
-    log_sink()
-
-    log_file = tmp_path / LOG_FILENAME
-    assert stat.S_IMODE(log_file.stat().st_mode) == 0o600
-    assert stat.S_IMODE(tmp_path.stat().st_mode) == 0o700
 
 
 def test_control_characters_in_a_foreign_message_do_not_reach_the_sink(

@@ -25,11 +25,6 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import Final
 
-#: The log sink directory is world-accessible on POSIX (observability). The
-#: logs are a third store of pseudonymous data (ADR-026); the check mirrors the
-#: raw-store world-readable check (ADR-025). Logged as a mode count only.
-LOG_SINK_WORLD_READABLE: Final[str] = "observability.log_sink_world_readable"
-
 #: Size in bytes of the active log sink, emitted once after configuration
 #: (observability). Surfaces the Windows rotation failure mode: if a second
 #: handle on the active file blocks the midnight rename, the file grows without
@@ -65,7 +60,6 @@ UNREGISTERED_LOG_EVENT: Final[str] = "observability.unregistered_log_event"
 #: registries in.
 OBSERVABILITY_EVENTS: Final[frozenset[str]] = frozenset(
     {
-        LOG_SINK_WORLD_READABLE,
         LOG_SINK_SIZE_BYTES,
         PROCESSOR_FAILED,
         STAGE_TIMING,
