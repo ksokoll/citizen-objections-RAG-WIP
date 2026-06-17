@@ -15,7 +15,6 @@ import stat
 import subprocess
 import sys
 from collections.abc import Callable
-from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -37,11 +36,9 @@ from app.observability.logging_config import (
     ProcessorChainError,
     UnregisteredLogKeyError,
     _filter_allowlist,
-    _OwnerOnlyTimedRotatingFileHandler,
     configure_logging,
     never_raise,
     set_strict_mode,
-    sweep_expired_logs,
 )
 
 _POSIX_ONLY = pytest.mark.skipif(
@@ -294,25 +291,6 @@ def test_configure_against_a_file_path_raises_bootstrap_error(
     assert str(clash) in str(exc_info.value)
 
 
-def test_configure_sweeps_expired_rotated_files(
-    tmp_path: Path,
-) -> None:
-    """An over-age rotated file present before configure is gone after configure.
-
-    Given an expired rotated log file, when configure_logging runs, then the
-    wired-in sweep deletes it as part of bootstrap, so a startup always enforces
-    the retention horizon (ADR-026, retention).
-    """
-    expired = tmp_path / f"{LOG_FILENAME}.2026-01-01"
-    expired.write_text("expired rotated line\n", encoding="utf-8")
-    expired_mtime = datetime(2026, 1, 1, tzinfo=UTC).timestamp()
-    os.utime(expired, (expired_mtime, expired_mtime))
-
-    configure_logging(log_dir=tmp_path, fmt="json", retention_days=30)
-
-    assert not expired.exists()
-
-
 def test_configure_emits_the_sink_size_event(
     tmp_path: Path,
 ) -> None:
@@ -418,33 +396,6 @@ def test_a_raising_processor_is_contained_as_processor_failed(
     assert all(line["failed_processor"] == "boom" for line in failed)
 
 
-def test_sweep_deletes_only_expired_rotated_files(tmp_path: Path) -> None:
-    """The startup sweep deletes over-age rotated files, never the active log.
-
-    Given an active log, a fresh rotated file, and an over-age rotated file,
-    when the sweep runs, then only the over-age rotated file is deleted.
-    """
-    reference = datetime(2026, 6, 10, tzinfo=UTC)
-    active = tmp_path / LOG_FILENAME
-    active.write_text("active line\n", encoding="utf-8")
-    fresh = tmp_path / f"{LOG_FILENAME}.2026-06-05"
-    fresh.write_text("fresh rotated line\n", encoding="utf-8")
-    expired = tmp_path / f"{LOG_FILENAME}.2026-04-01"
-    expired.write_text("expired rotated line\n", encoding="utf-8")
-
-    fresh_mtime = reference.timestamp() - 5 * 86400
-    expired_mtime = reference.timestamp() - 60 * 86400
-    os.utime(fresh, (fresh_mtime, fresh_mtime))
-    os.utime(expired, (expired_mtime, expired_mtime))
-
-    deleted = sweep_expired_logs(log_dir=tmp_path, retention_days=30, now=reference)
-
-    assert deleted == [expired]
-    assert not expired.exists()
-    assert fresh.exists()
-    assert active.exists()
-
-
 def test_foreign_extra_cannot_spoof_correlation_id_or_inject_a_key(
     log_sink: Callable[[], list[dict]],
 ) -> None:
@@ -534,40 +485,6 @@ def test_sink_file_and_directory_are_owner_only_after_first_write(
 
     log_file = tmp_path / LOG_FILENAME
     assert stat.S_IMODE(log_file.stat().st_mode) == 0o600
-    assert stat.S_IMODE(tmp_path.stat().st_mode) == 0o700
-
-
-@_POSIX_ONLY
-def test_sink_modes_survive_a_forced_rollover(
-    log_sink: Callable[[], list[dict]],
-    tmp_path: Path,
-) -> None:
-    """A rotated file inherits the owner-only mode and the new active file too.
-
-    Given a written sink, when a rollover is forced and another event is
-    written, then both the rotated file and the fresh active file are 0o600 and
-    the directory stays 0o700.
-    """
-    log = structlog.get_logger()
-    log.error(AUDIT_APPEND_FAILED)
-    log_sink()
-
-    handler = next(
-        h
-        for h in logging.getLogger().handlers
-        if isinstance(h, _OwnerOnlyTimedRotatingFileHandler)
-    )
-    handler.doRollover()
-
-    log.error(AUDIT_APPEND_FAILED)
-    log_sink()
-
-    log_file = tmp_path / LOG_FILENAME
-    rotated = list(tmp_path.glob(f"{LOG_FILENAME}.*"))
-    assert rotated
-    assert stat.S_IMODE(log_file.stat().st_mode) == 0o600
-    for rotated_file in rotated:
-        assert stat.S_IMODE(rotated_file.stat().st_mode) == 0o600
     assert stat.S_IMODE(tmp_path.stat().st_mode) == 0o700
 
 

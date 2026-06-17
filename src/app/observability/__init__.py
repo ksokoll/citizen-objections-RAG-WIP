@@ -34,7 +34,6 @@ from app.observability.logging_config import (
     register_keys,
     reset_registered_keys,
     set_strict_mode,
-    sweep_expired_logs,
 )
 
 __all__ = [
@@ -54,5 +53,4 @@ __all__ = [
     "reset_registered_keys",
     "set_correlation_id",
     "set_strict_mode",
-    "sweep_expired_logs",
 ]

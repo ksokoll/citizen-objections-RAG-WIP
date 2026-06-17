@@ -1,8 +1,8 @@
 """One-sink, default-deny logging configuration (ADR-026).
 
 All log output, from our structlog calls and from third-party stdlib loggers
-alike, passes through a single shared processor chain into a single owner-only
-TimedRotatingFileHandler. The chain enforces default-deny by both key and
+alike, passes through a single shared processor chain into a single file handler
+that appends to one log file. The chain enforces default-deny by both key and
 origin, following lift-stamp-filter ordering (ADR-026): foreign data is lifted
 first or not at all, authoritative truth is stamped after, filtering is last.
 The controls at the sink:
@@ -24,10 +24,9 @@ The controls at the sink:
 - exception reduction to type plus location, so an exception message (foreign
   authored text) is never written to disk.
 
-The sink is owner-only on POSIX (directory 0o700, files 0o600, rotated files
-inherit the mode) to match the raw store (ADR-025), with a world-readable
-self-check; on Windows POSIX modes do not map to ACLs (documented limitation,
-ADR-026).
+The sink directory is owner-only on POSIX (0o700) to match the raw store
+(ADR-025), with a world-readable self-check; on Windows POSIX modes do not map
+to ACLs (documented limitation, ADR-026).
 
 structlog routes into stdlib via ProcessorFormatter.wrap_for_formatter; foreign
 stdlib records route through the same shared processors via
@@ -55,24 +54,16 @@ separation): strict at configuration time, unbreakable at request time.
   suite) an unregistered name raises so CI catches every typo; in production it
   substitutes the unregistered_log_event constant plus the caller location and
   discards the original name entirely (it is potential payload).
-
-Retention is time-based: the handler rotates at midnight UTC and keeps
-RETENTION_DAYS backups; sweep_expired_logs() removes over-age rotated files by
-mtime, covering boundaries the process was not alive for, and is wired into
-configure_logging() so a startup always enforces the horizon.
 """
 
 from __future__ import annotations
 
 import functools
-import io
 import logging
 import os
 import stat
 import sys
 from collections.abc import Iterable
-from datetime import UTC, datetime, timedelta
-from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
 from types import FrameType
 from typing import cast
@@ -94,10 +85,6 @@ from app.observability.events import (
 #: chain as every other event.
 _log = structlog.get_logger()
 
-#: Documented placeholder retention. The legal determination of the period is
-#: out of scope (ADR-026, Retention).
-RETENTION_DAYS: int = 30
-
 LOG_FILENAME: str = "observability.log"
 
 #: Name of the environment variable the composition root (the CLI) reads to
@@ -117,11 +104,10 @@ ENV_STRICT: str = "OBSERVABILITY_STRICT"
 #: OBSERVABILITY_STRICT reading; the test conftest sets it True.
 _STRICT_MODE: bool = False
 
-#: Owner-only modes for the sink, matching the raw store (ADR-025, ADR-026).
-#: Enforced on POSIX; on Windows POSIX modes do not map to ACLs (documented
-#: limitation, ADR-026).
+#: Owner-only mode for the sink directory, matching the raw store (ADR-025,
+#: ADR-026). Enforced on POSIX; on Windows POSIX modes do not map to ACLs
+#: (documented limitation, ADR-026).
 _LOG_DIR_MODE: int = 0o700
-_LOG_FILE_MODE: int = 0o600
 
 #: Upper bound on a foreign record's ``event`` value (the arbitrary third-party
 #: message text). Bounds the unredacted foreign-message residual; closure
@@ -601,40 +587,6 @@ def _build_renderer(fmt: str) -> Processor:
     return structlog.processors.JSONRenderer()
 
 
-class _OwnerOnlyTimedRotatingFileHandler(TimedRotatingFileHandler):
-    """TimedRotatingFileHandler that creates sink files owner-only on POSIX.
-
-    The base handler opens the active log file with the process umask, which
-    routinely yields a world-readable file. The logs are a third store of
-    pseudonymous data (ADR-026), so the sink is held to the same owner-only
-    posture as the raw store (ADR-025). ``_open`` is overridden to create the
-    file via ``os.open`` with mode 0o600 and to chmod it on every open, so the
-    active file and every rotated file (created by renaming the active file)
-    end up owner-only. On Windows POSIX modes do not map to ACLs, so the base
-    behavior is used unchanged (documented limitation, ADR-026).
-    """
-
-    def _open(self) -> io.TextIOWrapper:
-        if os.name != "posix":
-            return super()._open()
-        open_flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND
-        file_descriptor = os.open(self.baseFilename, open_flags, _LOG_FILE_MODE)
-        # os.open's mode is masked by umask and does not touch a pre-existing
-        # file; chmod unconditionally so a reopened or inherited file is bounded.
-        os.chmod(self.baseFilename, _LOG_FILE_MODE)
-        # self.mode is a text mode ("a"), so fdopen returns a TextIOWrapper; the
-        # non-literal mode makes os.fdopen's overload widen the type to IO[Any].
-        return cast(
-            io.TextIOWrapper,
-            os.fdopen(
-                file_descriptor,
-                self.mode,
-                encoding=self.encoding,
-                errors=self.errors,
-            ),
-        )
-
-
 def _warn_if_sink_world_readable(log_dir: Path) -> None:
     """Warn on POSIX if the sink directory is world-accessible.
 
@@ -672,7 +624,6 @@ def configure_logging(
     log_dir: Path,
     fmt: str = "json",
     strict: bool | None = None,
-    retention_days: int = RETENTION_DAYS,
 ) -> None:
     """Install the one-sink, default-deny logging configuration.
 
@@ -693,7 +644,6 @@ def configure_logging(
             composition root passes an explicit bool (the CLI from
             OBSERVABILITY_STRICT, the test conftest True). Forwarded to
             set_strict_mode (ADR-026, composition-root wiring).
-        retention_days: Rotated-backup count and sweep horizon.
 
     Raises:
         ObservabilityBootstrapError: If the log directory, the structlog chain,
@@ -754,11 +704,8 @@ def configure_logging(
                 _build_renderer(resolved_fmt),
             ],
         )
-        handler = _OwnerOnlyTimedRotatingFileHandler(
+        handler = logging.FileHandler(
             filename=resolved_dir / LOG_FILENAME,
-            when="midnight",
-            utc=True,
-            backupCount=retention_days,
             encoding="utf-8",
             delay=True,
         )
@@ -781,46 +728,7 @@ def configure_logging(
     for name in _THIRD_PARTY_LOGGERS:
         logging.getLogger(name).setLevel(logging.WARNING)
 
-    # Enforce the retention horizon on every startup, covering rotation
-    # boundaries the process was not alive for (ADR-026, retention).
-    sweep_expired_logs(log_dir=resolved_dir, retention_days=retention_days)
     # Sink is configured; emit its size (rotation-failure signal) and verify its
     # access posture, both through the governed chain.
     _emit_log_sink_size(resolved_dir)
     _warn_if_sink_world_readable(resolved_dir)
-
-
-def sweep_expired_logs(
-    log_dir: Path,
-    retention_days: int = RETENTION_DAYS,
-    now: datetime | None = None,
-) -> list[Path]:
-    """Delete rotated log files whose mtime is past the retention horizon.
-
-    Only rotated files (``observability.log.*``) are considered; the active log
-    is never swept. Belt-and-suspenders beyond the handler's backupCount: it
-    catches over-age files left when the process was not alive at a rotation
-    boundary.
-
-    Args:
-        log_dir: Sink directory to sweep, resolved by the caller.
-        retention_days: Files older than this many days are deleted.
-        now: Reference time (UTC). Defaults to the current time; injectable for
-            tests.
-
-    Returns:
-        The list of deleted file paths.
-    """
-    resolved_dir = log_dir
-    reference = now or datetime.now(UTC)
-    cutoff = reference - timedelta(days=retention_days)
-
-    deleted: list[Path] = []
-    if not resolved_dir.exists():
-        return deleted
-    for rotated in resolved_dir.glob(f"{LOG_FILENAME}.*"):
-        mtime = datetime.fromtimestamp(rotated.stat().st_mtime, UTC)
-        if mtime < cutoff:
-            rotated.unlink()
-            deleted.append(rotated)
-    return deleted
