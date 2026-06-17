@@ -9,9 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 #: einwendungs_id carried by a process-wide chain event that is not tied to a
 #: citizen objection: the startup configuration event (ADR-031). A fixed
 #: non-objection sentinel so such a custody record satisfies the required
-#: non-empty id without claiming an Einwendung. (The store's recovery event also
-#: carried this sentinel until Round 21 rolled the quarantine recovery back to a
-#: loud failure at open, leaving STARTKONFIGURATION as the sole holder.)
+#: non-empty id without claiming an Einwendung.
 SYSTEM_EINWENDUNGS_ID: Final[str] = "SYSTEM"
 
 
@@ -23,9 +21,7 @@ class AuditEventType(StrEnum):
     after the fact (ADR-031); and ROHDOKUMENT_ZUGRIFF, recorded when the
     show-document path reads a stored raw document (unmasked PII) back out
     (ADR-033). They live here because AuditEvent.event_type is typed against this
-    enum and each is a custody record like any other. (A WIEDERHERSTELLUNG
-    recovery event existed until Round 21 rolled the quarantine recovery back to
-    a loud failure at open; the member was removed with it.)
+    enum and each is a custody record like any other.
 
     The sentinel differs by what the record is tied to. STARTKONFIGURATION is
     process-wide, tied to no objection, so it carries the SYSTEM_EINWENDUNGS_ID

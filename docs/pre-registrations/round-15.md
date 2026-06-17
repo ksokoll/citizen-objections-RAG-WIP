@@ -80,6 +80,16 @@ Tools: opentelemetry-sdk, opentelemetry-api, prometheus_client, stdlib hashlib.
 
 ### Round C: Hash chain, single writer, durable append, fail-closed
 
+> Round 21 rollback (2026-06-17). Three mechanisms in the Round C build below,
+> fsync durability, the single-writer advisory file lock, and the truncating
+> quarantine tail recovery, were built and then deliberately rolled back as out
+> of demo scope; a damaged tail now fails loudly at open instead of being healed.
+> The manipulation-evidence core (the hash chain with genesis and sequence
+> numbers, verify_chain, the Form-B content-free payload gate, head anchoring,
+> and fail-closed _emit) stays. See the Deviations Log (Round 21) and ADR-030
+> (superseded). The build bullets below are the original pre-registered plan,
+> preserved as the pre-registration record, not the current build.
+
 Build:
 - Canonical serialization: json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False), versioned via the Round A field. Not model_dump_json() (no ordering or separator guarantee for payload: dict[str, Any]).
 - SHA-256 over canonical content plus prev_hash. Genesis event with all-zero prev_hash. Timestamp inside the hash.
@@ -167,3 +177,4 @@ Deviations from this pre-registration are recorded here during implementation (w
 - Round 16.1. The metric set grew from the committed six to seven: triage_contradictions_total counts the norms-present-but-no-arguments contradiction, the observable signature of a prompt-injected extraction suppression (security finding S3). This is exactly the scope-creep class the pre-registration named, widened deliberately rather than silently: the change-detector test now pins seven collectors (its purpose is visibility, not prohibition), and this entry is the record. No further metric joined.
 - Round 16.1. The OBSERVABILITY_FORMAT environment knob named under Configurations was removed (security finding S7): the log format is now a CLI decision only (--log-format, default json), because an environment variable could silently switch a deployment to the console renderer. The active format is recorded in startup_config (ADR-026, Renderer).
 - Round 16.1. The key allowlist gained five operational fields, golden-test-gated as before: the four resolved store paths recorded in startup_config (app_home, log_dir, raw_store, audit_log; finding S5) and the document_id of the raw-document access trace (findings H4/S4). Three events joined the registered vocabulary one constant at a time: app.unhandled_error (CLI catch-all, S1/M4), ingestion.raw_document_accessed (H4/S4), triage.contradiction_detected (S3).
+- Round 21 (Rollback A and B). Three Round C mechanisms were deliberately rolled back as out of demo scope: fsync durability (the append still flushes but no longer fsyncs) and the truncating quarantine tail recovery, both under H-F, and the single-writer advisory file lock under H-E. A damaged tail now raises AuditLogError loudly at open instead of being healed, so H-E and H-F are no longer enforced. The manipulation-evidence core stays intact: the hash chain with genesis and sequence numbers, verify_chain, the Form-B content-free payload gate, head anchoring, and fail-closed _emit (H-G), which still holds because the append still raises on OSError. An ownership review judged the rolled-back infra depth target-far for an ML/AI portfolio (the applicant builds ML/AI, not systems/infra); ADR-030, now superseded, records the deferral and the production-restore path.

@@ -215,12 +215,14 @@ class JsonLinesAuditStore:
 
         The fast startup check (ADR-031), an explicit step the writing path calls
         after recover(): a read-only consumer skips it, so opening a tampered
-        file for a query never aborts. Recovery heals only a damaged last line,
-        so a parseable-but-non-chaining interior line near the tail (a naive
-        in-place edit) would otherwise pass open silently and surface only at the
-        next full verify; verify_open catches such a break near the end and
-        raises it with location. A break before the window is the full walk's job
-        (verify_chain_file), deliberately not done here for startup speed.
+        file for a query never aborts. recover() raises only on a damaged last
+        line (unparseable, or a last line whose hash does not chain), so a
+        parseable-but-non-chaining line within the tail window (a naive in-place
+        edit to an interior line) is not caught by that last-line check; it would
+        pass the seeding step silently and surface only at the next full verify.
+        verify_open walks the tail window and catches such a break near the end,
+        raising it with location. A break before the window is the full walk's
+        job (verify_chain_file), deliberately not done here for startup speed.
 
         Raises:
             AuditLogError: If the tail window does not verify, carrying the first
