@@ -317,7 +317,7 @@ def test_chain_continues_after_the_store_is_reopened(tmp_path: Path) -> None:
     first_store.publish(_make_event(einwendungs_id="EW-002"))
 
     reopened = JsonLinesAuditStore(path)
-    reopened.recover()  # writing path seeds the head from the events on disk
+    reopened.seed_head()  # writing path seeds the head from the events on disk
     reopened.publish(_make_event(einwendungs_id="EW-003"))
 
     events = reopened.query()
@@ -363,7 +363,7 @@ def test_a_damaged_last_line_raises_at_open_instead_of_being_quarantined(
     tmp_path: Path,
 ) -> None:
     """Given a chain whose last line was partially written (a crash mid-append),
-    when the writing path opens it, then recover() raises AuditLogError and the
+    when the writing path opens it, then seed_head() raises AuditLogError and the
     store does not open: the damaged file is left untouched (no quarantine
     sibling, the partial line stays). The quarantine recovery was rolled back to
     a loud failure at open (Round 21, ADR-030 superseded): if the chain is
@@ -378,7 +378,7 @@ def test_a_damaged_last_line_raises_at_open_instead_of_being_quarantined(
     before = path.read_text(encoding="utf-8")
 
     with pytest.raises(AuditLogError):
-        JsonLinesAuditStore(path).recover()
+        JsonLinesAuditStore(path).seed_head()
 
     # Nothing was healed: no quarantine sibling and the file is byte-for-byte
     # unchanged, the loud failure replaced quarantine-and-continue.
@@ -390,7 +390,7 @@ def test_a_last_line_whose_hash_does_not_chain_raises_at_open(
     tmp_path: Path,
 ) -> None:
     """Given a last line that parses but whose hash does not chain from its
-    predecessor, when the writing path opens it, then recover() raises: a damaged
+    predecessor, when the writing path opens it, then seed_head() raises: a damaged
     tail is a damaged tail whether the damage is partial bytes or a broken link,
     and the chain does not open on either (Round 21, ADR-030 superseded).
     """
@@ -404,14 +404,14 @@ def test_a_last_line_whose_hash_does_not_chain_raises_at_open(
         f.write(forged.model_dump_json() + "\n")
 
     with pytest.raises(AuditLogError):
-        JsonLinesAuditStore(path).recover()
+        JsonLinesAuditStore(path).seed_head()
 
 
 def test_an_interior_damaged_line_raises_at_open(
     tmp_path: Path,
 ) -> None:
     """Given a damaged line that is not the last (an interior break), when the
-    writing path opens it, then recover() raises rather than silently truncating:
+    writing path opens it, then seed_head() raises rather than silently truncating:
     a damaged line at any tail-window position fails the open loudly (Round 21).
     The full walk (verify_chain_file) is what diagnoses a break before the
     window.
@@ -428,7 +428,7 @@ def test_an_interior_damaged_line_raises_at_open(
     )
 
     with pytest.raises(AuditLogError):
-        JsonLinesAuditStore(path).recover()
+        JsonLinesAuditStore(path).seed_head()
 
 
 def _written_chain(tmp_path: Path, count: int = 5) -> tuple[Path, list[AuditEvent]]:
@@ -596,7 +596,7 @@ def test_verify_open_detects_a_break_within_the_window(
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
     store = JsonLinesAuditStore(path, tail_window=2)
-    store.recover()  # the tampered line is interior, so the tail is intact
+    store.seed_head()  # the tampered line is interior, so the tail is intact
 
     with pytest.raises(AuditLogError, match="index 1"):
         store.verify_open()
@@ -619,7 +619,7 @@ def test_verify_open_does_not_see_a_break_before_the_window(
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
     store = JsonLinesAuditStore(path, tail_window=2)
-    store.recover()
+    store.seed_head()
     store.verify_open()  # the break is before the window, so the tail check passes
 
     full = verify_chain_file(path)
@@ -630,9 +630,9 @@ def test_verify_open_does_not_see_a_break_before_the_window(
 
 def test_a_slim_open_performs_no_write_and_no_verify(tmp_path: Path) -> None:
     """Given a chain with a damaged tail, when a store is merely opened (no
-    recover, no verify_open), then the bare open neither writes nor raises: the
+    seed_head, no verify_open), then the bare open neither writes nor raises: the
     damaged file is byte-for-byte untouched. Opening is the side-effect-free read
-    path; the loud failure on a damaged tail is the explicit recover() step the
+    path; the loud failure on a damaged tail is the explicit seed_head() step the
     writing path takes (A5, ADR-031), not a cost the constructor pays.
     """
     path = tmp_path / "audit.jsonl"
@@ -642,7 +642,7 @@ def test_a_slim_open_performs_no_write_and_no_verify(tmp_path: Path) -> None:
         f.write(_PARTIAL_LAST_LINE + "\n")
     before = path.read_text(encoding="utf-8")
 
-    JsonLinesAuditStore(path)  # a bare open: no recover, no verify_open, no raise
+    JsonLinesAuditStore(path)  # a bare open: no seed_head, no verify_open, no raise
 
     # The damaged tail is untouched: the bare open wrote nothing.
     assert path.read_text(encoding="utf-8") == before
@@ -676,7 +676,7 @@ def test_open_seeds_and_verifies_without_a_full_read(
     O(K), so the tail-window's documented promise that open does not scan the
     trail holds (Sec-2, ADR-032).
 
-    The full-file reader is made to fail; a clean recover()+verify_open() that
+    The full-file reader is made to fail; a clean seed_head()+verify_open() that
     still seeds the correct head proves it was not used.
     """
     path, _ = _written_chain(tmp_path, count=6)
@@ -687,7 +687,7 @@ def test_open_seeds_and_verifies_without_a_full_read(
 
     monkeypatch.setattr(store, "_read_all", _boom)
 
-    store.recover()  # seeds from the last K+1 lines only
+    store.seed_head()  # seeds from the last K+1 lines only
     store.verify_open()  # verifies the last K+1 lines only
 
     assert store.head.sequence_number == 5
@@ -698,7 +698,7 @@ def test_open_for_writing_seeds_the_head_so_the_chain_continues(
 ) -> None:
     """Given a chain written by an earlier store, when a writing store is opened
     via the open_for_writing factory, then its head is seeded from the last event
-    on disk: the factory ran recover(), so the next append continues the chain
+    on disk: the factory ran seed_head(), so the next append continues the chain
     rather than re-seeding genesis (M3, ADR-031).
     """
     path, events = _written_chain(tmp_path, count=4)
@@ -731,7 +731,7 @@ def test_open_for_writing_aborts_on_a_tampered_tail(tmp_path: Path) -> None:
 
 def test_open_for_writing_aborts_on_a_damaged_tail(tmp_path: Path) -> None:
     """Given a chain whose last line was partially written, when a writing store
-    is opened via the factory, then it raises: recover() fails loudly on the
+    is opened via the factory, then it raises: seed_head() fails loudly on the
     damaged tail before the chain continues (Round 21, ADR-030 superseded). The
     quarantine heal that previously let the factory return on a damaged tail is
     gone; a damaged chain does not open.
@@ -774,7 +774,7 @@ def _chained_lines(payloads: list[dict]) -> list[str]:
 def test_a_non_conforming_inner_line_does_not_fail_open(tmp_path: Path) -> None:
     """Given a chain whose interior line carries a payload the write-entry schema
     would reject (but correctly hash-chained), when the store is opened and the
-    writing path recovers and verifies, then it does not fail: the schema is a
+    writing path seeds the head and verifies, then it does not fail: the schema is a
     write-entry gate, the read path is tolerant, and the hash chain (not a
     content rule) checks integrity (Sec-3, ADR-032).
     """
@@ -789,7 +789,7 @@ def test_a_non_conforming_inner_line_does_not_fail_open(tmp_path: Path) -> None:
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
     store = JsonLinesAuditStore(path)
-    store.recover()  # does not raise on the non-conforming payload
+    store.seed_head()  # does not raise on the non-conforming payload
     store.verify_open()  # the hash chain is intact, so the tail verifies
 
     read_back = store.query()
@@ -825,7 +825,7 @@ def test_head_reflects_the_last_appended_event(tmp_path: Path) -> None:
     """
     path, events = _written_chain(tmp_path, count=3)
     store = JsonLinesAuditStore(path)
-    store.recover()  # seed the head from the events on disk
+    store.seed_head()  # seed the head from the events on disk
 
     assert store.head.sequence_number == 2
     assert store.head.event_hash == events[-1].event_hash
@@ -845,7 +845,7 @@ def test_head_anchor_serializes_the_head_for_results_json(tmp_path: Path) -> Non
     head hash and sequence, the value an eval run commits (ADR-031)."""
     path, events = _written_chain(tmp_path, count=3)
     store = JsonLinesAuditStore(path)
-    store.recover()  # seed the head from the events on disk
+    store.seed_head()  # seed the head from the events on disk
 
     anchor = head_anchor(store.head)
 
@@ -867,7 +867,7 @@ def test_results_with_anchor_merges_the_head_into_eval_results(
     under src/app and static analysis (A4, ADR-032)."""
     path, events = _written_chain(tmp_path, count=3)
     store = JsonLinesAuditStore(path)
-    store.recover()
+    store.seed_head()
 
     document = results_with_anchor({"recall": 0.9, "precision": 0.95}, store.head)
 

@@ -76,7 +76,7 @@ class JsonLinesAuditStore:
     Opening is cheap and side-effect-free (A5): the constructor reads, writes,
     and verifies nothing, and is the marked read path (query, an auditor). A
     writing store is composed through the open_for_writing() factory, which runs
-    the explicit recover() and verify_open() steps in order after construction,
+    the explicit seed_head() and verify_open() steps in order after construction,
     so the open ceremony lives in one place and a writing store cannot be
     assembled with verification skipped or the steps reordered. A read-only
     consumer uses the bare constructor and so never seeds a head or hits a
@@ -94,10 +94,10 @@ class JsonLinesAuditStore:
       writer, which a production deployment would restore (ADR-030 superseded).
     - The in-memory head (last hash, last sequence) is the sole duplicate
       mechanism: publish() does not scan the file. The file is read only by
-      recover() (to seed the head) and verify_open() (to check the tail), the
+      seed_head() (to seed the head) and verify_open() (to check the tail), the
       explicit writing-path steps, never on the bare open.
-    - Loud failure at open (recover()): a damaged line (invalid JSON, or a last
-      line whose hash does not chain) makes recover() raise AuditLogError naming
+    - Loud failure at open (seed_head()): a damaged line (invalid JSON, or a last
+      line whose hash does not chain) makes seed_head() raise AuditLogError naming
       the problem; the store does not open on a damaged chain. The quarantine
       recovery and the heal/recovery event of ADR-030 were rolled back as out of
       demo scope (Round 21): "if the chain is damaged, I do not open" is less
@@ -121,7 +121,7 @@ class JsonLinesAuditStore:
 
         A writing composition path is built through the open_for_writing()
         factory, which runs the explicit steps in order after construction:
-        recover() seeds the head from disk, then verify_open() runs the fast
+        seed_head() seeds the head from disk, then verify_open() runs the fast
         tail-window check. They are opt-in so the cost and the side effects land
         only on the path that writes, and routing them through the one factory
         keeps a writing store from being assembled with a step skipped or
@@ -154,7 +154,7 @@ class JsonLinesAuditStore:
         The one composition point for a writing store, so the open ceremony lives
         in a single place rather than being hand-rolled at each call site. The
         bare constructor is deliberately side-effect-free (A5, ADR-031);
-        continuing the chain takes two further steps in a fixed order: recover()
+        continuing the chain takes two further steps in a fixed order: seed_head()
         seeds the in-memory head from disk (raising loudly on a damaged tail),
         then verify_open() runs the fast tail-window check before the first
         append. This factory runs exactly that sequence. A caller that needs a
@@ -184,16 +184,16 @@ class JsonLinesAuditStore:
                 verify.
         """
         store = cls(path, tail_window=tail_window)
-        store.recover()
+        store.seed_head()
         store.verify_open()
         return store
 
-    def recover(self) -> None:
+    def seed_head(self) -> None:
         """Seed the head from disk, raising loudly on a damaged tail. A write step.
 
         The explicit head-seeding step a writing composition path calls after
         opening (A5): the slim constructor does no read and no write, so a
-        read-only consumer never pays for it. recover() reads the last
+        read-only consumer never pays for it. seed_head() reads the last
         tail_window+1 lines from the file end (O(K), Sec-2), parses them, and
         seeds the head from the last valid event. A damaged line (invalid JSON,
         or a last line whose hash does not chain from its predecessor) makes it
@@ -214,8 +214,8 @@ class JsonLinesAuditStore:
         """Verify the last tail_window events, raising on a break. A writing step.
 
         The fast startup check (ADR-031), an explicit step the writing path calls
-        after recover(): a read-only consumer skips it, so opening a tampered
-        file for a query never aborts. recover() raises only on a damaged last
+        after seed_head(): a read-only consumer skips it, so opening a tampered
+        file for a query never aborts. seed_head() raises only on a damaged last
         line (unparseable, or a last line whose hash does not chain), so a
         parseable-but-non-chaining line within the tail window (a naive in-place
         edit to an interior line) is not caught by that last-line check; it would
@@ -257,7 +257,7 @@ class JsonLinesAuditStore:
                 store failure as the recoverable class without depending on
                 stdlib exception types.
         """
-        self._append_durably(event)
+        self._append(event)
 
     @property
     def head(self) -> ChainHead:
@@ -271,7 +271,7 @@ class JsonLinesAuditStore:
             event_hash=self._head_hash, sequence_number=self._head_sequence
         )
 
-    def _append_durably(self, event: AuditEvent) -> None:
+    def _append(self, event: AuditEvent) -> None:
         """Validate, chain, durably write, then advance the head: the append rule.
 
         The write entry is where the content-free gate runs (Form B, ADR-032):
@@ -404,7 +404,7 @@ class JsonLinesAuditStore:
         chain when it is no longer than the window. The break verify_open reports
         is therefore indexed within this returned sequence, the documented
         meaning of a ChainBreak index for a windowed walk. Called after
-        recover(), so the tail it reads is the tail recover() seeded from.
+        seed_head(), so the tail it reads is the tail seed_head() seeded from.
         """
         lines, _ = self._read_last_lines(self._tail_window + 1)
         return [AuditEvent.model_validate_json(line) for line in lines]
@@ -456,7 +456,7 @@ class JsonLinesAuditStore:
     def _verify_tail_window(self, events: list[AuditEvent]) -> None:
         """Verify the last tail_window events, raising loudly on a break.
 
-        The fast startup check (ADR-031): recover() raises only on a damaged last
+        The fast startup check (ADR-031): seed_head() raises only on a damaged last
         line (unparseable, or a hash that does not chain), so a parseable-but-
         non-chaining interior line near the tail (a naive in-place edit) would
         otherwise pass open silently and surface only at the next full verify.
@@ -509,7 +509,7 @@ class JsonLinesAuditStore:
         seeds the genesis sentinel, so the next event becomes sequence 0.
 
         Args:
-            events: The valid events to seed from (recover() has already raised
+            events: The valid events to seed from (seed_head() has already raised
                 if the tail was damaged).
         """
         chained = [event for event in events if event.sequence_number is not None]

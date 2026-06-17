@@ -9,7 +9,7 @@ Mustermann" passes: a length bound is not an erasure guarantee.
 Form B replaces the heuristic with positive declaration. Each AuditEventType
 declares exactly which payload keys it carries and the type of each, here in the
 audit context. The store validates a payload against its event's schema at write
-entry (JsonLinesAuditStore._append_durably): only declared keys with declared
+entry (JsonLinesAuditStore._append): only declared keys with declared
 types pass, everything else is rejected loudly. {"namen": ["Max Mustermann"]}
 cannot enter because `namen` is declared on no event, and the bound is no longer
 a string length but a fixed key allowlist, which is what makes the content-free

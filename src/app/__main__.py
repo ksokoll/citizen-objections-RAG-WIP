@@ -504,7 +504,7 @@ def _run_process(args: argparse.Namespace, paths: dict[str, Path]) -> int:
     # configuration custody event becomes the chain's genesis: the controls are
     # attested before any objection event is appended (ADR-031). This is the
     # writing path, so it is composed through open_for_writing, the one factory
-    # that seeds the head (recover) then runs the fast tail-window check
+    # that seeds the head (seed_head) then runs the fast tail-window check
     # (verify_open) in order before the chain continues. A damaged or tampered
     # tail aborts the run here, loudly. The bare constructor stays the read path
     # (A5).
@@ -564,8 +564,8 @@ def _run_show_document(args: argparse.Namespace, paths: dict[str, Path]) -> int:
     at open, the append itself) aborts the read with a nonzero exit and prints
     nothing.
 
-    The audit store is opened as a writing path via open_for_writing (recover
-    then verify_open, like process): recover seeds the chain head so the read
+    The audit store is opened as a writing path via open_for_writing (seed_head
+    then verify_open, like process): seed_head seeds the chain head so the read
     event chains onto the real tail rather than re-seeding genesis, and
     verify_open refuses to disclose PII onto a chain whose tail does not verify.
     """

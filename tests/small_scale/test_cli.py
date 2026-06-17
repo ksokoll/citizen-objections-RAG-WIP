@@ -195,7 +195,7 @@ def test_show_document_aborts_without_printing_when_the_read_audit_write_fails(
         """A writing store whose open succeeds but whose write fails.
 
         Models the post-Round-20 composition: the CLI builds the writing store
-        through open_for_writing (recover then verify_open), both of which
+        through open_for_writing (seed_head then verify_open), both of which
         succeed here, and only the later publish of the read-access event fails.
         """
 
@@ -207,11 +207,11 @@ def test_show_document_aborts_without_printing_when_the_read_audit_write_fails(
             cls, *args: object, **kwargs: object
         ) -> _WriteFailingStore:
             store = cls()
-            store.recover()
+            store.seed_head()
             store.verify_open()
             return store
 
-        def recover(self) -> None:
+        def seed_head(self) -> None:
             pass
 
         def verify_open(self) -> None:
