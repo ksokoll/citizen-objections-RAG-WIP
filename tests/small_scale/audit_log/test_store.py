@@ -9,7 +9,6 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
-from filelock import FileLock
 
 from app.audit_log.anchor import head_anchor, results_with_anchor
 from app.audit_log.serialization import GENESIS_PREV_HASH, compute_event_hash
@@ -102,50 +101,6 @@ def test_publish_does_not_read_the_whole_file_per_append(
     # Read the file directly (query() legitimately reads; only publish must not).
     lines = path.read_text(encoding="utf-8").splitlines()
     assert len(lines) == 2
-
-
-def test_a_second_writer_is_blocked_while_the_lock_is_held(tmp_path: Path) -> None:
-    """Given the audit store lock is already held, when the store tries to
-    publish, then it fails loudly with AuditLogError instead of interleaving;
-    once the lock is released the publish proceeds and the chain stays valid.
-
-    The single-writer advisory lock (ADR-030) serializes writers: two writers
-    cannot interleave an append. A held lock is the stand-in for a concurrent
-    writer; the contended store must fail loudly on the documented type, not hang
-    or write a conflicting line.
-    """
-    path = tmp_path / "audit.jsonl"
-    store = JsonLinesAuditStore(path, lock_timeout=0.1)
-
-    contending_lock = FileLock(f"{path}.lock")
-    with contending_lock:
-        with pytest.raises(AuditLogError):
-            store.publish(_make_event(einwendungs_id="EW-001"))
-
-    # The blocked event never reached disk, so after release the chain is clean:
-    # the next publish is sequence 0 and chains from the genesis sentinel.
-    store.publish(_make_event(einwendungs_id="EW-002"))
-    events = store.query()
-    assert [event.sequence_number for event in events] == [0]
-    assert events[0].event_hash == compute_event_hash(events[0], GENESIS_PREV_HASH)
-
-
-def test_concurrent_recovery_is_blocked_while_the_lock_is_held(tmp_path: Path) -> None:
-    """Given the audit store lock is held, when a store recovers on the same
-    path, then its recover() fails loudly rather than recovering concurrently.
-
-    recover() is inside the critical section (A5, ADR-030): two starts must not
-    seed the head from the same file at once. The bare open is side-effect-free
-    and takes no lock; recover() is where the writing path acquires it, so a held
-    lock makes the second start's recover() fail on the documented type.
-    """
-    path = tmp_path / "audit.jsonl"
-    JsonLinesAuditStore(path).publish(_make_event(einwendungs_id="EW-001"))
-
-    contending_lock = FileLock(f"{path}.lock")
-    with contending_lock:
-        with pytest.raises(AuditLogError):
-            JsonLinesAuditStore(path, lock_timeout=0.1).recover()
 
 
 def test_query_by_einwendungs_id(tmp_path: Path) -> None:

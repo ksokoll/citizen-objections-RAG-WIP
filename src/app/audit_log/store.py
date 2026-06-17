@@ -5,14 +5,11 @@ from __future__ import annotations
 import hashlib
 import os
 import uuid
-from collections.abc import Iterator
-from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Final
 
 import structlog
-from filelock import FileLock, Timeout
 
 from app.audit_log.anchor import ChainHead
 from app.audit_log.events import AUDIT_RECOVERED
@@ -100,12 +97,10 @@ class JsonLinesAuditStore:
       never leaves the head ahead of the file. The fsync durability promise was
       rolled back as out of demo scope (Round 21); the append still raises on
       OSError (fail-closed), it just no longer forces bytes to stable storage.
-    - Single-writer advisory lock: an advisory filelock covers recover() and
-      each append, so two starts cannot recover the same file concurrently and
-      two writers cannot interleave an append. It guards against accidental
-      concurrency (a retry thread, a cron replay), not a deliberate second
-      writer (ADR-027 threat model). The single-process assumption (15.2) holds:
-      no second process holds the file on the Windows host.
+    - No concurrency guard: the single-writer filelock was rolled back as out of
+      demo scope (Round 21). The demo has one synchronous writer (15.2), so the
+      lock was functionless; the chain is now not guarded against a concurrent
+      writer, which a production deployment would restore (ADR-030 superseded).
     - The in-memory head (last hash, last sequence) is the sole duplicate
       mechanism: publish() does not scan the file. The file is read only by
       recover() (to seed the head) and verify_open() (to check the tail), the
@@ -122,41 +117,35 @@ class JsonLinesAuditStore:
     def __init__(
         self,
         path: Path,
-        lock_timeout: float = 10.0,
         tail_window: int = OPEN_VERIFY_TAIL_WINDOW,
     ) -> None:
-        """Initialize the store: paths, the lock object, the genesis head.
+        """Initialize the store: paths, the genesis head.
 
         Opening is cheap and side-effect-free (A5, ADR-031): the constructor
         reads nothing, writes nothing, and verifies nothing. It records the
-        paths, builds the single-writer lock, seeds the in-memory head to the
-        genesis sentinel, and ensures the backing file exists. A read-only
-        consumer (query, an auditor) therefore never triggers a recovery write
-        or a tail-verify abort just by opening the store.
+        path, seeds the in-memory head to the genesis sentinel, and ensures the
+        backing file exists. A read-only consumer (query, an auditor) therefore
+        never triggers a recovery write or a tail-verify abort just by opening
+        the store.
 
         A writing composition path is built through the open_for_writing()
         factory, which runs the explicit steps in order after construction:
-        recover() seeds the head from disk and heals a damaged tail, then
-        verify_open() runs the fast tail-window check. They are opt-in so the
-        cost and the side effects land only on the path that writes, and routing
-        them through the one factory keeps a writing store from being assembled
-        with a step skipped or reordered (ADR-030, ADR-031).
+        recover() seeds the head from disk, then verify_open() runs the fast
+        tail-window check. They are opt-in so the cost and the side effects land
+        only on the path that writes, and routing them through the one factory
+        keeps a writing store from being assembled with a step skipped or
+        reordered (ADR-030, ADR-031).
 
         Args:
             path: Path to the JSON Lines file. Created (including parent
                 directories) if it does not exist. Existing files are not
                 truncated.
-            lock_timeout: Seconds to wait for the single-writer lock before
-                failing loudly. A finite default surfaces accidental contention
-                as an AuditLogError rather than hanging; tests pass a small value.
             tail_window: How many trailing events verify_open checks. The default
                 bounds startup cost as the trail grows; tests pass a small value
                 to exercise the window boundary.
         """
         self._path = path
-        self._lock_timeout = lock_timeout
         self._tail_window = tail_window
-        self._lock = FileLock(f"{path}.lock", timeout=lock_timeout)
         self._head_hash: str = GENESIS_PREV_HASH
         self._head_sequence: int | None = None
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -167,7 +156,6 @@ class JsonLinesAuditStore:
     def open_for_writing(
         cls,
         path: Path,
-        lock_timeout: float = 10.0,
         tail_window: int = OPEN_VERIFY_TAIL_WINDOW,
     ) -> JsonLinesAuditStore:
         """Open a store on the writing path: construct, recover, then verify_open.
@@ -176,23 +164,22 @@ class JsonLinesAuditStore:
         in a single place rather than being hand-rolled at each call site. The
         bare constructor is deliberately side-effect-free (A5, ADR-031);
         continuing the chain takes two further steps in a fixed order: recover()
-        seeds the in-memory head from disk and heals a damaged last line, then
-        verify_open() runs the fast tail-window check before the first append.
-        This factory runs exactly that sequence. A caller that needs a writing
-        store calls this rather than assembling the steps itself, so a future
-        third writing site cannot compose a store that skips verify_open() (the
-        fail-open the design exists to prevent, 18d) or runs the two out of order.
+        seeds the in-memory head from disk (raising loudly on a damaged tail),
+        then verify_open() runs the fast tail-window check before the first
+        append. This factory runs exactly that sequence. A caller that needs a
+        writing store calls this rather than assembling the steps itself, so a
+        future third writing site cannot compose a store that skips verify_open()
+        (the fail-open the design exists to prevent, 18d) or runs them out of
+        order.
 
         The read path keeps the bare constructor by design: a query consumer or an
-        auditor must not pay recovery's cost or abort on a tampered tail merely by
+        auditor must not pay seeding's cost or abort on a tampered tail merely by
         opening the store (A5, ADR-031). The constructor is therefore the marked
         read path and this factory is the marked write path.
 
         Args:
             path: Path to the JSON Lines audit file; created if absent, never
                 truncated.
-            lock_timeout: Seconds to wait for the single-writer lock, forwarded to
-                the constructor.
             tail_window: How many trailing events verify_open checks, forwarded to
                 the constructor.
 
@@ -201,10 +188,11 @@ class JsonLinesAuditStore:
             ready for the first append.
 
         Raises:
-            AuditLogError: If recovery cannot acquire the single-writer lock, an
-                interior line fails to parse, or the tail window does not verify.
+            AuditLogError: If the chain at open is damaged (a line fails to parse
+                or the last line does not chain), or the tail window does not
+                verify.
         """
-        store = cls(path, lock_timeout=lock_timeout, tail_window=tail_window)
+        store = cls(path, tail_window=tail_window)
         store.recover()
         store.verify_open()
         return store
@@ -214,23 +202,19 @@ class JsonLinesAuditStore:
 
         The explicit recovery step a writing composition path calls after
         opening (A5): the slim constructor does no read and no write, so a
-        read-only consumer never pays for recovery. recover() acquires the
-        single-writer lock, reads the chain to its last valid line and seeds the
-        head from it, and if the last line is damaged (invalid JSON at EOF, or a
-        hash that does not chain from its predecessor) quarantines it and appends
-        a recovery event. Only the last line is healed: an interior break is left
-        for verify_chain (18c) to surface, because a partial last line is
-        directly observable while a lost interior event is not without an
-        external anchor (ADR-030). Idempotent on a clean chain: it re-seeds the
-        same head and writes nothing.
+        read-only consumer never pays for recovery. recover() reads the chain to
+        its last valid line and seeds the head from it, and if the last line is
+        damaged (invalid JSON at EOF, or a hash that does not chain from its
+        predecessor) quarantines it and appends a recovery event. Only the last
+        line is healed: an interior break is left for verify_chain (18c) to
+        surface, because a partial last line is directly observable while a lost
+        interior event is not without an external anchor (ADR-030). Idempotent on
+        a clean chain: it re-seeds the same head and writes nothing.
 
         Raises:
-            AuditLogError: If another writer holds the lock past lock_timeout
-                (recovery cannot run concurrently with another start), or if an
-                interior (non-last) line fails to parse (ADR-030).
+            AuditLogError: If an interior (non-last) line fails to parse (ADR-030).
         """
-        with self._single_writer():
-            self._recover_and_seed()
+        self._recover_and_seed()
 
     def verify_open(self) -> None:
         """Verify the last tail_window events, raising on a break. A writing step.
@@ -249,36 +233,6 @@ class JsonLinesAuditStore:
                 break's content-free description.
         """
         self._verify_tail_window(self._tail_events())
-
-    @contextmanager
-    def _single_writer(self) -> Iterator[None]:
-        """Hold the advisory single-writer lock for one critical section.
-
-        The lock covers open+recovery and each append (ADR-030), so two starts
-        cannot recover the same file concurrently and two writers cannot
-        interleave an append. It is re-entered per critical section rather than
-        held for the store's lifetime, because two store instances on one path
-        are a supported pattern (reopen to continue the chain); a lifetime hold
-        would deadlock the second instance. The residual (a writer slipping
-        between two of this store's locked sections leaves the in-memory head
-        stale) is the accidental-concurrency limit the lock accepts, not an
-        interleaved-append race: the lock guards accident, not a deliberate
-        second writer (ADR-027 threat model, ADR-030).
-
-        Raises:
-            AuditLogError: If the lock cannot be acquired within lock_timeout,
-                translating filelock.Timeout so a contended store fails loudly on
-                the documented failure type rather than hanging or leaking a
-                third-party exception.
-        """
-        try:
-            with self._lock:
-                yield
-        except Timeout as exc:
-            raise AuditLogError(
-                f"could not acquire the audit store lock at {self._lock.lock_file}: "
-                "another writer holds it"
-            ) from exc
 
     def publish(self, event: AuditEvent) -> None:
         """Append an event to the audit log, stamping its chain position and hash.
@@ -302,14 +256,12 @@ class JsonLinesAuditStore:
                 are assigned here; the caller supplies content, not chain fields.
 
         Raises:
-            AuditLogError: If an I/O failure prevents the durable append. Raw
-                OSErrors are wrapped so callers (Pipeline._emit, ADR-027) can
-                route a store failure as the recoverable class without depending
-                on stdlib exception types, or if another writer holds the
-                single-writer lock past the timeout.
+            AuditLogError: If an I/O failure prevents the append. Raw OSErrors
+                are wrapped so callers (Pipeline._emit, ADR-027) can route a
+                store failure as the recoverable class without depending on
+                stdlib exception types.
         """
-        with self._single_writer():
-            self._append_durably(event)
+        self._append_durably(event)
 
     @property
     def head(self) -> ChainHead:
