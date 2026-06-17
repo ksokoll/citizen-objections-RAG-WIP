@@ -95,9 +95,11 @@ class JsonLinesAuditStore:
     a tail-verify abort just by opening the store.
 
     Durability, locking, and the chain head (ADR-030):
-    - Durable append: each line is flushed and fsynced to stable storage before
-      the in-memory head advances, so a crash can never leave the head asserting
-      an event the disk lacks.
+    - Append and head advance: each line is written and flushed, and the
+      in-memory head advances only after a successful write, so a failed append
+      never leaves the head ahead of the file. The fsync durability promise was
+      rolled back as out of demo scope (Round 21); the append still raises on
+      OSError (fail-closed), it just no longer forces bytes to stable storage.
     - Single-writer advisory lock: an advisory filelock covers recover() and
       each append, so two starts cannot recover the same file concurrently and
       two writers cannot interleave an append. It guards against accidental
@@ -283,11 +285,11 @@ class JsonLinesAuditStore:
 
         The store owns the chain fields: it assigns the next sequence number and
         the chained hash from its in-memory head, overwriting any values the
-        caller set on them, then durably appends the event and advances the
-        head. The write is flushed and fsynced to disk before the head advances
-        (ADR-030), so the head never claims an event the disk lacks; and the head
-        advances only on success, so a failed append leaves the in-memory chain
-        level with disk rather than ahead of it.
+        caller set on them, then appends the event and advances the head. The
+        line is written and flushed, and the head advances only on success, so a
+        failed append leaves the in-memory chain level with the file rather than
+        ahead of it. (The fsync durability promise of ADR-030 was rolled back as
+        out of demo scope in Round 21.)
 
         The in-memory head is the sole duplicate mechanism (ADR-030): publish no
         longer scans the file, so a run of n events is no longer O(n^2). The file
@@ -313,9 +315,9 @@ class JsonLinesAuditStore:
     def head(self) -> ChainHead:
         """The chain's current head (last hash and sequence): the anchor value.
 
-        Read from the in-memory head the durable append maintains (ADR-030), so
-        it never claims an event the disk lacks. An eval run records this via
-        head_anchor into its committed results.json (ADR-031).
+        Read from the in-memory head the append maintains, advanced only after a
+        successful write. An eval run records this via head_anchor into its
+        committed results.json (ADR-031).
         """
         return ChainHead(
             event_hash=self._head_hash, sequence_number=self._head_sequence
@@ -331,13 +333,14 @@ class JsonLinesAuditStore:
         enforced; the read path stays tolerant so a historical line never fails
         an open (Sec-3).
 
-        The ordering is the durability guarantee (ADR-030): write the line,
-        flush the Python buffer, os.fsync the file descriptor so the bytes reach
-        stable storage, and only then advance the in-memory head. The head is
-        the claim that an event exists, so advancing it strictly after the fsync
-        means the claim never precedes its evidence on disk. Any failure before
-        the head-advance raises and leaves the head where it was, so a failed
-        append never puts the in-memory chain ahead of the file.
+        The ordering preserves the head invariant (ADR-024): write the line,
+        flush the buffer, and only then advance the in-memory head. The head is
+        the claim that an event exists, so advancing it strictly after a
+        successful write means a failed append leaves the head where it was,
+        never ahead of the file. The fsync-before-advance durability promise of
+        ADR-030 was rolled back as out of demo scope (Round 21); the append
+        still raises on OSError, which is what fail-closed depends on, but it no
+        longer forces the bytes to stable storage before returning.
 
         Args:
             event: The caller's event, before its chain fields are assigned.
@@ -346,8 +349,8 @@ class JsonLinesAuditStore:
             PayloadSchemaError: If the payload carries a key or type the event's
                 declared schema forbids (ADR-032). A programming error in the
                 emitter, raised before any write.
-            AuditLogError: If writing or fsyncing the line fails. The OSError is
-                wrapped and chained so the boundary contract holds (ADR-027).
+            AuditLogError: If writing the line fails. The OSError is wrapped and
+                chained so the boundary contract holds (ADR-027).
         """
         validate_payload(event.event_type, event.payload)
         chained = self._chain(event)
@@ -356,7 +359,6 @@ class JsonLinesAuditStore:
             with self._path.open("a", encoding="utf-8") as f:
                 f.write(chained.model_dump_json() + "\n")
                 f.flush()
-                os.fsync(f.fileno())
         except OSError as exc:
             raise AuditLogError(
                 f"failed to append audit event {event.event_id}"
