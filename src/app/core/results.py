@@ -47,7 +47,23 @@ class TriageResult:
     ADR-013). An empty extracted_arguments list is a valid result: TYP_1
     documents with no identifiable legal argument produce no entries. The
     Coordinator sets the briefing status to KEIN_TREFFER in that case.
+
+    contradiction_detected flags the norms-present-but-no-arguments
+    contradiction (S3): the deterministic extractor found norm citations
+    while the LLM returned an empty argument list. The signal travels here
+    so the Coordinator can record it in the TRIAGE audit payload.
+
+    substance_threshold_exceeded is the length backstop sibling of that flag
+    (H2): a text over the configured character threshold produced an empty
+    argument list, independent of whether any norm was cited. It catches the
+    substantive prose objection without paragraph notation that
+    contradiction_detected misses, so an empty extraction over a substantial
+    document stays reviewable instead of shipping silently as KEIN_TREFFER.
+    The Coordinator records it in the TRIAGE audit payload alongside the
+    contradiction flag.
     """
 
     einwendungs_typ: EinwendungsTyp
     extracted_arguments: list[ExtrahiertesArgument] = field(default_factory=list)
+    contradiction_detected: bool = False
+    substance_threshold_exceeded: bool = False

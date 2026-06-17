@@ -1,4 +1,11 @@
-"""FAISS vector index for the Retrieval bounded context.
+"""FAISS vector index: evaluated, rejected, kept as reference (ADR-021).
+
+The index half of the vector-search path the Retrieval context evaluated and
+rejected; production resolves by exact dict lookup (retrieval/service.py). Moved
+out of src/app/retrieval in Round 20 (M2) so the production package no longer
+ships faiss for code that never runs. It still imports GesetzParagraph from the
+production context (app.retrieval.entities), the one type it shares with the
+live path. Requires the optional vector-experiments extra.
 
 Infrastructure-layer component holding paragraph embeddings and the
 parallel metadata needed to map a search hit back to its GesetzParagraph.

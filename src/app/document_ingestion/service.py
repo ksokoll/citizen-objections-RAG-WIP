@@ -15,13 +15,83 @@ from __future__ import annotations
 
 import os
 import stat
-import sys
 import uuid
 from pathlib import Path
+from uuid import UUID
+
+import structlog
 
 from app.core.failures import IngestionError
 from app.core.results import IngestionResult
+from app.document_ingestion.events import (
+    INGESTION_RAW_STORE_WORLD_READABLE,
+    RAW_DOCUMENT_ACCESSED,
+)
 from app.document_ingestion.protocols import PiiMasker
+from app.observability.tracing import traced
+
+_log = structlog.get_logger()
+
+
+def raw_document_path(raw_store_path: Path, document_id: str) -> Path:
+    """Return the raw-store file path for a document id.
+
+    The store layout (one ``<document_id>.txt`` per document) is this
+    context's private convention; writers and readers both resolve paths
+    through this function so the convention has exactly one home.
+
+    Args:
+        raw_store_path: The raw store directory.
+        document_id: The ingestion-assigned document identifier.
+
+    Returns:
+        The path of the stored raw document.
+    """
+    return raw_store_path / f"{document_id}.txt"
+
+
+def load_raw_document(raw_store_path: Path, document_id: str) -> str:
+    """Read one stored raw document by its document id.
+
+    The id is validated as a UUID before any path is built: document ids are
+    always uuid4 (minted in ingest), so anything else is rejected at the
+    boundary rather than turned into a filesystem path (path-traversal
+    guard).
+
+    Every successful read emits the governed raw_document_accessed event with
+    the document_id only, never content (ADR-027): a read of unmasked PII must
+    leave an operational trace. The chain-level read audit event (custody, not
+    telemetry) is Round C work (ADR-027).
+
+    Args:
+        raw_store_path: The raw store directory.
+        document_id: The ingestion-assigned document identifier.
+
+    Returns:
+        The stored raw document text.
+
+    Raises:
+        IngestionError: If the id is not a valid document id or no document
+            is stored under it.
+    """
+    try:
+        UUID(document_id)
+    except ValueError as exc:
+        raise IngestionError(
+            f"'{document_id}' is not a valid document id (expected a UUID)"
+        ) from exc
+    path = raw_document_path(raw_store_path, document_id)
+    if not path.exists():
+        raise IngestionError(f"no stored raw document for id '{document_id}'")
+    try:
+        raw_text = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise IngestionError(
+            f"failed to read the raw document for id '{document_id}'"
+        ) from exc
+    _log.info(RAW_DOCUMENT_ACCESSED, document_id=document_id)
+    return raw_text
+
 
 # Upper bound on raw_text length, enforced at the ingest boundary. This is
 # input validation at the edge, not a masking decision: a single oversized
@@ -30,8 +100,10 @@ from app.document_ingestion.protocols import PiiMasker
 # the evaluation corpus is ~9,800 characters; 100,000 leaves an order of
 # magnitude of headroom for a long multi-submitter objection while still
 # bounding the work. Characters, not bytes: it is the unit the downstream
-# regex and NER actually scan.
-_MAX_RAW_TEXT_CHARS = 100_000
+# regex and NER actually scan. Public: the CLI composition root applies the
+# same bound as a stat-based pre-read guard (S5), so an oversized file is
+# refused before its content is ever loaded.
+MAX_RAW_TEXT_CHARS = 100_000
 
 
 class DocumentIngestionService:
@@ -51,6 +123,7 @@ class DocumentIngestionService:
         self._masker = masker
         self._warn_if_world_readable()
 
+    @traced(stage="document_ingestion")
     def ingest(self, raw_text: str) -> IngestionResult:
         """Accept raw text, store the original, mask PII, and return a result.
 
@@ -67,22 +140,22 @@ class DocumentIngestionService:
         """
         if not raw_text or not raw_text.strip():
             raise IngestionError("raw_text must not be empty")
-        if len(raw_text) > _MAX_RAW_TEXT_CHARS:
+        if len(raw_text) > MAX_RAW_TEXT_CHARS:
             raise IngestionError(
-                f"raw_text exceeds the {_MAX_RAW_TEXT_CHARS}-character limit "
+                f"raw_text exceeds the {MAX_RAW_TEXT_CHARS}-character limit "
                 f"({len(raw_text)} characters); reject at the boundary rather "
                 "than drive the masker unboundedly"
             )
 
         document_id = str(uuid.uuid4())
-        raw_document_path = self._store_raw(document_id, raw_text)
+        stored_path = self._store_raw(document_id, raw_text)
 
         masking_result = self._masker.mask(raw_text)
 
         return IngestionResult(
             document_id=document_id,
             clean_text=masking_result.text,
-            raw_document_path=str(raw_document_path),
+            raw_document_path=str(stored_path),
             entity_counts=masking_result.entity_counts,
         )
 
@@ -108,7 +181,7 @@ class DocumentIngestionService:
         if os.name == "posix":
             # mkdir's mode is masked by umask, so set it explicitly afterwards.
             os.chmod(self._raw_store_path, 0o700)
-        path = self._raw_store_path / f"{document_id}.txt"
+        path = raw_document_path(self._raw_store_path, document_id)
         try:
             path.write_text(raw_text, encoding="utf-8")
         except OSError as e:
@@ -131,9 +204,10 @@ class DocumentIngestionService:
             return
         mode = self._raw_store_path.stat().st_mode
         if mode & (stat.S_IROTH | stat.S_IWOTH | stat.S_IXOTH):
-            print(
-                f"WARNING: raw store {self._raw_store_path} is world-accessible "
-                f"(mode {stat.S_IMODE(mode):#o}); the unmasked originals are "
-                "not owner-restricted. Set the directory to 0o700.",
-                file=sys.stderr,
+            # Governed warning (ADR-026): the former stderr print bypassed the
+            # logging controls. The store path is not logged (it could be
+            # sensitive); the mode is enough to act on.
+            _log.warning(
+                INGESTION_RAW_STORE_WORLD_READABLE,
+                store_mode=f"{stat.S_IMODE(mode):#o}",
             )

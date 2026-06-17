@@ -1,7 +1,14 @@
 # Observability and Defensibility Implementation Plan
 
-Status: Planned
-Date: 2026-06-02 (revised, third review pass: reliability)
+Status: Rounds A and B implemented. Round A: structured logging, PII
+discipline, AuditEvent layout. Round B: @traced timing, off-by-default
+tracing scaffold, the six metrics, the corpus identifier on the briefing
+(ADR-028), and the CLI composition root (python -m app) that retired the
+import-time configuration stopgap. Round C planned. See the status note
+under Step 1; Round B deviations are recorded in the pre-registration's
+Deviations Log (docs/pre-registrations/round-15.md).
+Date: 2026-06-02 (revised, third review pass: reliability; Round B status
+update 2026-06-12)
 Scope: Non-functional layer for the citizen-objections pipeline
 (DocumentIngestion -> Triage -> Retrieval -> Briefing -> AuditLog). Adds
 operational observability and strengthens the technical integrity of the audit
@@ -32,7 +39,9 @@ detailed specifications live in ADRs and are not repeated here:
   canonical-serialization specification and its versioning, durable append and
   chain-head recovery, single-writer enforcement, and the erasure-coexistence
   rationale.
-- ADR-025 (candidate): Audit-Write Failure Policy (completeness vs availability,
+- ADR-026: Observability Logging Policy (one sink, default-deny allowlist,
+  message and exception policy, time-based retention).
+- ADR-027: Audit-Write Failure Policy (completeness vs availability,
   see the Completeness section).
 
 ## Guiding distinction
@@ -66,6 +75,52 @@ of Step 1.
 
 Done together because all of it touches the logging path or the briefing data
 model. (Decision: ADR-023.)
+
+Round A status (implemented): items 1 (structured logging plus time-based
+rotation), 2 (correlation id on document_id), 6 (PII discipline), and the
+AuditEvent layout fields (serialization_version, event_hash) are done and
+tested at the sink.
+
+Round B status (implemented): items 3, 4, 5, and 7 are done. The @traced
+decorator sits on the five context service methods and Pipeline.run(),
+always emitting the governed stage_timing event and feeding
+stage_duration_seconds; the tracer provider exists only under
+OBSERVABILITY_TRACING=1 with a per-run-cleared in-memory exporter; the six
+metrics live in observability/metrics.py with contained writes and the
+initial alert thresholds as comments; the corpus identifier (content hash,
+see the Round B deviations log on the dropped standangabe component) and
+created_at travel inside WuerdigungsBriefing (ADR-028). The CLI composition
+root (python -m app) wires the production pipeline, owns strict bootstrap,
+and emits startup_config; the import-time configuration stopgap is retired
+(ADR-026, phase separation). Step 2 (the hash chain, single writer,
+fail-closed _emit) is Round C.
+
+Review-driven additions beyond the original Step 1, all in Round A (ADR-026):
+- One sink, not a structlog-only allowlist: structlog and foreign stdlib
+  records route through the same shared processor chain (ProcessorFormatter
+  with foreign_pre_chain), closing the third-party logging bypass. Third-party
+  loggers are clamped to WARNING.
+- Message policy: log event names are registered static constants
+  (observability.events.REGISTERED_EVENTS); an unregistered structlog event
+  fails loudly. Exception policy: exceptions reduce to type plus location,
+  never str() or a rendered traceback.
+- The default-deny key allowlist is frozen by a golden test.
+- Retention is time-based (TimedRotatingFileHandler at midnight UTC) plus a
+  startup mtime sweep, not size-based rotation.
+- The interim _emit fix: a failed audit publish is a governed ERROR event
+  (AUDIT_APPEND_FAILED), not a stderr print; the fail-closed raise lands in
+  Round C (ADR-027).
+- Two ungoverned DocumentIngestion stderr prints were converted to governed
+  events (counts only); one of them had been interpolating surviving citizen
+  NAME tokens to stderr.
+
+Round B backlog (security review, Round 15.1), done in Round B: the sink
+directory was read from the OBSERVABILITY_LOG_DIR environment variable at
+logging-module import time. configure_logging now takes the sink path as a
+required parameter resolved at the CLI entrypoint, and the module reads no
+path from the environment, so the sink path is not attacker-influenceable
+through the process environment (finding 5, path injection via the
+composition root CLI).
 
 The numbers below are reference labels, not an execution order. The PII
 processor (item 6) is no longer ordered relative to the other items; it is
@@ -119,7 +174,7 @@ window in which items 1 to 5 could log unsafely.
      signal.
    - audit_write_failures_total: counts swallowed-or-handled audit publish
      failures, so a degrading audit store is visible regardless of the failure
-     policy chosen in ADR-025.
+     policy chosen in ADR-027.
 
    On "dropped" metrics: the agent's in-loop verification gate is removed.
    Verification as such is not gone; norm resolution is itself a verification
@@ -130,12 +185,13 @@ window in which items 1 to 5 could log unsafely.
    Inert without an exporter, by design. In this phase the registry is
    in-process with no scrape endpoint, so the metrics are instrumentation
    readiness, not live signals. To keep them from being decorative, the alert
-   thresholds are defined now as documentation (for example: unresolved-norm
-   ratio sustained above a set fraction; verification-failure rate above a set
-   fraction; any nonzero audit_write_failures_total), so that adding a scrape
-   endpoint and alert rules in production is a wiring step against a defined
-   target. Building the scrape endpoint and the alerting backend stays deferred
-   to production (see Out of scope); defining the thresholds does not.
+   thresholds are defined now as documentation in observability/metrics.py
+   (initial values: unresolved-norm ratio above 0.20 sustained one hour;
+   verification-failure rate above 0.10 sustained one hour; any nonzero
+   audit_write_failures_total pages), so that adding a scrape endpoint and
+   alert rules in production is a wiring step against a defined target.
+   Building the scrape endpoint and the alerting backend stays deferred to
+   production (see Out of scope); defining the thresholds does not.
 
    Discipline kept: one purpose per metric, cardinality under 100, in-process
    registry.
@@ -151,8 +207,12 @@ window in which items 1 to 5 could log unsafely.
    test or migration logging setup cannot open a leak window. Tests: one pushes a
    PII-shaped field through the processor and asserts it is absent from the
    output; one asserts the correlation id is constant across all events of a run.
-   Optional defense-in-depth: a periodic scan of the log sink for non-allowlist
-   keys.
+   Deferred, now defense-in-depth not primary control: a periodic scan of the
+   log sink for non-allowlist keys. The corrected rationale (ADR-027 deferrals):
+   once the one-sink routing sends both structlog and foreign stdlib records
+   through the same allowlist, the main leak path is closed at the sink, so a
+   periodic scan is a backstop against a future misconfiguration rather than the
+   load-bearing mechanism it would have been without stdlib routing.
 
    The identifier: document_id is a random uuid4 token, not derived from PII. It
    is pseudonymization, not anonymization, because re-identification remains
@@ -279,7 +339,7 @@ advance invariant (Step 2) and the audit_write_failures_total metric and an
 ERROR span status (Step 1) together make the failure visible regardless of the
 policy chosen.
 
-Open decision (candidate ADR-025): the audit-write failure policy, completeness
+Decided in ADR-027: the audit-write failure policy, completeness
 versus availability.
 
 - Fail-closed: a failed write for a chain-of-custody event aborts the run (or
@@ -289,12 +349,12 @@ versus availability.
 - Fail-open (current): the pipeline continues so a citizen still receives a
   briefing on a transient hiccup. Accepts silent incompleteness.
 
-Recommended direction, reinforced by the reliability review and to be ratified in
-ADR-025 before go-live (not after): fail-closed for the six custody events
+Recommended direction, reinforced by the reliability review and ratified in
+ADR-027 before go-live (not after): fail-closed for the six custody events
 (EINGANG, TRIAGE, RETRIEVAL, BRIEFING_ERSTELLT, KEIN_TREFFER, PIPELINE_FEHLER),
 because for a Behörde compliance trail completeness is the point. Best-effort
 handling is acceptable only for operational telemetry outside the custody chain.
-The decision is recorded in ADR-025 before _emit is changed.
+The decision is recorded in ADR-027 before _emit is changed.
 
 ## Out of scope
 

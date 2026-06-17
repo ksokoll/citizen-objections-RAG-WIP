@@ -120,7 +120,9 @@ class AnthropicClient:
         }
 
         try:
-            response = self._client.messages.create(
+            # The plain-dict tool schema and tool_choice are accepted by the SDK
+            # at runtime; its create() overloads require the typed param objects.
+            response = self._client.messages.create(  # type: ignore[call-overload]
                 model=self._model,
                 temperature=self._temperature,
                 max_tokens=self._max_tokens,

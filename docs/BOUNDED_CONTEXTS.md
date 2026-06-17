@@ -15,7 +15,7 @@
 │              pipeline.py (Coordinator)       │
 │  - Sequential BC orchestration               │
 │  - Protocol dependency injection             │
-│  - AuditEvent emission after each step       │
+│  - AuditEvent emission (fail-closed, ADR-033)│
 │  - Failure routing and status mapping        │
 └──┬───────────┬───────────┬───────────┬────────┘
    │           │           │           │
@@ -286,7 +286,7 @@ class NormWithSource:
 ## Context 4: Briefing
 
 ### 1. Responsibility
-Assemble a per-argument briefing for the Sachbearbeiter. For each extracted argument, pair the argument with the source Gesetzestext of its resolved norms and derive a status, then aggregate the per-argument entries into a single `WuerdigungsBriefing`. This is a deterministic assembly: no LLM call, no generation, no §-reference verification gate. The briefing supports the human assessment; it does not perform it.
+Assemble a per-argument briefing for the Sachbearbeiter. For each extracted argument, pair the argument with the source Gesetzestext of its resolved norms and derive a status, then aggregate the per-argument entries into a single `WuerdigungsBriefing`. This is a deterministic assembly: no LLM call, no generation, no §-reference verification gate. The briefing supports the human assessment; it does not perform it. The Briefing context delivers the structured `WuerdigungsBriefing` as the system's contract; it does not render it. Presentation happens in a frontend beyond the system boundary (ADR-028).
 
 ### 2. Why It's Separate
 Briefing owns the deterministic assembly of arguments and their resolved norm text into a Sachbearbeiter-facing artifact. Its concern (presentation and status derivation) has a distinct change axis from citation resolution (Retrieval) and argument extraction (Triage). It can evolve the briefing shape and the status rules without touching either neighbour.
@@ -301,6 +301,8 @@ def assemble(
     einwendungs_typ: str,
     arguments: list[dict],
     norms_by_argument: dict[str, list[ResolvedNormEntry]],
+    corpus_id: str,
+    created_at: datetime,
 ) -> WuerdigungsBriefing:
     """Assemble a per-argument briefing from arguments and resolved norms.
 
@@ -317,6 +319,8 @@ def assemble(
         arguments is a list of plain dicts with keys argument_id,
         argument_text, original_zitat, einwendungs_typ, catalog_id.
         norms_by_argument maps each argument_id to its resolved norms.
+        corpus_id and created_at are supplied by the Coordinator
+        (provenance, ADR-028); the context only places them.
 
     Does NOT check:
         Whether arguments were correctly extracted.
@@ -349,6 +353,8 @@ norms_by_argument: dict[str, list[ResolvedNormEntry]]  # resolved norms per argu
 class WuerdigungsBriefing:
     document_id: str
     einwendungs_typ: str
+    corpus_id: str                  # statute-corpus content hash (ADR-028)
+    created_at: datetime            # tz-aware UTC creation time (ADR-028)
     entries: list[BriefingEntry]
     limitation_note: str            # states the Akte is outside the boundary
 
@@ -446,13 +452,13 @@ list[AuditEvent]  # in write order
 ### 5. Business Rules
 
 1. **Append-only.** Events are never updated or deleted. An `event_id` is unique; a second write of the same ID is an error.
-2. **Write failure does not suppress domain results.** An `AuditLogError` is logged at ERROR level; the pipeline result is returned to the caller regardless.
+2. **Custody-event write failure is fail-closed.** A failed custody-event write is logged at ERROR and counted (`audit_write_failures_total`), then re-raised so the run aborts: no result is returned that would imply a complete trail it lacks (ADR-027, armed in ADR-033). A telemetry write failure, outside the custody set, does not abort a run.
 3. **Writable on failure.** AuditLog must accept events that record the failure of other contexts. It cannot depend on any domain context succeeding.
 
 ### 6. Error Strategy
 
-- Store write failure: raise `AuditLogError`. The Coordinator logs it at ERROR and returns the pipeline result regardless.
-- Duplicate `event_id`: raise `AuditLogError` on the second write.
+- Custody-event store write failure: raise `AuditLogError`. The Coordinator logs it at ERROR, increments `audit_write_failures_total`, and re-raises it, so the run aborts fail-closed (ADR-027, armed in ADR-033).
+- Duplicate `event_id`: not detected. The store keys the chain off an in-memory head and does not scan per append (ADR-030); the pipeline mints a fresh id per event, so this is a deliberate trade, not a guarantee.
 
 ### 7. Dependencies
 
@@ -494,14 +500,23 @@ BCs communicate only through input arguments and return values passed through th
 ### Error Propagation
 
 ```
-IngestionError    →  Pipeline aborted, AuditEvent(INGESTION_FAILED) emitted
-TriageError       →  Pipeline aborted, AuditEvent(TRIAGE_FAILED) emitted
-NoMatchEvent      →  Pipeline terminated (valid), AuditEvent(NO_MATCH) emitted
-RetrievalError    →  Pipeline aborted, AuditEvent(RETRIEVAL_FAILED) emitted
-AuditLogError     →  Logged at ERROR, pipeline result returned regardless
+IngestionError    →  Pipeline aborted before a document_id exists; no AuditEvent
+                     can be keyed, only the terminal metric is recorded (ADR-027)
+TriageError       →  Pipeline aborted, AuditEvent(PIPELINE_FEHLER) emitted
+NoMatchEvent      →  Pipeline terminated (valid), AuditEvent(KEIN_TREFFER) emitted
+RetrievalError    →  Pipeline aborted, AuditEvent(PIPELINE_FEHLER) emitted
+AuditLogError     →  Custody-event write failure: logged at ERROR, counted in
+                     audit_write_failures_total, then re-raised so the run aborts
+                     fail-closed (ADR-027, armed in ADR-033). One type carries it:
+                     duplicate detection was removed (ADR-030)
 ```
 
 Note: `RetrievalError` originates from the Retrieval context (citation resolution). An unresolved citation is not a `RetrievalError`; it is a valid `NormWithSource(resolved=False)` that produces a `NORM_UNRESOLVED` entry in Briefing. Briefing has no generation error: assembly is deterministic and cannot fail with a generation failure.
+
+Note: the read path is also under custody. show-document records a
+`ROHDOKUMENT_ZUGRIFF` event in the chain before printing a raw document, and a
+failed write aborts the read fail-closed (ADR-033), the read-side analogue of
+the completion-before-return ordering.
 
 ### Testing Strategy
 
@@ -519,7 +534,7 @@ E2E smoke test:     Full pipeline with LLM stub. One test. Asserts a
 ## Design Decisions
 
 **Why is AuditLog a separate BC and not a Coordinator service?**
-AuditLog could be a service layer within the Coordinator rather than a separate BC. Separation was chosen because AuditLog has a different failure mode (write failure must not suppress domain results), a different persistence contract (append-only), and a different lifecycle (it must be writable when other BCs fail). These are three independent Disintegrators that justify the boundary.
+AuditLog could be a service layer within the Coordinator rather than a separate BC. Separation was chosen because AuditLog has a different failure mode (a custody-event write failure aborts the run fail-closed, while a telemetry write failure does not), a different persistence contract (append-only), and a different lifecycle (it must be writable when other BCs fail). These are three independent Disintegrators that justify the boundary. The write-failure propagation policy for custody events is fail-closed; see ADR-027 (armed in ADR-033).
 
 **Why is Retrieval separate from Briefing?**
 Citation resolution (norm to source text) and briefing assembly are two different steps with two different change axes. Resolution is exact-match lookup over a fixed statute corpus (ADR-021). Briefing is deterministic presentation and status derivation. Binding them would couple the statute corpus to the briefing shape and status rules. Separating them lets Briefing consume already-resolved norms in its tests and lets the resolution strategy evolve independently. See ADR-020.

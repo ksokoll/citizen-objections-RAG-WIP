@@ -1,4 +1,17 @@
-"""Domain entities (frozen dataclasses) for the objection workflow."""
+"""Domain entities (frozen dataclasses) for the objection workflow.
+
+EinwendungsTyp and ExtrahiertesArgument stay in this shared kernel as a
+deliberate, rule-conformant exception, not an oversight. They are cross-context
+payload: TriageResult (core/results.py) carries them across the
+Triage -> Coordinator boundary, so both parties must be able to name the same
+type. This is unlike the two single-context protocols relocated in Round 20
+(LLMClientProtocol to triage, AuditEventPublisherProtocol to audit_log), each of
+which had exactly one consuming context and so belonged with that context. The
+"core holds only cross-context contracts" rule forbade these entities literally;
+this note makes the exception explicit rather than silent, because payload that
+crosses a bounded-context boundary is precisely the kind of contract the shared
+kernel exists to hold.
+"""
 
 from __future__ import annotations
 
@@ -30,17 +43,3 @@ class ExtrahiertesArgument:
     einwendungs_typ: EinwendungsTyp
     zitierte_normen: list[str] = field(default_factory=list)
     argument_verified: bool = False
-
-
-@dataclass(frozen=True)
-class Einwendung:
-    """Raw citizen objection as received at the system boundary.
-
-    Carries the original input text and document identity. Referenced
-    by einwendungs_id throughout the pipeline. Immutable after ingestion.
-    PII is present here; downstream contexts receive only masked text.
-    """
-
-    einwendungs_id: str
-    document_id: str
-    raw_text: str

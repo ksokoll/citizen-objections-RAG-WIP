@@ -12,8 +12,9 @@ Loads all nine statutes and resolves a set of probe citations covering:
 
 Resolution is exact-match only (ADR-021); the probes confirm the
 paragraph-level normalisation and Gesetz isolation behave on the real
-corpus. The E5Embedder and FaissNormIndex remain in the context as
-experimental reference and are not exercised here.
+corpus. The E5Embedder and FaissNormIndex now live under
+experiments/vector_retrieval_reference (Round 20, M2) and are not exercised
+here.
 """
 
 from __future__ import annotations
@@ -28,7 +29,7 @@ from app.retrieval.service import (  # noqa: E402
     NormRetrievalService,
 )
 from app.retrieval.gesetz_xml_loader import (  # noqa: E402
-    load_all_gesetze,
+    load_corpus,
 )
 
 # Probe citations. Each tuple is (citation, expectation note).
@@ -54,10 +55,11 @@ def main() -> None:
         sys.exit(1)
 
     print("Loading statute corpus...")
-    paragraphs = load_all_gesetze(xml_dir)
+    corpus = load_corpus(xml_dir)
+    paragraphs = corpus.paragraphs
     print(f"  {len(paragraphs)} paragraphs loaded")
 
-    service = NormRetrievalService(paragraphs)
+    service = NormRetrievalService(corpus)
     print(f"  exact-match index built, size={len(paragraphs)}\n")
 
     print("Resolving probe citations:\n")

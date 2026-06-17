@@ -29,11 +29,18 @@ preserved; see ADR-020 for the rationale.
 
 from __future__ import annotations
 
+import hashlib
 import re
 from pathlib import Path
+
+# Stdlib XML parsing. It is not hardened against internal entity expansion
+# (billion-laughs). That is acceptable only under the corpus-trust assumption
+# made explicit at the parse site in load_gesetz; a future untrusted-corpus
+# source must switch this import and that call to defusedxml.ElementTree, the
+# named one-line backlog the hardening depends on.
 from xml.etree import ElementTree
 
-from app.retrieval.entities import GesetzParagraph
+from app.retrieval.entities import GesetzParagraph, LoadedCorpus
 
 # Matches a paragraph enbez such as "§ 9", "§ 9a", "§ 135a". The section
 # sign may be followed by variable whitespace in the source.
@@ -152,6 +159,15 @@ def load_gesetz(xml_path: Path) -> list[GesetzParagraph]:
     if not xml_path.exists():
         raise FileNotFoundError(f"Statute XML not found: {xml_path}")
 
+    # Parsed with stdlib ElementTree, which does not harden against internal
+    # entity expansion. Safe here on an explicit assumption: the corpus under
+    # data/XML/ is fixed, checked-in, read-only, and not attacker-controlled
+    # input, so the entity-expansion vector is not reachable in the current
+    # threat model (ADR-027 delimitation). The hardening depends on that
+    # assumption: if a future deployment loads corpora from a less trusted
+    # channel, switch this call and the import above to defusedxml.ElementTree
+    # (pin defusedxml exact when added). That one dependency is the named
+    # backlog item; it is not pulled in now because the threat is unreachable.
     tree = ElementTree.parse(xml_path)
     root = tree.getroot()
     gesetz = _extract_statute_abbreviation(root)
@@ -191,6 +207,38 @@ def load_gesetz(xml_path: Path) -> list[GesetzParagraph]:
     return paragraphs
 
 
+def compute_corpus_id(paragraphs: list[GesetzParagraph]) -> str:
+    """Compute the content-based identifier of a loaded statute corpus.
+
+    SHA-256 over the sorted (canonical_key, text) pairs of the parsed
+    paragraphs, with a NUL byte after each part so adjacent fields cannot
+    be confused. Sorting makes the id independent of load order; hashing
+    both key and text means a missing or corrupt paragraph and a pure text
+    amendment each change the id (ADR-028, provenance).
+
+    Deliberately content-based: the input is the parsed paragraphs, not the
+    file bytes, and no tool or parser version is folded in, so the id is
+    stable across reformatting of the XML and across toolchain upgrades
+    that do not change the extracted legal content.
+
+    Computed once where the corpus is loaded and the exact-match index is
+    built (the composition root), then carried into every briefing.
+
+    Args:
+        paragraphs: The parsed corpus paragraphs.
+
+    Returns:
+        The hex-encoded SHA-256 corpus identifier.
+    """
+    hasher = hashlib.sha256()
+    for canonical_key, text in sorted((p.canonical_key, p.text) for p in paragraphs):
+        hasher.update(canonical_key.encode("utf-8"))
+        hasher.update(b"\x00")
+        hasher.update(text.encode("utf-8"))
+        hasher.update(b"\x00")
+    return hasher.hexdigest()
+
+
 def load_all_gesetze(xml_dir: Path) -> list[GesetzParagraph]:
     """Parse every statute XML in a directory into paragraph entities.
 
@@ -210,3 +258,27 @@ def load_all_gesetze(xml_dir: Path) -> list[GesetzParagraph]:
     for xml_path in sorted(xml_dir.glob("*.xml")):
         all_paragraphs.extend(load_gesetz(xml_path))
     return all_paragraphs
+
+
+def load_corpus(xml_dir: Path) -> LoadedCorpus:
+    """Parse a statute directory and bind the corpus to its identifier.
+
+    The one place where paragraphs and corpus id come into existence
+    together, so the pairing is constructed, not asserted: a retriever built
+    from the returned value cannot carry an id computed over different
+    content (ADR-028, provenance).
+
+    Args:
+        xml_dir: Directory containing the statute XML files.
+
+    Returns:
+        The parsed corpus with its content-based identifier.
+
+    Raises:
+        FileNotFoundError: If the directory does not exist.
+    """
+    paragraphs = load_all_gesetze(xml_dir)
+    return LoadedCorpus(
+        paragraphs=paragraphs,
+        corpus_id=compute_corpus_id(paragraphs),
+    )

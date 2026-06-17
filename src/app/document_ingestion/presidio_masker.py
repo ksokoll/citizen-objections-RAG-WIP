@@ -24,9 +24,14 @@ created owner-restricted on POSIX (0o700 / 0o600), best-effort on Windows
 
 Scope (ADR-025, DATA_GOVERNANCE_STATEMENT): only identifying core attributes
 are masked, namely names, phone numbers, email addresses, and IBAN. Locations,
-postal codes, and case numbers are deliberately not masked. Under an
-encapsulated-LLM deployment the masking serves internal data minimization, not
-protection against a third-party processor.
+postal codes, and case numbers are deliberately not masked. The masking serves
+internal data minimization, not protection against a third-party processor.
+That distinction rests on a checked fact, not a prose assumption: the
+composition root resolves the Triage endpoint and verifies it against an
+allowlist at startup (ADR-027, K1; check_endpoint_allowed), so an outbound call
+to an unvetted destination fails loud at the bootstrap line. The narrow scope is
+licensed by that enforced endpoint constraint, not by an unenforced assumption
+that the deployment happens to be encapsulated.
 
 Entity counts follow an explicit contract owned by this module: the anchor and
 analyzer spans are merged into regions (overlapping spans, and whitespace
@@ -41,8 +46,8 @@ span a multi-token name.
 from __future__ import annotations
 
 import re
-import sys
 
+import structlog
 from presidio_analyzer import (
     AnalyzerEngine,
     Pattern,
@@ -54,7 +59,10 @@ from presidio_anonymizer import AnonymizerEngine
 from presidio_anonymizer.entities import OperatorConfig
 
 from app.document_ingestion.entities import MaskingResult
+from app.document_ingestion.events import INGESTION_PII_COVERAGE_ANOMALY
 from app.document_ingestion.zone_extractor import ZoneExtraction, extract_zones
+
+_log = structlog.get_logger()
 
 _ENTITY_TO_PLACEHOLDER: dict[str, str] = {
     "PERSON": "[NAME]",
@@ -118,7 +126,8 @@ class PresidioMasker:
 
     def __init__(self) -> None:
         self._analyzer = self._build_analyzer()
-        self._anonymizer = AnonymizerEngine()
+        # presidio ships no type stubs, so its engine is untyped to mypy.
+        self._anonymizer = AnonymizerEngine()  # type: ignore[no-untyped-call]
         self._operators = {
             entity: OperatorConfig("replace", {"new_value": placeholder})
             for entity, placeholder in _ENTITY_TO_PLACEHOLDER.items()
@@ -159,7 +168,9 @@ class PresidioMasker:
 
         anonymized = self._anonymizer.anonymize(
             text=text,
-            analyzer_results=resolved,
+            # presidio duplicates RecognizerResult across its analyzer and
+            # anonymizer packages; the anonymizer accepts analyzer results.
+            analyzer_results=resolved,  # type: ignore[arg-type]
             operators=self._operators,
         )
 
@@ -220,15 +231,15 @@ class PresidioMasker:
             }
         )
         if survivors:
-            print(
-                "PII coverage anomaly: "
-                f"{len(survivors)} deterministic anchor name token(s) survived "
-                f"masking in their zone ({entity_counts.get('NAME', 0)} NAME "
-                f"region(s) masked): {survivors}. The anchor layer is "
-                "deterministic, so this is an internal contradiction; processing "
-                "continues (encapsulated-LLM model, a slipped name stays in the "
-                "trust boundary).",
-                file=sys.stderr,
+            # Governed anomaly signal (ADR-026): the former stderr print
+            # interpolated the surviving NAME tokens, leaking PII through the
+            # one channel logging cannot govern. Only counts are logged now;
+            # the tokens never leave the trust boundary. Processing continues
+            # (encapsulated-LLM model: a slipped name stays inside it).
+            _log.error(
+                INGESTION_PII_COVERAGE_ANOMALY,
+                survivor_count=len(survivors),
+                name_regions_masked=entity_counts.get("NAME", 0),
             )
 
     @staticmethod

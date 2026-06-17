@@ -19,6 +19,7 @@ Pure domain: no I/O, no external dependencies beyond the standard library.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime
 from enum import StrEnum
 
 
@@ -26,7 +27,8 @@ class BriefingStatus(StrEnum):
     """Per-argument status in the briefing.
 
     Values:
-        BRIEFING_READY: The argument has a catalog match and at least one
+        BRIEFING_READY: The argument's quote is verified against the
+            source document, it has a catalog match, and at least one
             resolved norm with source text. Ready for the Sachbearbeiter
             to assess against the case file.
         NORM_UNRESOLVED: The argument has a catalog match but one or more
@@ -35,11 +37,17 @@ class BriefingStatus(StrEnum):
         KEIN_TREFFER: The argument had no catalog match (catalog_id was
             None). It was skipped for norm resolution and carries no
             source text.
+        ZITAT_NICHT_VERIFIZIERT: The argument's original_zitat failed the
+            deterministic substring check against the source document
+            (ADR-006 Layer 1): a potentially fabricated quote. The entry
+            is included so the Sachbearbeiter sees it, but it is never
+            BRIEFING_READY (S2, contract change recorded in ADR-028).
     """
 
     BRIEFING_READY = "BRIEFING_READY"
     NORM_UNRESOLVED = "NORM_UNRESOLVED"
     KEIN_TREFFER = "KEIN_TREFFER"
+    ZITAT_NICHT_VERIFIZIERT = "ZITAT_NICHT_VERIFIZIERT"
 
 
 @dataclass(frozen=True)
@@ -83,6 +91,10 @@ class BriefingEntry:
         original_zitat: The verbatim citizen quote.
         einwendungs_typ: TYP_1 or TYP_2, as classified by Triage.
         catalog_id: The matched catalog entry, None if no match.
+        argument_verified: Whether original_zitat passed the deterministic
+            substring check against the source document (ADR-006 Layer 1).
+            Part of the delivery contract (ADR-028): the consumer must be
+            able to tell a verified quote from a potentially fabricated one.
         norms: The cited norms with their resolved source text.
         status: The per-argument briefing status.
         requires_case_context: True when a case-file-grounded assessment
@@ -94,6 +106,7 @@ class BriefingEntry:
     original_zitat: str
     einwendungs_typ: str
     catalog_id: str | None
+    argument_verified: bool
     norms: list[ResolvedNormEntry]
     status: BriefingStatus
     requires_case_context: bool
@@ -108,9 +121,17 @@ class WuerdigungsBriefing:
     entry via requires_case_context) and as a human-readable note here,
     so it is auditable and visible.
 
+    The briefing is the system's delivery contract (ADR-028): its fields
+    are a public interface for the consuming frontend, and provenance
+    travels inside the artifact because rendering happens beyond the
+    boundary and logs are retention-bound.
+
     Attributes:
         document_id: The ingestion-assigned document identifier.
         einwendungs_typ: The document-level classification from Triage.
+        corpus_id: Content-based identifier of the statute corpus the
+            briefing was resolved against (ADR-028, provenance).
+        created_at: Creation time of the briefing, timezone-aware UTC.
         entries: One BriefingEntry per extracted argument.
         limitation_note: Human-readable statement of the scope boundary
             (no case-file-grounded assessment produced here).
@@ -118,6 +139,8 @@ class WuerdigungsBriefing:
 
     document_id: str
     einwendungs_typ: str
+    corpus_id: str
+    created_at: datetime
     entries: list[BriefingEntry] = field(default_factory=list)
     limitation_note: str = (
         "Dieses Briefing ordnet jedem Argument die einschlägige Norm und "

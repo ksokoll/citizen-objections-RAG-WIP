@@ -6,19 +6,21 @@ build-backend = "hatchling.build"
 name = "citizen-objections-rag"
 version = "0.1.0"
 description = "RAG system for processing mass citizen objections in German public participation procedures"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 dependencies = [
     "pydantic>=2.0",
-    "faiss-cpu>=1.7",
-    "numpy>=1.26",
     "anthropic>=0.39.0",
     "openai>=1.40.0",
     "mistralai>=1.0.0",
     "python-dotenv>=1.0",
-    "sentence-transformers>=3.0",
     "rank-bm25>=0.2",
     "presidio-analyzer==2.2.362",
     "presidio-anonymizer==2.2.362",
+    "structlog==26.1.0",
+    "filelock==3.29.0",
+    "opentelemetry-api==1.39.1",
+    "opentelemetry-sdk==1.39.1",
+    "prometheus_client==0.25.0",
     "de_core_news_md @ https://github.com/explosion/spacy-models/releases/download/de_core_news_md-3.8.0/de_core_news_md-3.8.0-py3-none-any.whl",
 ]
 
@@ -26,9 +28,28 @@ dependencies = [
 dev = [
     "pytest>=8.0",
     "pytest-cov>=5.0",
-    "ruff>=0.4",
-    "mypy>=1.10",
+    "ruff==0.15.13",
+    "mypy==2.1.0",
+    "import-linter==2.11",
 ]
+# The vector-search reference implementation under
+# experiments/vector_retrieval_reference (E5Embedder, FaissNormIndex). Evaluated
+# and rejected for production (exact-match-only resolution, ADR-021), so its
+# heavy deps (faiss, sentence-transformers and its torch chain, numpy) are an
+# opt-in extra, not part of the production dependency surface. numpy is here
+# because after the move no production module imports it; reinstating the hybrid
+# path means installing this extra.
+vector-experiments = [
+    "faiss-cpu>=1.7",
+    "numpy>=1.26",
+    "sentence-transformers>=3.0",
+]
+
+[tool.hatch.metadata]
+# The de_core_news_md spaCy model is pinned as a direct URL reference (the
+# wheel is not on PyPI). Modern hatchling rejects direct references unless this
+# is set; without it `pip install -e .[dev]` fails at metadata generation.
+allow-direct-references = true
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/app"]
@@ -40,7 +61,6 @@ exclude = ["experiments"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "ANN"]
-ignore = ["ANN101", "ANN102"]
 
 [tool.ruff.lint.per-file-ignores]
 "src/app/triage/prompts.py" = ["E501"]
@@ -48,7 +68,7 @@ ignore = ["ANN101", "ANN102"]
 "tests/**" = ["ANN"]
 
 [tool.mypy]
-python_version = "3.11"
+python_version = "3.12"
 strict = true
 files = ["src"]
 mypy_path = "src"
@@ -61,3 +81,54 @@ markers = [
     "external: tests that make real network calls to external providers (costs money, non-deterministic, opt-in only)",
 ]
 addopts = "-m 'not external'"
+
+# Architectural fitness functions (H2, ADR-034). These turn the structural rules
+# the architecture reviews asked for from prose into mechanism: a build-time
+# check that fails on a violation rather than a convention a reviewer must catch
+# by eye. The contracts are run by tests/small_scale/test_import_contracts.py,
+# so a violation breaks the same `pytest -q` gate that proves behavior.
+[tool.importlinter]
+root_packages = ["app"]
+
+[[tool.importlinter.contracts]]
+# observability is a cross-cutting layer, not a bounded context: contexts may
+# depend on it as middleware, it depends on no context. The vocabulary union
+# (observability_registry) is a composition root, not the layer, so it is not
+# covered here; it legitimately imports each context's declared events.
+name = "Observability is a cross-cutting layer and imports no bounded context"
+type = "forbidden"
+source_modules = ["app.observability"]
+forbidden_modules = [
+    "app.document_ingestion",
+    "app.triage",
+    "app.retrieval",
+    "app.briefing",
+    "app.audit_log",
+]
+
+[[tool.importlinter.contracts]]
+# The bounded-context isolation rule: no context imports another. Cross-context
+# wiring is the Coordinator's (pipeline.py), via core DTOs.
+name = "Bounded contexts are mutually independent"
+type = "independence"
+modules = [
+    "app.document_ingestion",
+    "app.triage",
+    "app.retrieval",
+    "app.briefing",
+    "app.audit_log",
+]
+
+[[tool.importlinter.contracts]]
+# The shared kernel holds only cross-context contracts (Commit 1, Commit 2): it
+# imports no bounded context, so a context's internals can never leak into core.
+name = "Core is the shared kernel and imports no bounded context"
+type = "forbidden"
+source_modules = ["app.core"]
+forbidden_modules = [
+    "app.document_ingestion",
+    "app.triage",
+    "app.retrieval",
+    "app.briefing",
+    "app.audit_log",
+]

@@ -10,15 +10,17 @@ than guessed.
 The vector-similarity fallback was removed from the production path
 (ADR-021): it resolved zero real citations on the Phase A ground truth and
 produced a confident-wrong match on an out-of-corpus probe. The E5Embedder
-and FaissNormIndex remain in this context as reversible experimental
-reference and are deliberately not imported here.
+and FaissNormIndex were moved to experiments/vector_retrieval_reference as
+reversible experimental reference (Round 20, M2); the production path is this
+exact-match resolver only, and the context no longer carries vector code.
 """
 
 from __future__ import annotations
 
 import re
 
-from app.retrieval.entities import GesetzParagraph, NormWithSource
+from app.observability.tracing import traced
+from app.retrieval.entities import LoadedCorpus, NormWithSource
 
 # Parses a canonical citation into its paragraph and Gesetz components.
 # Captures the section (with optional letter suffix) and the trailing
@@ -33,17 +35,36 @@ class NormRetrievalService:
 
     Attributes:
         _exact: Map from paragraph-level canonical key to its paragraph.
+        _corpus_id: SHA-256 content identifier of the corpus behind _exact,
+            returned as this implementation's source_revision.
     """
 
-    def __init__(self, paragraphs: list[GesetzParagraph]) -> None:
-        """Build the exact-match lookup from the corpus paragraphs.
+    def __init__(self, corpus: LoadedCorpus) -> None:
+        """Build the exact-match lookup from a loaded corpus.
+
+        The service is built from the LoadedCorpus value type, never from a
+        bare paragraph list plus a separate id string, so the source_revision
+        it exposes is the corpus hash computed over exactly the paragraphs it
+        resolves against (ADR-028, provenance).
 
         Args:
-            paragraphs: The corpus paragraphs, keyed by their
+            corpus: The loaded corpus whose paragraphs are keyed by their
                 canonical_key (e.g. "§ 9 BauGB") for exact-match lookup.
         """
-        self._exact = {p.canonical_key: p for p in paragraphs}
+        self._exact = {p.canonical_key: p for p in corpus.paragraphs}
+        self._corpus_id = corpus.corpus_id
 
+    @property
+    def source_revision(self) -> str:
+        """Source identifier this service resolves against (the corpus hash).
+
+        Satisfies the Retriever protocol's neutral source_revision member
+        (ADR-028, M2). For this corpus-based implementation the value is the
+        SHA-256 corpus hash; the term generalizes, the value does not change.
+        """
+        return self._corpus_id
+
+    @traced(stage="retrieval")
     def resolve(self, citations: list[str]) -> list[NormWithSource]:
         """Resolve each citation to its source text via exact match.
 

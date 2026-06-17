@@ -1,14 +1,51 @@
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import Any
+from typing import Any, Final
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 # Naming convention: German for domain events, English for code identifiers
 
+#: einwendungs_id carried by process-wide chain events that are not tied to a
+#: citizen objection: the store's recovery event (ADR-030) and the startup
+#: configuration event (ADR-031). A fixed non-objection sentinel so such a
+#: custody record satisfies the required non-empty id without claiming an
+#: Einwendung. Both process-wide events share this one sentinel, so a query for
+#: system events finds them together regardless of which wrote them.
+SYSTEM_EINWENDUNGS_ID: Final[str] = "SYSTEM"
+
 
 class AuditEventType(StrEnum):
-    """Classification of audit event by pipeline stage."""
+    """Classification of an audit event.
+
+    Most members name a pipeline stage. Three are not pipeline steps:
+    WIEDERHERSTELLUNG, recorded when the store quarantines a damaged tail at open
+    (ADR-030); STARTKONFIGURATION, recorded at process start to prove the active
+    controls after the fact (ADR-031); and ROHDOKUMENT_ZUGRIFF, recorded when the
+    show-document path reads a stored raw document (unmasked PII) back out
+    (ADR-033). They live here because AuditEvent.event_type is typed against this
+    enum and each is a custody record like any other.
+
+    The sentinel differs by what the record is tied to. WIEDERHERSTELLUNG and
+    STARTKONFIGURATION are process-wide, tied to no objection, so they carry the
+    SYSTEM_EINWENDUNGS_ID sentinel. ROHDOKUMENT_ZUGRIFF is not: a raw-document
+    read is access to one specific objection's PII, so it carries that document's
+    id as its einwendungs_id (the natural correlation), not the SYSTEM sentinel.
+    A query for everything touching one objection then finds its read accesses
+    alongside its pipeline events (ADR-033).
+
+    Why this is a central enum while the structured-log event vocabulary is
+    per-context (M1, Round 20). The asymmetry is deliberate, not an oversight.
+    The audit event types are a closed contract between exactly two parties: the
+    Coordinator that emits and the store that persists, and AuditEvent.event_type
+    is typed against this one enum, so both parties must name the same fixed set.
+    The log vocabulary is the opposite: open and growing, each context declaring
+    the events it emits, so by the coupling-hub rule it is owned per context and
+    unioned at the composition root (observability_registry, H2). A closed
+    two-party contract belongs in one shared type; an open per-context-growing
+    set belongs with its owners. The previously undocumented inconsistency
+    between the two was the finding; this declaration closes it.
+    """
 
     EINGANG = "eingang"
     TRIAGE = "triage"
@@ -18,6 +55,9 @@ class AuditEventType(StrEnum):
     KEIN_TREFFER = "kein_treffer"
     FREIGABE = "freigabe"
     PIPELINE_FEHLER = "pipeline_fehler"
+    WIEDERHERSTELLUNG = "wiederherstellung"
+    STARTKONFIGURATION = "startkonfiguration"
+    ROHDOKUMENT_ZUGRIFF = "rohdokument_zugriff"
 
 
 class AuditEvent(BaseModel):
@@ -43,7 +83,41 @@ class AuditEvent(BaseModel):
     payload: dict[str, Any] = Field(
         default_factory=dict,
         description=(
-            "Context-specific metadata (confidence scores, intermediate results, etc.)"
+            "Context-specific metadata (counts, scores, flags, ids). The kernel "
+            "carries the payload without constraining its shape; the audit "
+            "context governs what each event type may carry and enforces it at "
+            "write entry, so the chain stays content-free (Form B, ADR-032). The "
+            "kernel does not validate the payload at construction: the gate is "
+            "the store's write entry, not the model, and the read path is "
+            "deliberately tolerant so a historical line never fails an open."
+        ),
+    )
+    serialization_version: int = Field(
+        default=1,
+        description=(
+            "Version of the canonical serialization used for the hash chain. "
+            "Laid out now (Round A); the chain that depends on it is populated "
+            "in Round C (ADR-024). Versioning lets verify_chain() select the "
+            "canonicalization per event so a later field addition does not "
+            "invalidate historical events."
+        ),
+    )
+    sequence_number: int | None = Field(
+        default=None,
+        description=(
+            "Monotonic position in the hash chain, starting at 0 for the genesis "
+            "event. Part of the canonical bytes (ADR-024), so reordering events "
+            "changes their hashes. Assigned by the store on append from its "
+            "in-memory head; None until then, like event_hash."
+        ),
+    )
+    event_hash: str | None = Field(
+        default=None,
+        description=(
+            "SHA-256 over the canonical content plus the predecessor hash. "
+            "None until Round C computes the chain (ADR-024); None is honest "
+            "for events written before the chain exists, not a placeholder to "
+            "be masked."
         ),
     )
 

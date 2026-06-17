@@ -11,7 +11,7 @@ retriever partition key; no separate mapping. See ADR-016.
 """
 
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 
 
 @dataclass(frozen=True)
@@ -130,7 +130,7 @@ KATALOG: dict[str, KatalogEintrag] = {
 }
 
 
-class CatalogId(str, Enum):
+class CatalogId(StrEnum):
     """Public interface for catalog entries used in Pydantic extraction schema.
 
     Each value must have a corresponding entry in KATALOG.
