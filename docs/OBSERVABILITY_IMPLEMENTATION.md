@@ -25,9 +25,11 @@ wording is kept narrower than "legal defensibility" for that reason.
 
 Enforce, do not document. A recurring principle in this revision: an invariant
 that is only written down is an implicit dependency, that is, a bug waiting to
-happen. Where a property is load-bearing (single writer, processor wiring,
-durable append) the plan specifies enforcement and a loud failure, not a
-convention.
+happen. Where a property is load-bearing (processor wiring, the content-free
+payload gate, fail-closed on a custody-write failure) the plan specifies
+enforcement and a loud failure, not a convention. (The single-writer and
+durable-append examples this paragraph once cited were rolled back in Round 21
+as out of demo scope; ADR-030 superseded.)
 
 This is a living roadmap: it records the order of work and its status. The
 detailed specifications live in ADRs and are not repeated here:
@@ -36,9 +38,10 @@ detailed specifications live in ADRs and are not repeated here:
   adaptation to a deterministic pipeline, and the tracing-off-by-default
   posture).
 - ADR-024: Tamper-Evident Audit Trail via Hash Chaining. Covers the
-  canonical-serialization specification and its versioning, durable append and
-  chain-head recovery, single-writer enforcement, and the erasure-coexistence
-  rationale.
+  canonical-serialization specification and its versioning, the in-memory
+  chain-head, and the erasure-coexistence rationale. (The durable append, the
+  chain-head quarantine recovery, and single-writer enforcement that ADR-030
+  added were rolled back in Round 21 as out of demo scope; ADR-030 superseded.)
 - ADR-026: Observability Logging Policy (one sink, default-deny allowlist,
   message and exception policy, time-based retention).
 - ADR-027: Audit-Write Failure Policy (completeness vs availability,
@@ -242,6 +245,14 @@ data-model precondition. (Decision: ADR-024.)
    load-bearing invariants are split below into enforced (the implementation
    must make them fail loudly) and assumed.
 
+   Round 21 note: three of the "Enforced" invariants below, single writer,
+   durable append before head advance, and chain-head quarantine recovery, were
+   deliberately rolled back as out of demo scope (ADR-030 superseded). What
+   stands today: the hash chain itself, the in-memory head (advanced only after a
+   successful write), and a loud failure at open on a damaged chain instead of
+   recovery. Read those three bullets as the record of what was built, then
+   rolled back.
+
    Enforced:
    - Single writer. Not merely documented: an advisory file lock on the append
      path. A second writer (extra worker, retry thread, reprocessing or cron
@@ -334,10 +345,10 @@ event is silently absent. Combined with the in-memory chain-head, a degrading
 audit store (disk full, lock contention, FS latency) would produce months of
 successful briefings with missing links and an in-memory head that has advanced
 past disk, surfacing only at the next restart or verify_chain(), with no alarm
-because the swallow never reached a metric. The durable-append-before-head-
-advance invariant (Step 2) and the audit_write_failures_total metric and an
-ERROR span status (Step 1) together make the failure visible regardless of the
-policy chosen.
+because the swallow never reached a metric. The head-advances-only-after-a-
+successful-write ordering (Step 2; ADR-030's fsync was rolled back in Round 21)
+and the audit_write_failures_total metric and an ERROR span status (Step 1)
+together make the failure visible regardless of the policy chosen.
 
 Decided in ADR-027: the audit-write failure policy, completeness
 versus availability.
