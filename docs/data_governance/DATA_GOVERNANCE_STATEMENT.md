@@ -1,7 +1,9 @@
 # Data Governance: Pseudonymization and LLM Processing
 
 Status: Draft
-Date: 2026-06-03
+Date: 2026-06-03 (section 4 and the related section 6 risk corrected to the
+implemented four-category masking scope; the DE_STRASSE street recognizer named in
+an earlier draft was never built, see ADR-025).
 Scope: Processing of citizen objections in the Triage pipeline.
 
 This document records the data-protection basis of the PII processing, following
@@ -75,14 +77,19 @@ The governing principle is Art. 5(1)(c) GDPR (data minimization): identifying
 attributes not necessary for the processing purpose (legal argument extraction)
 are removed; substantively relevant context is retained.
 
-Masked (direct identifiers and the precise residential locator):
+Masked (the four identifying core attributes, ADR-025):
 - Names (PERSON)
-- Street and house number (a dedicated DE_STRASSE recognizer)
-- Phone numbers
-- Email addresses
-- IBAN
+- Phone numbers (PHONE_NUMBER)
+- Email addresses (EMAIL_ADDRESS)
+- IBAN (IBAN_CODE)
 
 Not masked:
+- Street and house number. The implementation masks only the four core
+  identifiers above; there is no street recognizer. Street and house number
+  therefore remain in the processed text. Unlike the place names below, this is
+  not argument-bearing context but a precise residential locator, so it is the
+  strongest retained-data residual and is recorded as a known residual and a
+  candidate scope extension in section 6, not justified away here.
 - Place names and the broader geographic context (LOCATION). A bare place name
   does not identify a person in a regional mass objection, and place names, water
   bodies, protected areas, and plan areas are regularly the substantive subject of
@@ -90,25 +97,23 @@ Not masked:
   extraction from a named river). Masking them would destroy the argumentative
   core and degrade the data quality the extraction needs. Blanket location masking
   was empirically over-broad: in one test document it produced 26 masked spans,
-  most of which were substantive proper nouns rather than address components.
+  most of which were substantive proper nouns rather than address components
+  (ADR-025, Rationale).
 - Postal code (PLZ). A five-digit postal code identifies a postal area of
   thousands of residents, not an individual, and its identification value is
-  further reduced once name and street are masked. Keeping it also avoids
-  false-positive masking of unrelated five-digit numbers (amounts, quantities).
+  further reduced once the name is masked. Keeping it also avoids false-positive
+  masking of unrelated five-digit numbers (amounts, quantities).
 - Case reference numbers (Aktenzeichen). The recognizer was removed because its
   pattern collides most strongly with legal norm citations, and masking a citation
   would break the downstream norm extraction; a case reference is also weakly
   identifying once the name is masked.
 
 The identifying content of an address lies in the combination of name, street, and
-house number. This combination is now broken at two points (name and street plus
-house number), so the retained coarse geography (place name, postal code) is
-weakly identifying and is kept for substance.
-
-The street recognizer is best-effort de-identification, not a guarantee:
-rule-based street detection misses prepositional street forms ("Am Markt 3"), some
-abbreviations, and addresses given without a house number. This residual gap is
-recorded in section 6.
+house number. The implementation breaks this combination at one point only, the
+name. Street and house number are retained in the processed text, which is a
+precise residential locator rather than coarse geography (the residual in section
+6). The additionally retained coarse geography (place name, postal code) is itself
+weakly identifying once the name is removed and is kept for substantive reasons.
 
 ## 5. Administrative-law context (VwVfG, Art. 22, file integrity)
 
@@ -133,9 +138,22 @@ and the deployment process must enforce it.
 ## 6. Risks and measures
 
 Residual risks:
-- NER name detection is imperfect (German model around 0.84 F1); individual names
-  may pass unmasked. Masking is one line of defense, not the only safeguard.
-- Best-effort street detection (see section 4) may miss some address forms.
+- Street and house number are retained. Because the masking scope is the four
+  core identifiers and no street recognizer is implemented (ADR-025), a full
+  street address present in a citizen objection remains in the processed text and
+  in the masked artifacts derived from it. This is a precise residential locator
+  and therefore a stronger residual than the coarse geography retained for
+  substantive reasons. It is recorded here as a known residual, not a closed gap.
+  A candidate scope extension is a dedicated street recognizer narrow enough not
+  to collide with the argument-bearing geography that section 4 deliberately
+  keeps; the production DPIA decides whether the residential-locator risk warrants
+  it. Until then the primary control against this residual is the same closed,
+  encapsulated processing setting that controls the inference risk below, not
+  deeper masking.
+- NER name detection is imperfect (German model around 0.84 F1 as a flat-NER
+  baseline; the layered masker improves substantially on this, see ADR-025);
+  individual names may pass unmasked. Masking is one line of defense, not the only
+  safeguard.
 - De-identification does not remove quasi-identifiers. An inference-capable model
   can re-identify from residual context such as dialect, local references, or the
   phrasing of a location-specific objection. Staab et al. (2023) show that LLMs
@@ -155,8 +173,8 @@ Measures:
   attack resistance to the release setting (open versus closed) and recognizes
   context controls that reduce attack likelihood without transforming the data. A
   closed, encapsulated deployment (section 8) therefore lowers the required
-  transformation and is the primary control against the inference risk, more than
-  deeper masking.
+  transformation and is the primary control against the inference risk and against
+  the retained-locator residual above, more than deeper masking.
 
 ## 7. EU AI Act
 
