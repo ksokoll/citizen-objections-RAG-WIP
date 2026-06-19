@@ -1,6 +1,6 @@
 # PII_EVAL_RESULTS.md
 
-Documentation of the evaluation of the PII masking step (DocumentIngestion Bounded Context). Describes the iterations, methodological turning points, and final state. Serves as a development history and lessons-learned reference. Companion to docs/decisions/adr-025.md (the decision record) and DATA_GOVERNANCE_STATEMENT.md (the data-protection reasoning).
+Documentation of the evaluation of the PII masking step (DocumentIngestion Bounded Context). Describes the iterations, methodological turning points, and final state. Serves as a development history and lessons-learned reference. Companion to docs/decisions/adr-025-pii-masking-layered.md (the decision record) and DATA_GOVERNANCE_STATEMENT.md (the data-protection reasoning).
 
 This document is written as an honest process record, not a clean narrative. Where the work was ad-hoc (no pre-registered hypothesis, two stale-state incidents, single overwriting result file), it is recorded as a gap, not retrofitted as a plan.
 
@@ -234,7 +234,7 @@ NER-based masking is de-identification, not anonymisation (cf. Pilán/Lison TAB;
 - pyproject.toml: pinned presidio-analyzer, presidio-anonymizer, de_core_news_md wheel
 
 **Documentation**:
-- docs/decisions/adr-025.md: the decision record
+- docs/decisions/adr-025-pii-masking-layered.md: the decision record
 - DATA_GOVERNANCE_STATEMENT.md: the data-protection reasoning
 
 ---

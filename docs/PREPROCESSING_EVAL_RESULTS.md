@@ -619,7 +619,7 @@ Outputs of this evaluation, by iteration:
 **Iteration 8 (ADR-016)**:
 - `src/app/triage/catalog.py` v3: nine gesetz-based catalogs
 - `src/app/triage/prompts.py` v3.0.0: classification guide updated
-- `docs/decisions/adr-016.md`: catalog refactor rationale
+- `docs/decisions/adr-016-evaluations-ground-truth.md`: catalog refactor rationale
 
 **Iteration 9**:
 - `src/app/triage/norm_extractor.py` (updated): i.V.m. chain handling
@@ -629,12 +629,12 @@ Outputs of this evaluation, by iteration:
 
 **Iteration 10 (ADR-017)**:
 - `experiments/extraction_evaluation/results/norm_coverage_eval_<model>_<timestamp>.json`: per-model baseline results (4 files)
-- `docs/decisions/adr-017.md`: model-dependent assignment loss documentation
+- `docs/decisions/adr-017-norm-assignment-loss.md`: model-dependent assignment loss documentation
 
 **Iteration 11 (ADR-018)**:
 - `experiments/extraction_evaluation/script/norm_coverage_eval_hybrid.py`: encapsulated Hybrid experiment
 - `experiments/extraction_evaluation/results/norm_coverage_eval_<model>_hybrid_<timestamp>.json`: per-model Hybrid results (4 files)
-- `docs/decisions/adr-018.md`: Hybrid Pattern decision record
+- `docs/decisions/adr-018-hybrid-norm-assignment.md`: Hybrid Pattern decision record
 
 ---
 

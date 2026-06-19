@@ -17,7 +17,7 @@ unique citations in the Phase A ground truth, exact-match resolved 25/25 and the
 vector fallback resolved 0; worse, the fallback returned a confident-wrong match
 (`§ 999 WHG` to `§ 105 WHG` at cosine 0.801) on an out-of-corpus probe, the worst
 failure mode in a Behörde context. The full decision, the per-Gesetz breakdown,
-and the rejected alternatives are in [ADR-021](../../docs/decisions/adr-021.md)
+and the rejected alternatives are in [ADR-021](../../docs/decisions/adr-021-exact-match-norm-resolution.md)
 and `docs/RETRIEVAL_EVAL_RESULTS.md`.
 
 These modules lived in `src/app/retrieval/` through Round 17. Round 20 (M2) moved
