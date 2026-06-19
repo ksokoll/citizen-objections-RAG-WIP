@@ -67,8 +67,8 @@ is easy to misread.
 | LLM surface | 1 context (triage classification); retrieval and norm extraction are deterministic |
 | Static typing | mypy strict across all modules |
 | Architecture enforcement | import-linter contract (layer direction) on every check |
-| Tests | <verify against repo> passing |
-| Architecture Decision Records | <verify against repo> |
+| Tests | 290 passing |
+| Architecture Decision Records | 37 |
 
 ---
 
@@ -78,6 +78,8 @@ Five bounded contexts run as a sequence. Each context owns its logic and its tes
 No context imports another. Only the Coordinator (`pipeline.py`) crosses context
 boundaries, and `core/` holds only the contracts that genuinely cross those
 boundaries. External I/O sits behind Protocols, with Fakes in the tests.
+
+The project carries 37 architecture decision records and 290 tests. The ADRs document not only the final design but the decisions, trade-offs, and two deliberate rollbacks behind it, and the tests cover the masking fitness function, the chain verification, the governed-logging controls, and the bounded-context contracts to ensure production-grade engineering discipline. The system runs on synthetic data, and several production concerns (durable append, single-writer locking, log retention) were built and then deliberately rolled back to protect the limited the scope of the demo-project.
 
 ```
 raw objection
